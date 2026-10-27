@@ -1,0 +1,52 @@
+{
+  "source_repository": "butorovv/cluster-anomaly-detection",
+  "source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
+  "v2_base_commit": "3fa11eb5249040a64c515f13d10d7f73ae1a0926",
+  "source_branch": "work (published main verified via GitHub)",
+  "v2_base_branch": "work (published main verified via GitHub)",
+  "p01": "not visible: only main returned by GitHub branch inventory",
+  "files": [
+    {
+      "source": "db/migrations/V1__core_schema.sql",
+      "source_sha256": "4841ede64a4c4a26a58caef13505b255cdb6aa9bc5bfcfde5037fe0332cfe714",
+      "target": "db/migrations/V1__core_schema.sql",
+      "transformation": "byte-identical"
+    },
+    {
+      "source": "db/queries/f18.sql",
+      "source_sha256": "b0c5d7510936c45b71d3e86a1bc1a72554cab5a7fe02f59d605053fa0e0d07ed",
+      "target": "db/queries/f18.sql",
+      "transformation": "byte-identical"
+    },
+    {
+      "source": "db/demo/V1__demo_data.sql",
+      "source_sha256": "b216a09982b613094144781d1047e8652a672d345c3c2d274d2c4cf5a869cf19",
+      "target": "db/demo/V1__demo_data.sql",
+      "transformation": "byte-identical"
+    },
+    {
+      "source": "db/source.json",
+      "source_sha256": "f8f0ef1eab6f059e8827a212b583ce3f38c027e5e25737e573d6856983500a35",
+      "target": "db/source.json",
+      "transformation": "byte-identical"
+    },
+    {
+      "source": "db/README.md",
+      "source_sha256": "3e78cad3e3cd8d56295503a8c9593bf0fe0c9f44e1eaf58558170af371f547c5",
+      "target": null,
+      "transformation": "reviewed only"
+    },
+    {
+      "source": "internal/modules/telemetry/repository/postgres.go",
+      "source_sha256": "240721eaec6ffa0f889716cb47084947122840a7e6b52283556ab11b1f5f8421",
+      "target": null,
+      "transformation": "reviewed only"
+    },
+    {
+      "source": "internal/modules/telemetry/repository/postgres_test.go",
+      "source_sha256": "44c551c2adac87f56c002fd1d46c926148129f4083ae953b3a45311a25f3ab70",
+      "target": null,
+      "transformation": "reviewed only"
+    }
+  ]
+}
