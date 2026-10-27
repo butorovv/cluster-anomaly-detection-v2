@@ -79,13 +79,13 @@ func recordAt(ts time.Time, host string, mask uint32, value float64) domain.Tele
 func TestWriterBatchIdempotenceConflictValidationAndCancellation(t *testing.T) {
 	p, _ := archiveDB(t)
 	ctx := context.Background()
+	cadBefore := cadSnapshot(t, p)
 	w, err := New(ctx, p, 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ts := time.Date(2025, 1, 2, 3, 4, 5, 123000, time.UTC)
 	r := recordAt(ts, "a01n01", domain.FullAvailabilityMask, 1)
-	cadBefore := cadSnapshot(t, p)
 	got, err := w.WriteBatch(ctx, []domain.TelemetryRecord{r, r})
 	if err != nil {
 		t.Fatal(err)
@@ -105,6 +105,7 @@ func TestWriterBatchIdempotenceConflictValidationAndCancellation(t *testing.T) {
 	if _, err = w.WriteBatch(ctx, []domain.TelemetryRecord{changed}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict error=%v", err)
 	}
+	verifyArchiveReadback(t, ctx, p, w, []domain.TelemetryRecord{r})
 	if _, err = w.WriteBatch(ctx, []domain.TelemetryRecord{r, r, r, r}); !errors.Is(err, ErrBatchTooLarge) {
 		t.Fatalf("limit error=%v", err)
 	}
