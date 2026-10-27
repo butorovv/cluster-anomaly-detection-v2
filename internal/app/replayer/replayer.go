@@ -12,6 +12,7 @@ import (
 	"syscall"
 
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/ndjson"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/usecase"
@@ -80,6 +81,17 @@ func Replayer(ctx context.Context, args []string, getenv func(string) string, st
 		versioned := &inputcodec.Sender{Writer: stdout, Binding: cfg.binding, Window: domain.InputWindow{Start: cfg.start, End: cfg.end}}
 		sender, completer = versioned, versioned
 	}
+	var producer *kafkainput.Producer
+	if cfg.output == "kafka" {
+		setup, cancel := context.WithTimeout(ctx, cfg.deliveryTimeout)
+		producer, err = kafkainput.NewProducer(setup, cfg.kafkaConfig())
+		cancel()
+		if err != nil {
+			return err
+		}
+		defer func() { result = errors.Join(result, producer.Close()) }()
+		sender, completer = producer, producer
+	}
 	var stats usecase.Stats
 	if cfg.completionMode == "full-grid" {
 		stats, err = usecase.ReplayFullGrid(ctx, reader, sender, completer, usecase.RealClock{}, cfg.speed, cfg.start, cfg.end)
@@ -87,12 +99,21 @@ func Replayer(ctx context.Context, args []string, getenv func(string) string, st
 		stats, err = usecase.Replay(ctx, reader, sender, completer, usecase.RealClock{}, cfg.speed)
 	}
 	if err != nil {
-		log.ErrorContext(ctx, "replay failed", "error", err, "rows_sent", stats.Rows)
+		if producer != nil {
+			log.ErrorContext(ctx, "replay failed", "error", err, "rows_queued", stats.Rows, "confirmed_group_ticks", stats.Completions)
+		} else {
+			log.ErrorContext(ctx, "replay failed", "error", err, "rows_sent", stats.Rows)
+		}
 		return err
 	}
 	closed = true
 	if err := raw.Close(); err != nil {
 		return err
+	}
+	if producer != nil {
+		if err := producer.Close(); err != nil {
+			return err
+		}
 	}
 	log.InfoContext(ctx, "replay finished", "rows", stats.Rows, "timestamps", stats.Timestamps,
 		"groups", stats.Groups, "hosts", stats.Hosts, "invalid", stats.Invalid, "timestamp_completions", stats.Completions)
