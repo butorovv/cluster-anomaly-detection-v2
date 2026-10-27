@@ -1,0 +1,206 @@
+{
+  "source_repository": "butorovv/cluster-anomaly-detection",
+  "source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
+  "files": [
+    {
+      "source": "internal/group/bundle.go",
+      "source_sha256": "4eae266384e080a7c130a8b17805b6537b0d921238f41c66cb73e375cbf18beb",
+      "target": "internal/modules/detection/group/bundle.go"
+    },
+    {
+      "source": "internal/group/bundle_test.go",
+      "source_sha256": "593b9ddd9158703393b1dff7e57694ebd55f74403525774ff9afa3f62f512b52",
+      "target": "internal/modules/detection/group/bundle_test.go"
+    },
+    {
+      "source": "internal/group/config.go",
+      "source_sha256": "9bc3d9aeae766f63d19d5ee7f6e7f91164ac20a633b8fbd7d1386f4cb06223a1",
+      "target": "internal/modules/detection/group/config.go"
+    },
+    {
+      "source": "internal/group/evaluate.go",
+      "source_sha256": "06487c2e153e012e77f5fdbc472929120429aadffd87ec26243acc973ea2f652",
+      "target": "internal/modules/detection/group/evaluate.go"
+    },
+    {
+      "source": "internal/group/evaluate_test.go",
+      "source_sha256": "f1c6ad6ff134b65ed45b4dc6842f6b3ef1bc8db6cd469f5aec3969c416a8390a",
+      "target": "internal/modules/detection/group/evaluate_test.go"
+    },
+    {
+      "source": "internal/group/hardware.go",
+      "source_sha256": "19065424dafc6aa25b76f28ea13a5e6a0b2c618cf3f4568c7b6ae6a795600604",
+      "target": "internal/modules/detection/group/hardware.go"
+    },
+    {
+      "source": "internal/group/hardware_test.go",
+      "source_sha256": "b829b812d2bb2daba5a34529cd305d260a72dbcd8ed810c5f76bd1d7c36d195a",
+      "target": "internal/modules/detection/group/hardware_test.go"
+    },
+    {
+      "source": "internal/group/i2.go",
+      "source_sha256": "1bfeb487d44d147227d0b05e39931b7f4a50f0372ff3e7d18c6834fd298fb47e",
+      "target": "internal/modules/detection/group/i2.go"
+    },
+    {
+      "source": "internal/group/i2_real_test.go",
+      "source_sha256": "5f6ff17054a17732fa3ce0516a7878d8f059be3529df1b5dd9a63cfc14f82998",
+      "target": "internal/modules/detection/group/i2_real_test.go"
+    },
+    {
+      "source": "internal/group/i2_test.go",
+      "source_sha256": "f034ed1d7dacc53fb5e43ab1dd5bbd3c5cd884f477472e90f40d027d52b34b14",
+      "target": "internal/modules/detection/group/i2_test.go"
+    },
+    {
+      "source": "internal/group/identity.go",
+      "source_sha256": "fa11ad020ded34707211a454679e4a8cf2c66b2bd28e45296e0a8d8a66877f75",
+      "target": "internal/modules/detection/group/identity.go"
+    },
+    {
+      "source": "internal/group/identity_test.go",
+      "source_sha256": "bc6416a54656321eff54e1a34de79c38e0a22714d82aa674a407f845f0c39c66",
+      "target": "internal/modules/detection/group/identity_test.go"
+    },
+    {
+      "source": "internal/group/model.go",
+      "source_sha256": "591387aee6519cc88ce7c920427567528c56bf70121510f8d25db84937e2153a",
+      "target": "internal/modules/detection/group/model.go"
+    },
+    {
+      "source": "internal/group/model_test.go",
+      "source_sha256": "a65016a00d5073299729ede601ff01115854c59183379333dd87c035a1b80697",
+      "target": "internal/modules/detection/group/model_test.go"
+    },
+    {
+      "source": "internal/group/offline.go",
+      "source_sha256": "7005bcf845a60cf80d16b5af67a95eea1fa446b71ef73c29ce74f15993fc7691",
+      "target": "internal/modules/detection/group/offline.go"
+    },
+    {
+      "source": "internal/group/offline_test.go",
+      "source_sha256": "0828fa19c40aa3a0ca36caa1f88cf57852256096328c8ede52b1eea2ebf0f272",
+      "target": "internal/modules/detection/group/offline_test.go"
+    },
+    {
+      "source": "internal/group/rbi2_event.go",
+      "source_sha256": "5284917720e81acf63318f9df37b1af0f5ffc0eee295cf016bd30cb7e65e3da7",
+      "target": "internal/modules/detection/group/rbi2_event.go"
+    },
+    {
+      "source": "internal/group/rbi2_event_test.go",
+      "source_sha256": "e22cf201505dcf0e340aa905b0f94fccbcc8c610c17eb86804e708247afcb19a",
+      "target": "internal/modules/detection/group/rbi2_event_test.go"
+    },
+    {
+      "source": "internal/group/rbi2_identity.go",
+      "source_sha256": "9ee6a7a81d1f5c6bc7b431fa04d7e3a5410449b4b30528c2f09f47fb7b28cabb",
+      "target": "internal/modules/detection/group/rbi2_identity.go"
+    },
+    {
+      "source": "internal/group/rbi2_offline.go",
+      "source_sha256": "ae8f5b534fd0921a2abd7ff26d1ab7684ecf8e938521e03811acc951483a2f94",
+      "target": "internal/modules/detection/group/rbi2_offline.go"
+    },
+    {
+      "source": "internal/group/rbi2_offline_test.go",
+      "source_sha256": "b1ed5493976515cbda1efd81ac65d78c4c1b95f2e878a2410f0a2af6c3c3f415",
+      "target": "internal/modules/detection/group/rbi2_offline_test.go"
+    },
+    {
+      "source": "internal/group/rbi2_real_test.go",
+      "source_sha256": "5fe66a0cb6f5c0774218e3aa90a58e39bcc6e60a7cf400d82ba54a640cb99a78",
+      "target": "internal/modules/detection/group/rbi2_real_test.go"
+    },
+    {
+      "source": "internal/group/rbi2_temporal.go",
+      "source_sha256": "409ab33f67c3a6a80e9270c34dfb074bf1d5cadf71f13850ebc6a081a937ae36",
+      "target": "internal/modules/detection/group/rbi2_temporal.go"
+    },
+    {
+      "source": "internal/group/rbi2_temporal_test.go",
+      "source_sha256": "9160dee435721822f3a6f5dcf8e194f76b10ad9a5e841bea69f2e934d50cf260",
+      "target": "internal/modules/detection/group/rbi2_temporal_test.go"
+    },
+    {
+      "source": "internal/group/real_test.go",
+      "source_sha256": "517d266bdb98c7f36798f67ab4434b66d24d6ac41b88f231f563d7b51814cbd1",
+      "target": "internal/modules/detection/group/real_test.go"
+    },
+    {
+      "source": "internal/group/support.go",
+      "source_sha256": "ba4e9853914ec38b476ff937b6305a6e780b259adfcf72f8b8f6de819f8b70dd",
+      "target": "internal/modules/detection/group/support.go"
+    },
+    {
+      "source": "internal/group/temporal.go",
+      "source_sha256": "819e7ffbd36cef1a69e36746e529fa9d6ca52fe3af25dcd5981bc1c279845bdb",
+      "target": "internal/modules/detection/group/temporal.go"
+    },
+    {
+      "source": "internal/group/temporal_test.go",
+      "source_sha256": "7dcc1ae41cceeeaf6868be53a39643866b112f586cf7b2f8d35aa7638a95bfaa",
+      "target": "internal/modules/detection/group/temporal_test.go"
+    },
+    {
+      "source": "internal/group/types.go",
+      "source_sha256": "9ef805385f5cef795a70aeb7285d07ce696de752cfd13a58aff6f588658c914a",
+      "target": "internal/modules/detection/group/types.go"
+    },
+    {
+      "source": "internal/local/b1.go",
+      "source_sha256": "6a53734d64af23c3d5d5e17d49f36ca1f5f7dc8a05d870853c325149b7d34d48",
+      "target": "internal/modules/detection/local/b1.go"
+    },
+    {
+      "source": "internal/local/b1_test.go",
+      "source_sha256": "a68c0c6998d4872c9a57b5ab4d93abe54ec409ac1168a75c9fd47ac758676db9",
+      "target": "internal/modules/detection/local/b1_test.go"
+    },
+    {
+      "source": "internal/local/frozen.go",
+      "source_sha256": "bf78f677c33fdce889cbe28c25fb5feca8a20be15b2998812e36933144e2e82d",
+      "target": "internal/modules/detection/local/frozen.go"
+    },
+    {
+      "source": "internal/local/offline.go",
+      "source_sha256": "36fb40cf7b798e208786229926fb132bff2a8cb3cb44d1c6dd7d9c7c6883ff67",
+      "target": "internal/modules/detection/local/offline.go"
+    },
+    {
+      "source": "internal/local/real_test.go",
+      "source_sha256": "ecbdf5106b37a3262a9ee3b0c0874c9bc296819ce0766d11b1e5c957000ba13f",
+      "target": "internal/modules/detection/local/real_test.go"
+    },
+    {
+      "source": "internal/analysis/window.go",
+      "source_sha256": "de8195aa0a5b34ef30231d0878a3133d2612d7422864574e5ce17f12eed0d28c",
+      "target": "internal/modules/detection/analysis/window.go"
+    },
+    {
+      "source": "internal/analysis/statistical.go",
+      "source_sha256": "2ffeb1152931a627292c10ffd6185b70bf46708065a9ca39ca23a7ab2df1b760",
+      "target": "internal/modules/detection/analysis/statistical.go"
+    },
+    {
+      "source": "internal/analysis/statistical_test.go",
+      "source_sha256": "44f2faab71048bb032367704de39096b5646b8d25ace17845e92072ff916dd03",
+      "target": "internal/modules/detection/analysis/statistical_test.go"
+    },
+    {
+      "source": "internal/analysis/statistical_audit_test.go",
+      "source_sha256": "b9f62c384b264b50d13bd884fd7e0ca74b5d2fb7c9df3ebeed5f8e30339ade5e",
+      "target": "internal/modules/detection/analysis/statistical_audit_test.go"
+    },
+    {
+      "source": "internal/analysis/isolation.go",
+      "source_sha256": "5a87751b0ac516bbc5b33aba8389df7e0837b64e456fb92ead37e9fb39756a6f",
+      "target": "internal/modules/detection/analysis/isolation.go"
+    },
+    {
+      "source": "internal/analysis/isolation_test.go",
+      "source_sha256": "82f1af2845a84ddba6ecc124877ce4d746123c76e975ae5eac9d150e949a5419",
+      "target": "internal/modules/detection/analysis/isolation_test.go"
+    }
+  ]
+}
