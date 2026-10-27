@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -196,7 +197,7 @@ func TestCLIHelpAndInvalidConfiguration(t *testing.T) {
 	if err := Replayer(context.Background(), []string{"--help"}, getenv, &out, &stderr); !errors.Is(err, flag.ErrHelp) || out.Len() != 0 || !strings.Contains(stderr.String(), "--input") && !strings.Contains(stderr.String(), "-input") {
 		t.Fatal(err, stderr.String())
 	}
-	for _, args := range [][]string{nil, {"--input", "x", "--speed", "NaN"}, {"--input", "x", "--speed", "-1"}, {"--input", "x", "--output", "log"}, {"--input", "x", "--start", "bad"}, {"--input", "x", "--end", "2022-01-18T08:00:00Z"}, {"--input", "x", "--start", "2022-01-18T08:00:00Z", "--end", "2022-01-18T08:00:00Z"}, {"--input", "x", "unexpected"}} {
+	for _, args := range [][]string{nil, {"--input", "x", "--speed", "NaN"}, {"--input", "x", "--speed", "-1"}, {"--input", "x", "--output", "log"}, {"--input", "x", "--completion-mode", "bad"}, {"--input", "x", "--completion-mode", "full-grid"}, {"--input", "x", "--start", "bad"}, {"--input", "x", "--end", "2022-01-18T08:00:00Z"}, {"--input", "x", "--start", "2022-01-18T08:00:00Z", "--end", "2022-01-18T08:00:00Z"}, {"--input", "x", "unexpected"}} {
 		if _, err := load(args, getenv, io.Discard); err == nil {
 			t.Fatal(args)
 		}
@@ -209,5 +210,41 @@ func TestCLIHelpAndInvalidConfiguration(t *testing.T) {
 	cancel()
 	if err := Replayer(ctx, []string{"--input", "x"}, getenv, io.Discard, io.Discard); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
+	}
+}
+
+func TestCLIFullGridProducesCanonicalMarkers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "grid.parquet")
+	writeCLIFixture(t, path)
+	var out, stderr bytes.Buffer
+	start, end := "2022-01-18T08:00:00Z", "2022-01-18T08:00:10Z"
+	err := Replayer(context.Background(), []string{"--input", path, "--speed", "0", "--completion-mode", "full-grid", "--start", start, "--end", end}, func(string) string { return "" }, &out, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 19 {
+		t.Fatalf("got %d lines", len(lines))
+	}
+	markers := 0
+	for _, line := range lines {
+		var got struct {
+			Type    string
+			Group   string `json:"group_id"`
+			Records int
+		}
+		if err := json.Unmarshal([]byte(line), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.Type == "timestamp_complete" {
+			if got.Group != fmt.Sprintf("a%02d", markers+1) {
+				t.Fatalf("marker %d: %+v", markers, got)
+			}
+			markers++
+		}
+	}
+	if markers != 16 {
+		t.Fatal("markers", markers)
 	}
 }

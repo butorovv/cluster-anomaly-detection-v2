@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/ndjson"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/usecase"
@@ -60,17 +61,37 @@ func Replayer(ctx context.Context, args []string, getenv func(string) string, st
 	if err != nil {
 		return err
 	}
-	defer func() { result = errors.Join(result, raw.Close()) }()
+	closed := false
+	defer func() {
+		if !closed {
+			result = errors.Join(result, raw.Close())
+		}
+	}()
 	log := slog.New(slog.NewTextHandler(stderr, nil))
 	log.InfoContext(ctx, "dataset loaded", "input", cfg.input, "rows", raw.Rows())
 	var reader usecase.RecordReader = selectedReader{source: raw}
 	if !cfg.start.IsZero() {
 		reader = &usecase.WindowReader{Source: reader, Start: cfg.start, End: cfg.end}
 	}
-	sink := ndjson.NewJSONSender(stdout)
-	stats, err := usecase.Replay(ctx, reader, sink, sink, usecase.RealClock{}, cfg.speed)
+	legacy := ndjson.NewJSONSender(stdout)
+	var sender usecase.TelemetrySender = legacy
+	var completer usecase.TimestampCompleter = legacy
+	if cfg.wireFormat == "v1" {
+		versioned := &inputcodec.Sender{Writer: stdout, Binding: cfg.binding, Window: domain.InputWindow{Start: cfg.start, End: cfg.end}}
+		sender, completer = versioned, versioned
+	}
+	var stats usecase.Stats
+	if cfg.completionMode == "full-grid" {
+		stats, err = usecase.ReplayFullGrid(ctx, reader, sender, completer, usecase.RealClock{}, cfg.speed, cfg.start, cfg.end)
+	} else {
+		stats, err = usecase.Replay(ctx, reader, sender, completer, usecase.RealClock{}, cfg.speed)
+	}
 	if err != nil {
 		log.ErrorContext(ctx, "replay failed", "error", err, "rows_sent", stats.Rows)
+		return err
+	}
+	closed = true
+	if err := raw.Close(); err != nil {
 		return err
 	}
 	log.InfoContext(ctx, "replay finished", "rows", stats.Rows, "timestamps", stats.Timestamps,
