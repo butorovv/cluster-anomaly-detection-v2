@@ -1,19 +1,24 @@
 {
   "task": "P03",
   "date": "2026-10-27",
-  "timezone": "Europe/Moscow",
-  "scope": "local prepared F18 -> full-grid replay -> versioned codec -> TickAssembler",
   "repository": "butorovv/cluster-anomaly-detection-v2",
   "base_commit": "a311c5f34fd28dcc4efd463b88ee6e02112f4835",
   "branch": "feature/telemetry-input-contract-and-full-grid",
   "implementation_commit": "cb8ea9a8dc3814207232769090f672306e916d57",
   "source": {
-    "offline_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
-    "assets_root": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection",
     "repository": "butorovv/cluster-anomaly-detection",
+    "offline_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
     "replay_commit": "891e0ef71a0da0f9ad256f91d199fef38d1355a9",
-    "offline_reference": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection-v2\\.cache\\p03\\v1-reference",
-    "reference_policy": "clean pinned separate clone; originals read only; comparator temporary modules/outputs outside V1"
+    "reference_policy": "Clean pinned V1 checkouts; original assets read only; temporary comparator outputs outside V1."
+  },
+  "roots": {
+    "v1": "Original V1/assets root: OFFLINE_REAL_ROOT = GROUP_REAL_ROOT = P03_REAL_ROOT",
+    "research": "Independent historical exports root: GROUP_REAL_REFERENCE=<research>/baseline-d2; GROUP_RBI2_RESEARCH=<research>/i2-focused"
+  },
+  "references": {
+    "OFFLINE_V1_SOURCE": "Clean checkout at source.offline_commit",
+    "REPLAYER_V1_SOURCE": "Clean checkout at source.replay_commit",
+    "GROUP_I2_GOLDEN_TICKS": "<research>/i2-focused/journal-ticks.csv"
   },
   "statuses": {
     "ARTIFACTS_VALIDATED": "PASS",
@@ -28,100 +33,94 @@
   },
   "assets": [
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\data\\prepared\\summit-D1-pilot\\D1.parquet",
+      "root": "v1",
+      "path": "data/prepared/summit-D1-pilot/D1.parquet",
       "bytes": 93075717,
-      "sha256": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
-      "expected": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
-      "matches": true
+      "sha256": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\data\\prepared\\summit-D1-pilot\\manifest.json",
+      "root": "v1",
+      "path": "data/prepared/summit-D1-pilot/manifest.json",
       "bytes": 35499,
-      "sha256": "6d603a5445d1a76be24408eed84933e96a4a10af6c3bfd32471d93ca7dd9f291",
-      "expected": "6d603a5445d1a76be24408eed84933e96a4a10af6c3bfd32471d93ca7dd9f291",
-      "matches": true
+      "sha256": "6d603a5445d1a76be24408eed84933e96a4a10af6c3bfd32471d93ca7dd9f291"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\results\\statistical-20220118-8h-v1.json",
+      "root": "v1",
+      "path": "results/statistical-20220118-8h-v1.json",
       "bytes": 27905,
-      "sha256": "36da27a4a4f485baa4b1b1b899c26a36efc15401327fd85abc3d63ea3c1ade80",
-      "expected": "36da27a4a4f485baa4b1b1b899c26a36efc15401327fd85abc3d63ea3c1ade80",
-      "matches": true
+      "sha256": "36da27a4a4f485baa4b1b1b899c26a36efc15401327fd85abc3d63ea3c1ade80"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\results\\isolation-20220118-v1.json",
+      "root": "v1",
+      "path": "results/isolation-20220118-v1.json",
       "bytes": 1566123,
-      "sha256": "6aa1ca4f2f76b56418aafaa1ea25e6812a3b9fdcc0d309aeed44dc1db03f2da3",
-      "expected": "6aa1ca4f2f76b56418aafaa1ea25e6812a3b9fdcc0d309aeed44dc1db03f2da3",
-      "matches": true
+      "sha256": "6aa1ca4f2f76b56418aafaa1ea25e6812a3b9fdcc0d309aeed44dc1db03f2da3"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\configs\\local-b1.summit-20220118.json",
+      "root": "v1",
+      "path": "configs/local-b1.summit-20220118.json",
       "bytes": 21645,
-      "sha256": "9e7e95f787b564817849de95b37b63ef5c5bc8af053a7dce3f9b20c1cd3b2ea5",
-      "expected": "9e7e95f787b564817849de95b37b63ef5c5bc8af053a7dce3f9b20c1cd3b2ea5",
-      "matches": true
+      "sha256": "9e7e95f787b564817849de95b37b63ef5c5bc8af053a7dce3f9b20c1cd3b2ea5"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\configs\\group-profile.summit-v1.json",
+      "root": "v1",
+      "path": "configs/group-profile.summit-v1.json",
       "bytes": 297257,
-      "sha256": "a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36",
-      "expected": "a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36",
-      "matches": true
+      "sha256": "a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\configs\\group-detection.summit-v1.json",
+      "root": "v1",
+      "path": "configs/group-detection.summit-v1.json",
       "bytes": 1710,
-      "sha256": "0ceb556aa0767d48d5e661d821a44a8f2442457a1c94dc4c63281de47ebe40b1",
-      "expected": "0ceb556aa0767d48d5e661d821a44a8f2442457a1c94dc4c63281de47ebe40b1",
-      "matches": true
+      "sha256": "0ceb556aa0767d48d5e661d821a44a8f2442457a1c94dc4c63281de47ebe40b1"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\cluster-anomaly-detection\\configs\\summit-hardware-reference.json",
+      "root": "v1",
+      "path": "configs/summit-hardware-reference.json",
       "bytes": 218061,
-      "sha256": "068fe4c36e4acb4469b51e705b1f2b5317b728e52448971b42e9d695aac5d05f",
-      "expected": "068fe4c36e4acb4469b51e705b1f2b5317b728e52448971b42e9d695aac5d05f",
-      "matches": true
+      "sha256": "068fe4c36e4acb4469b51e705b1f2b5317b728e52448971b42e9d695aac5d05f"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\_worknotes\\nir-final-kernel-selection\\i2-focused\\two-level-journal.ndjson",
+      "root": "research",
+      "path": "i2-focused/two-level-journal.ndjson",
       "bytes": 1071688,
-      "sha256": "16a880c5728b05f20f902b22ee5d1a87bbce6ac34408425a16b0bcb633dd944f",
-      "expected": "16a880c5728b05f20f902b22ee5d1a87bbce6ac34408425a16b0bcb633dd944f",
-      "matches": true
+      "sha256": "16a880c5728b05f20f902b22ee5d1a87bbce6ac34408425a16b0bcb633dd944f"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\_worknotes\\nir-final-kernel-selection\\i2-focused\\journal-ticks.csv",
+      "root": "research",
+      "path": "i2-focused/journal-ticks.csv",
       "bytes": 1982171,
-      "sha256": "6db3cbe01b6f82c0b996d7fd327830cb9474a1f2ba44663d0bbf5046dbe2032d",
-      "expected": "6db3cbe01b6f82c0b996d7fd327830cb9474a1f2ba44663d0bbf5046dbe2032d",
-      "matches": true
+      "sha256": "6db3cbe01b6f82c0b996d7fd327830cb9474a1f2ba44663d0bbf5046dbe2032d"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\_worknotes\\nir-final-kernel-selection\\i2-focused\\event-tick-evidence.csv",
+      "root": "research",
+      "path": "i2-focused/event-tick-evidence.csv",
       "bytes": 502329,
-      "sha256": "0f997274776353f54a495f41dede73e84253134c98305bfd9fa640e6fb23024d",
-      "expected": "0f997274776353f54a495f41dede73e84253134c98305bfd9fa640e6fb23024d",
-      "matches": true
+      "sha256": "0f997274776353f54a495f41dede73e84253134c98305bfd9fa640e6fb23024d"
     },
     {
-      "path": "C:\\study\\NIR_KP_6_SEM\\NIR_KR_7_SEM\\_worknotes\\nir-final-kernel-selection\\baseline-d2\\raw.ndjson",
+      "root": "research",
+      "path": "baseline-d2/raw.ndjson",
       "bytes": 337678417,
-      "sha256": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027",
-      "expected": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027",
-      "matches": true
+      "sha256": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027"
     }
   ],
+  "asset_validation": "Every recorded SHA256 matched its original trust anchor; duplicate expected hashes omitted.",
   "missing": [],
   "oracle_provenance": {
-    "raw": "Existing pre-PR14 baseline-d2/raw.ndjson, not generated by V2 or this task",
-    "new_pinned_v1_outputs": "Regression reference generated in Go comparator temporary directories, distinct from historical research oracle",
+    "raw": "Historical pre-PR14 baseline-d2/raw.ndjson; not generated by V2.",
+    "research": "Historical i2-focused journal-ticks.csv, event-tick-evidence.csv and two-level-journal.ndjson.",
     "hash_anchors": [
-      "../_worknotes/nir-final-kernel-selection/artifact-sha256.json",
-      "../_worknotes/nir-final-kernel-selection/i2-focused/artifact-sha256.json"
+      {
+        "root": "research",
+        "path": "artifact-sha256.json"
+      },
+      {
+        "root": "research",
+        "path": "i2-focused/artifact-sha256.json"
+      }
     ],
-    "history": "Read project audit chat and existing runtime-migration-audit inventory; archived local chat listing available, no relevant archived result",
-    "research": "Existing i2-focused journal-ticks.csv, event-tick-evidence.csv, two-level-journal.ndjson"
+    "regression_reference": "Fresh pinned V1 output is used only for V1/V2 regression; it is distinct from the historical research oracle."
   },
   "scientific_parity": {
     "deltas": [
@@ -206,74 +205,10 @@
       "status": "PASS"
     }
   },
-  "contract": {
-    "inventory": "fixed canonical a01..a16, each n01..n18; subsets not introduced",
-    "types": [
-      "telemetry_record",
-      "timestamp_complete"
-    ],
-    "scientific_identity": "No new scientific IDs; execution scope independent from frozen RunID/ConfigID",
-    "mapping": "explicit bijection a01->0 ... a16->15, no hashing",
-    "version": "telemetry-input-v1",
-    "counts": "all available rows / complete F18 rows, never inferred 18",
-    "binding": [
-      "execution_id",
-      "input_sha256",
-      "profile_sha256"
-    ],
-    "grid": "10 seconds UTC, explicit [start,end)",
-    "flags": [
-      "--completion-mode observed|full-grid (default observed)",
-      "--wire-format legacy|v1 (default legacy)",
-      "--start / --end (required for full-grid and v1)",
-      "--execution-id / --input-sha256 / --profile-sha256 (required for v1)",
-      "--speed 0 disables pacing; positive pacing once per tick across groups"
-    ],
-    "f18": "existing FeatureCount/FeatureNames; null <-> NaN; finite zero and partial/invalid rows retained",
-    "error_policy": {
-      "eof": "Finish required; missing completion/tail is fatal",
-      "fatal": "stream or payload identity, position, order, duplicate/late record or marker: error latches and stops assembly",
-      "memory": "one lookahead replay row, at most 288 host names, one current 18-record group buffer per assembler",
-      "duplicates": "exact_duplicate_host vs conflicting_duplicate_host; no silent retry/dedup",
-      "recoverable": "availability/payload-shape/count mismatch rejects atomically, accepted records unchanged",
-      "ownership": "record arrays copied on accept; completed map transferred and no longer retained"
-    },
-    "partition_key": "group_id for both message types"
-  },
-  "dependency_matrix": [
-    {
-      "finding": "Frozen inference/loaders require numeric primitives and experiment source types; RBI2Journal uses legacy Engine",
-      "paths": [
-        "internal/modules/detection/group",
-        "internal/modules/detection/local",
-        "internal/modules/detection/analysis",
-        "internal/modules/detection/experiment"
-      ],
-      "class": "A runtime"
-    },
-    {
-      "finding": "Keep historical RB IDs, Hardware/Y diagnostic schema, raw/evidence; Y is not an RBI2 vote",
-      "paths": [
-        "group/offline.go",
-        "group/rbi2_offline.go",
-        "group/identity.go",
-        "group/hardware.go"
-      ],
-      "class": "B offline parity"
-    },
-    {
-      "class": "C possible later separation",
-      "finding": "Training/calibration/research/demo helpers coexist in migrated packages; no deletion or extra migration in P03"
-    }
-  ],
+  "input_contract": "telemetry-input-v1; F18-v1; UTC 10-second grid; 16 canonical groups of 18 hosts; mapping a01->0 ... a16->15. Execution binding does not redefine scientific IDs.",
   "outside_dependency": {
-    "p03": "Semantics and fields unchanged; no cross-group coordinator implemented",
-    "golden": "Fields serialize in Raw and RBI2Evidence, exact comparators depend on them; they do not influence R/B/I2 votes",
-    "options": [
-      "Deterministic same-tick diagnostic enrichment outside independent GroupProcessor, after receiving every group IF summary",
-      "Separate diagnostic stream plus explicit preservation/comparison contract"
-    ],
     "status": "ARCHITECTURAL_BLOCKER_FOR_FUTURE_INDEPENDENT_GROUPPROCESSOR",
+    "source": "internal/modules/detection/group/offline.go: AnnotateOutside; rbi2_offline.go invokes it on all groups of one tick",
     "fields": [
       "IF.OutsideAvailable",
       "IF.OutsideAnomalous",
@@ -281,102 +216,98 @@
       "IF.OutsideS",
       "IF.E"
     ],
-    "source": "internal/modules/detection/group/offline.go: AnnotateOutside; rbi2_offline.go invokes it on all groups of one tick"
+    "golden": "Fields serialize in Raw and RBI2Evidence, exact comparators depend on them; they do not influence R/B/I2 votes",
+    "p03": "Semantics and fields unchanged; no cross-group coordinator implemented"
   },
   "checks": [
     {
-      "note": "External opt-in tests SKIP in autonomous suite; separately executed real and SQL tests listed below",
       "command": "go test ./... -count=1",
+      "status": "PASS",
       "exit_code": 0,
-      "status": "PASS"
+      "note": "External opt-in checks SKIP here; separately executed checks are listed below."
     },
     {
       "command": "go vet ./...",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "go build ./cmd/replayer",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "go build ./cmd/offline",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "git diff --check",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
-      "note": "New components are sequential; no new concurrent processing added",
       "command": "go test -race ./internal/modules/telemetry/... ./internal/modules/topology/... -count=1",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
-      "note": "Disposable local PostgreSQL 17.5 on 127.0.0.1:55483; only own databases; temporary server stopped; earlier sandbox TCP failures resolved by allowed local access",
       "command": "go test ./db -count=1 -v with TEST_DATABASE_URL",
+      "status": "PASS",
       "exit_code": 0,
-      "status": "PASS"
+      "note": "Disposable PostgreSQL 17.5; only own test databases."
     },
     {
       "command": "TestV1Compatibility with REPLAYER_V1_SOURCE",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "TestRealD2AllDeltaCanonicalParity with OFFLINE_REAL_ROOT/OFFLINE_V1_SOURCE",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "TestRealRBI2D2Parity with GROUP_REAL_ROOT/GROUP_REAL_REFERENCE/GROUP_RBI2_RESEARCH",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "TestRealPerGroupD2Parity and TestI2RealD2SavedDecisions",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "TestSyntheticInputPipeline and TestRealD2InputPipeline",
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
       "command": "P03_REAL_ACCEPTANCE=1 go test ./internal/acceptance -run ^TestRealAcceptance$ -count=1 -timeout 40m -v",
-      "seconds": 198.49,
-      "exit_code": 0,
-      "status": "PASS"
+      "status": "PASS",
+      "exit_code": 0
     },
     {
-      "note": "Explicit FAIL enumerated all six missing env vars; not reported as real parity PASS",
       "command": "Strict acceptance with absent prerequisites",
+      "status": "PASS",
       "expected_test_exit_code": 1,
-      "status": "PASS"
+      "note": "Expected nonzero test exit listed all six missing environment variables; this is a negative acceptance check."
     },
     {
-      "note": "Inherited opt-in test has V1-relative paths and calls BuildProfile (D1 threshold recomputation); no recalibration in P03. Local scores/thresholds/decisions covered by successful full raw/evidence and independent research comparators",
       "command": "TestRealB1D2MatchesResearch / LOCAL_B1_REAL",
-      "status": "NOT_RUN"
+      "status": "NOT_RUN",
+      "note": "Inherited V1-relative paths and BuildProfile D1 threshold recomputation; no recalibration in P03. Local scores/thresholds/decisions covered by full raw/evidence and independent research comparisons."
     }
   ],
   "environment": {
     "go": "go1.27.2 windows/amd64",
-    "temp": "OS sandbox TEMP/TMP; comparator outputs outside V1, sufficient disk for >5GiB guard",
-    "github": "gh absent; configured personal Git credential helper verified butorovv User via REST /user; no connector writes, secret not displayed",
     "postgresql": "17.5",
-    "cache": "V2 .cache/go-build",
-    "initial_free_bytes": 53775224832,
-    "python": "NOT_RUN; no .py or interpreter/runtime dependency added",
-    "docker": "28.4.0 client present, daemon unavailable and unused"
+    "python": "NOT_RUN; no .py or interpreter/runtime dependency added"
   },
   "unchanged": {
-    "v1_checkout_status": "clean before/after",
+    "general_spec": "no diff from base",
+    "frozen_detection": "no diff from base",
+    "v1_assets": "all inventory hashes revalidated after checks",
     "migrations_v1_v5": [
       {
         "path": "db/migrations/V1__core_schema.sql",
@@ -398,37 +329,6 @@
         "path": "db/migrations/V5__p01_master.sql",
         "sha256": "0d8f11375ab312a237cd3210155d1b5440612393b25d2b2d57290819b2ebc5a3"
       }
-    ],
-    "general_spec": "no diff from base",
-    "new_migrations": 0,
-    "auto_merge": false,
-    "new_markdown_files": 0,
-    "v1_assets": "all inventory hashes revalidated after checks",
-    "v2_local_main": "3fa11eb5249040a64c515f13d10d7f73ae1a0926",
-    "frozen_detection": "no diff from base"
-  },
-  "roles": [
-    {
-      "confirmation": "configured, runtime metadata not independently verified",
-      "model": "gpt-6.1-sol",
-      "work": "Architecture, codec, assembler, integration, acceptance, final review and checks",
-      "role": "orchestrator",
-      "reasoning": "high"
-    },
-    {
-      "confirmation": "configured TOML and spawn selection, runtime metadata not independently verified",
-      "model": "gpt-6-luna",
-      "work": "Bounded full-grid and CLI implementation; initial tests, supplemented and reviewed by parent",
-      "role": "implementer",
-      "reasoning": "medium"
-    },
-    {
-      "confirmation": "configured TOML and spawn selection, runtime metadata not independently verified",
-      "model": "gpt-6-luna",
-      "work": "Partition mapping test only; codec/assembler tests completed by parent",
-      "role": "test_writer",
-      "reasoning": "low"
-    }
-  ],
-  "next_slice": "Separate task: real Kafka producer/topic16/custom mapping and ordering/consumer API; then Worker/GroupProcessor and explicit Outside diagnostics solution, Snapshot/Restore and atomic checkpoint/outbox. None implemented here."
+    ]
+  }
 }
