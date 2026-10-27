@@ -8,9 +8,10 @@ Python runtime, notebooks и исследовательские Python-инст�
 При обнаружении необходимой функции только на Python сначала нужен отчёт
 о пробеле и предложение её реализации на Go.
 
-Реализован только `cmd/replayer`. Детектор R/B/I2, frozen bundles, offline,
-Kafka producer/consumer, Worker, Master, PostgreSQL и checkpoints пока отсутствуют.
-Этот репозиторий ещё не обнаруживает аномалии.
+Реализованы `cmd/replayer`, frozen R/B/I2 и `cmd/offline`, а также каноническая
+PostgreSQL-схема V1 с транзакционным runner. Полная D2 golden parity пока
+`NOT_RUN`: реальные данные и statistical/IF artifacts отсутствуют в Cloud.
+Kafka, Worker, Master и recovery относятся к следующим этапам.
 
 ## Требования и запуск
 
@@ -93,7 +94,43 @@ CLI V2 на одном fixture. V1 не получает build/cache/generated f
 Полное согласованное ТЗ сохранено без изменений в
 [docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md](docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md).
 
-Следующий логический срез № 02 — frozen model bundle + Go R/B/I2 + offline
-golden parity. Прямой Kafka producer и протокол полностью missing ticks —
-последующий отдельный шаг. Синтетическая совместимость Replay не доказывает
-математическую эквивалентность R/B/I2 или D2 golden parity.
+Срез P02: [перенос БД и R/B/I2](docs/migration/02-v1-db-frozen-rbi2.md),
+[provenance и SHA](docs/migration/02-provenance.json),
+[миграции PostgreSQL](db/README.md). Реальная D2 golden parity остаётся
+обязательным условием перехода к distributed runtime.
+
+## Frozen offline R/B/I2
+
+Нужен доверенный bundle с исходными логическими путями V1. В Git сохранены
+неизменённые group/B1 configs; Parquet/manifest и statistical/IF JSON необходимо
+предоставить отдельно. Bundle проверяет SHA до и после inference; CLI ничего
+не обучает и не выбирает пороги.
+
+```sh
+go run ./cmd/offline --help
+go run ./cmd/offline --assets /path/to/frozen-v1 \
+  --profile-sha256 a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36 \
+  --window D2 --groups 16 --delta 0 --output /path/to/new-output
+```
+
+Выход: `raw.ndjson`, `temporal.ndjson`, `evidence.ndjson`, `events.ndjson`,
+`summary.json`; summary также идёт в stdout. Каталог выхода должен быть новым.
+`summary.json` появляется только после успешного inference, закрытия файлов и
+повторной проверки SHA. При ошибке каталог может содержать неполный префикс.
+По умолчанию перечисляются все 46 080 D2 group-ticks, включая полностью пустые.
+Поддерживаются δ=0/10/30/60, вложенные группы 4/8/16 и D1/D2;
+`--start`/`--end` вместе задают необязательное подокно на UTC-сетке 10 секунд.
+Пустые группы дают Unknown; поведение `replayer` в P02 сохранено.
+
+Для независимой сверки с чистым V1 `c6de846` (Go-only, V1 read-only):
+
+```sh
+# TMPDIR должен иметь >5 GiB: это сохранённый disk guard оригинального V1.
+mkdir -p /path/to/large-temp
+TMPDIR=/path/to/large-temp OFFLINE_V1_SOURCE=/path/to/v1 \
+  go test ./internal/app/offline -run 'TestV1' -count=1 -v
+```
+
+Тест сравнивает семантику всех записей и canonical output для четырёх δ;
+синтетические модели используются только внутри тестов. Команды реальной D2
+приёмки и список недостающих файлов приведены в отчёте P02.

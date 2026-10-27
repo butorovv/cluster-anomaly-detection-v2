@@ -4,7 +4,7 @@
   "v2_base_commit": "3fa11eb5249040a64c515f13d10d7f73ae1a0926",
   "source_branch": "work (published main verified via GitHub)",
   "v2_base_branch": "work (published main verified via GitHub)",
-  "p01": "not visible: only main returned by GitHub branch inventory",
+  "p01": "initially not visible; observed 2026-10-27T12:22:30Z on p01/postgresql-foundation",
   "files": [
     {
       "source": "db/migrations/V1__core_schema.sql",
@@ -806,5 +806,45 @@
     "semantic_records": "raw, temporal, evidence, events, summary; exact typed comparison and canonical SHA256",
     "scientific_declarations_compared": 40
   },
-  "database_validation": "PostgreSQL 17.11; fresh baseline, 12 tables, 12 restrictive FKs, 2 functions, 3 triggers, 5 reference metrics; history/repeat/rollback/upgrade tests PASS"
+  "database_validation": "PostgreSQL 17.11; fresh baseline, 12 tables, 12 restrictive FKs, 2 functions, 3 triggers, 5 reference metrics; history/repeat/rollback/upgrade tests PASS",
+  "p01_read_only_inventory": {
+    "branch": "p01/postgresql-foundation",
+    "head": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+    "schema": "cad_v2",
+    "ledger": "none; psql test harness only",
+    "files": [
+      {
+        "path": "db/migrations/100_schema.up.sql",
+        "sha256": "6c63c3bc537be39c627f1f0450c60055e6550f5e33222684be79b20837795d57"
+      },
+      {
+        "path": "db/migrations/100_schema.down.sql",
+        "sha256": "8533998f7a7e24d1963e1dc760b398ae929d9a125f7e8640a662cc608a6326c2"
+      },
+      {
+        "path": "db/migrations/101_ownership.up.sql",
+        "sha256": "a6de69eaa375fd9801136cf2d35078265a56c883084991aa8eb6f72a5ee092bd"
+      },
+      {
+        "path": "db/migrations/101_ownership.down.sql",
+        "sha256": "ab40036a68d22c262aa57ee579e92ed2fe2c22a3a51f654c3d8a03d12d464228"
+      },
+      {
+        "path": "db/migrations/102_checkpoint_outbox.up.sql",
+        "sha256": "04d0d706910939b1e2020bfda6331449c1bcd68dc23e2b7d3f516ed39614a914"
+      },
+      {
+        "path": "db/migrations/102_checkpoint_outbox.down.sql",
+        "sha256": "c35bead1ec455bdff12851f0b903f26fccd6a8908bd0a9c19e08bcd2eb077571"
+      },
+      {
+        "path": "db/migrations/103_master.up.sql",
+        "sha256": "791bc7884b4337d57df35a49c1d3373978ddefd886604ac45b14e366b1df5f4c"
+      },
+      {
+        "path": "db/migrations/103_master.down.sql",
+        "sha256": "36121b221f2e7843500b300a57b5041cb922cd0685a39f790b37c45e01a3eb68"
+      }
+    ]
+  }
 }
