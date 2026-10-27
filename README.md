@@ -9,8 +9,9 @@ Python runtime, notebooks и исследовательские Python-инст�
 о пробеле и предложение её реализации на Go.
 
 Реализованы `cmd/replayer`, frozen R/B/I2 и `cmd/offline`, а также каноническая
-PostgreSQL-схема V1 с транзакционным runner. Полная D2 golden parity пока
-`NOT_RUN`: реальные данные и statistical/IF artifacts отсутствуют в Cloud.
+PostgreSQL-схема V1 с транзакционным runner. P03 добавляет full-grid replay,
+версионированный входной codec и чистый TickAssembler. Результаты локальной
+D2-приёмки и provenance находятся в `docs/migration/03-input-contract.json`.
 Kafka, Worker, Master и recovery относятся к следующим этапам.
 
 ## Требования и запуск
@@ -45,10 +46,67 @@ go run ./cmd/replayer --input /path/to/D2.parquet --speed 10 \
 Невалидные по полноте записи отправляются вместе с остальными.
 Marker следует за последней доступной записью пары `(group,tick)` и содержит
 `records` / `valid_records`. **Полностью отсутствующие пары markers не получают**,
-как в V1 Replay; политика полного перечисления ticks нужна на этапе Kafka.
+как в V1 Replay. Явный режим `--completion-mode full-grid` перечисляет всю сетку.
 После успеха stderr содержит rows / timestamps / invalid / completions / groups / hosts.
 Streaming-выход при ошибке может содержать уже отправленный префикс; автоматический
 retry и transactional output в этом срезе не реализуются.
+
+## P03: полный входной поток
+
+`--completion-mode observed|full-grid` по умолчанию `observed`. Full-grid требует
+явные `--start/--end` на UTC-сетке 10 секунд. Inventory v1 — все 16 канонических
+групп; произвольные и частичные topology в этом срезе не поддерживаются.
+Порядок: timestamp, group_id, hostname; records пары предшествуют единственному
+marker. Пустая пара получает `records=0,valid_records=0`; D2 всегда содержит
+46 080 markers. Pacing общий на tick, включая пустой, `speed=0` без ожиданий.
+
+`--wire-format legacy|v1` по умолчанию `legacy`, включая full-grid. Старые команды
+сохраняют прежний stdout. `v1` требует окно и явно заданные `--execution-id`,
+`--input-sha256`, `--profile-sha256`. Вызывающая сторона отвечает за эти bindings;
+это execution scope и SHA источника/frozen profile, без новой формулы scientific
+RunID/ConfigID/EventID. Один mathematical run может иметь несколько executions.
+
+```powershell
+go run ./cmd/replayer --input ../cluster-anomaly-detection/data/prepared/summit-D1-pilot/D1.parquet `
+  --completion-mode full-grid --speed 0 --wire-format v1 `
+  --start 2022-01-18T08:00:00Z --end 2022-01-18T16:00:00Z `
+  --execution-id p03-local-d2 `
+  --input-sha256 cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7 `
+  --profile-sha256 a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36
+```
+
+Wire schema (один JSON object на строку):
+`{version:"telemetry-input-v1",message_type:"telemetry_record"|"timestamp_complete",
+binding:{execution_id,input_sha256,profile_sha256},group_id,timestamp,payload}`.
+Версия фиксирует F18-v1, порядок `domain.FeatureNames`, 16×18 inventory и mapping.
+Payload record: `{hostname,node_index,f18:[18 numbers/null],is_valid,availability_mask}`;
+payload marker: `{records,valid_records}`. Counts означают количество **всех**
+доступных строк пары и количество полных F18 среди них. Invalid/partial строки
+сохраняются; отсутствующая строка отличается от строки с полностью missing F18.
+`null ↔ NaN`; finite zero сохраняется. Codec отклоняет Inf, несогласованные masks,
+неизвестные поля/версии/типы, неверные canonical identities, grid/window и timestamps
+вне нормализованного UTC `...Z`. Key обоих типов — `group_id`; чистый mapping
+`a01→0,...,a16→15` не использует hash и пока не подключён к брокеру.
+
+`TickAssembler` получает одну группу, immutable binding и окно. Завершение только
+по marker, даже после 18 строк. `GroupTick.Records` содержит существующие records,
+`Missing` перечисляет отсутствующие hosts; Timestamp/Records непосредственно
+совместимы с существующим `detection/group.Tick` через будущий адаптер.
+Память ограничена текущими 18 records; входные arrays копируются, ownership
+выходной map передаётся получателю. `Finish()` обязателен: EOF без всей сетки — ошибка.
+Ошибки availability/формы payload/counts — atomic recoverable validation rejects;
+ошибки stream identity, позиции, порядка, duplicate host/marker и late input —
+fatal, latched: дальнейшая сборка требует перезапуска с корректной границы.
+Exact и conflicting duplicate host имеют разные коды. Валидация не меняет
+принятые records. Durable recovery, ledger и exactly-once в P03 отсутствуют.
+
+`group.AnnotateOutside` требует локальные IF-результаты **других групп того же tick**.
+Его `OutsideAvailable/Anomalous/Groups/S/E` сериализуются в Raw и RBI2Evidence;
+они не меняют голоса, но входят в golden output. Независимый GroupProcessor
+не может вычислить их из одной группы: до следующего среза требуется решение о
+детерминированном обогащении вне GroupProcessor (после сбора summaries всех групп)
+либо отдельном диагностическом потоке с сохранением проверяемого golden contract.
+Семантика и поля в P03 сохранены, координатор не реализован.
 
 ## Проверка на синтетике
 
@@ -58,6 +116,7 @@ retry и transactional output в этом срезе не реализуются
 go test ./...
 go vet ./...
 go build ./cmd/replayer
+go build ./cmd/offline
 git diff --check
 ```
 
@@ -84,6 +143,36 @@ Remove-Item Env:REPLAYER_V1_SOURCE
 в временный модуль, запускает неизменённые reader/scheduler/sender и настоящий
 CLI V2 на одном fixture. V1 не получает build/cache/generated files.
 При отсутствии переменной эта дополнительная проверка явно пропускается.
+
+Строгая реальная приёмка (все prerequisites обязательны, отсутствие env/файлов
+или несовпадение SHA даёт FAIL с перечнем; обычный `go test ./...` оставляет
+внешние проверки opt-in):
+
+```powershell
+$env:OFFLINE_REAL_ROOT = (Resolve-Path '../cluster-anomaly-detection').Path
+$env:GROUP_REAL_ROOT = $env:OFFLINE_REAL_ROOT
+$env:P03_REAL_ROOT = $env:OFFLINE_REAL_ROOT
+# Отдельная чистая reference-копия V1 @ c6de846; пользовательский checkout не менять.
+$env:OFFLINE_V1_SOURCE = (Resolve-Path '.cache/p03/v1-reference').Path
+$env:GROUP_REAL_REFERENCE = (Resolve-Path '../_worknotes/nir-final-kernel-selection/baseline-d2').Path
+$env:GROUP_RBI2_RESEARCH = (Resolve-Path '../_worknotes/nir-final-kernel-selection/i2-focused').Path
+$env:P03_REAL_ACCEPTANCE = '1'
+go test ./internal/acceptance -run '^TestRealAcceptance$' -count=1 -timeout 40m -v
+```
+
+Entrypoint запускает существующие canonical V1→V2 δ0/10/30/60 и independent
+research δ0 comparators, затем real input parity. Dataset, raw и research oracle
+не создаются V2 и не коммитятся. Синтетический E2E — `TestSyntheticInputPipeline`;
+реальный вход — `TestRealD2InputPipeline`, проверяющий 829 440 rows и 46 080 ticks
+на исходном D2. На этой машине Go 1.27.2; Python в P03 не запускался.
+
+Матрица уже перенесённых зависимостей V1 (P03 их не удаляет):
+
+| Класс | Пакеты/область | Причина сохранения |
+|---|---|---|
+| A: frozen runtime | `group`, `local`, численные primitives `analysis`, loaders `experiment` | R/B/I2, frozen IF/B1 и загрузка bundle; legacy Engine используется RBI2Journal |
+| B: offline parity | `group/offline`, RBI2 runner, identity, Hardware/Y, raw/evidence | Полные historical R+B IDs и diagnostic schema, V1 comparator |
+| C: возможное последующее отделение | training/calibration/demo helpers в перенесённых пакетах | Не вызываются новым входным трактом; удаление требует анализа косвенных loader-зависимостей отдельным срезом |
 
 ## Происхождение и дальнейшие этапы
 
