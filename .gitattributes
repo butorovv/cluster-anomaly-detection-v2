@@ -1,0 +1,3 @@
+* text=auto eol=lf
+# Preserve the supplied specification, including intentional Markdown hard breaks.
+docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md -text -whitespace

@@ -1,0 +1,79 @@
+package replayer
+
+import (
+	"context"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/ndjson"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/usecase"
+	topology "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/parquet"
+)
+
+func Run() int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := Replayer(ctx, os.Args[1:], os.Getenv, os.Stdout, os.Stderr); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
+		fmt.Fprintln(os.Stderr, "replayer failed:", err)
+		return 1
+	}
+	return 0
+}
+
+// selectedReader keeps sample-specific topology separate from generic F18 validation.
+type selectedReader struct{ source usecase.RecordReader }
+
+func (r selectedReader) Next(ctx context.Context) (domain.TelemetryRecord, error) {
+	v, err := r.source.Next(ctx)
+	if err != nil {
+		return v, err
+	}
+	if err := topology.ValidateSelectedNode(v.Hostname, v.GroupID, v.NodeIndex); err != nil {
+		return domain.TelemetryRecord{}, err
+	}
+	return v, nil
+}
+
+func Replayer(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) (result error) {
+	cfg, err := load(args, getenv, stderr)
+	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	raw, err := parquet.OpenParquet(cfg.input)
+	if err != nil {
+		return err
+	}
+	defer func() { result = errors.Join(result, raw.Close()) }()
+	log := slog.New(slog.NewTextHandler(stderr, nil))
+	log.InfoContext(ctx, "dataset loaded", "input", cfg.input, "rows", raw.Rows())
+	var reader usecase.RecordReader = selectedReader{source: raw}
+	if !cfg.start.IsZero() {
+		reader = &usecase.WindowReader{Source: reader, Start: cfg.start, End: cfg.end}
+	}
+	sink := ndjson.NewJSONSender(stdout)
+	stats, err := usecase.Replay(ctx, reader, sink, sink, usecase.RealClock{}, cfg.speed)
+	if err != nil {
+		log.ErrorContext(ctx, "replay failed", "error", err, "rows_sent", stats.Rows)
+		return err
+	}
+	log.InfoContext(ctx, "replay finished", "rows", stats.Rows, "timestamps", stats.Timestamps,
+		"groups", stats.Groups, "hosts", stats.Hosts, "invalid", stats.Invalid, "timestamp_completions", stats.Completions)
+	return nil
+}
