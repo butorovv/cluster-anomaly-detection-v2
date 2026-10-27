@@ -27,7 +27,7 @@ func TestV1ScientificDeclarationsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := os.ReadFile(filepath.Join(root, "docs/migration/02-provenance.json"))
+	b, err := os.ReadFile(filepath.Join("testdata", "v1-scientific-files.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
