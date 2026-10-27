@@ -1,0 +1,7 @@
+{
+  "repository": "https://github.com/butorovv/kdbd-cluster-monitoring",
+  "path": "seminar02/migrations/V1__init.sql",
+  "commit": "901091cf143942dbf8c883d233d390787e3c51d1",
+  "original_sha256": "d909619854194c1b9b942497d6337292e15058b23838c6dd9dc9d0b732808092",
+  "transform": "DDL unchanged; five canonical metric_type rows moved into core, other sample DML in db/demo."
+}

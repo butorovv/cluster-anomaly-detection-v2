@@ -1,0 +1,20 @@
+{
+  "go_test": "PASS exit 0",
+  "go_build": "PASS exit 0",
+  "go_vet": "PASS exit 0",
+  "real_B1": "PASS 288 D1 thresholds; 829440 D2 scores/decisions; 14341 anomalies",
+  "python_tests": {
+    "passed": 118,
+    "skipped": 5,
+    "reason": "PostgreSQL TEST_DATABASE_URL absent; synthetic cross-language E2E passed"
+  },
+  "D1_parity": "PASS; all 46080 binary decisions exact; rtol=atol=1e-8",
+  "D2_independent_audit": "PASS; all R/B/IF scores and 184320 temporal candidates",
+  "protected_files": 150,
+  "protected_bytes": 2962196937,
+  "protected_sha_before_equals_after": true,
+  "final_hardening_replay": "final regression v2: all counts, run ID, input/profile SHA and event bytes exact",
+  "events_sha256": "91f003c0ac7376e11a95c84f6bdefcbabdb88a5b17395618c33df2f873c5c91f",
+  "post_D2_changes": "input validation, distinct Y-host counting/full-fixture evidence and known-threshold diagnostics for unknown observations; no coefficient/floor/threshold changes",
+  "artifact_reproduction": "11 numerical/evidence/CSV/JSON tables byte-exact from fresh analysis and context generation"
+}
