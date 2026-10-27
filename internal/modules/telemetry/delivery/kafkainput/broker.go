@@ -35,6 +35,8 @@ func (b Broker) options() []kgo.Opt {
 
 // CheckTopic checks metadata without creating or expanding a topic. A changed
 // topic ID must invalidate external offsets even when its name has been reused.
+// DescribeConfigs supplies the effective policy, including broker defaults;
+// only confirmed delete is safe for the keyed, replayable telemetry log.
 func CheckTopic(ctx context.Context, cl *kgo.Client, topic string) (string, error) {
 	m, err := kadm.NewClient(cl).Metadata(ctx, topic)
 	if err != nil {
@@ -56,7 +58,42 @@ func CheckTopic(ctx context.Context, cl *kgo.Client, topic string) (string, erro
 	if t.ID == (kadm.TopicID{}) {
 		return "", fmt.Errorf("topic ID required for recovery identity")
 	}
+	configs, err := kadm.NewClient(cl).DescribeTopicConfigs(ctx, topic)
+	if err != nil {
+		return "", fmt.Errorf("describe configuration for topic %s: %w", topic, err)
+	}
+	if err := checkCleanupPolicy(configs, topic); err != nil {
+		return "", err
+	}
 	return t.ID.String(), nil
+}
+
+func checkCleanupPolicy(resources kadm.ResourceConfigs, topic string) error {
+	if len(resources) != 1 || resources[0].Name != topic {
+		return fmt.Errorf("topic %s configuration unavailable: require exactly one resource", topic)
+	}
+	found := resources[0]
+	if found.Err != nil {
+		return fmt.Errorf("topic %s configuration unavailable: %w", topic, found.Err)
+	}
+	var policy *string
+	seen := false
+	for i := range found.Configs {
+		if found.Configs[i].Key == "cleanup.policy" {
+			if seen {
+				return fmt.Errorf("topic %s has duplicate cleanup.policy configurations", topic)
+			}
+			seen = true
+			policy = found.Configs[i].Value
+		}
+	}
+	if policy == nil {
+		return fmt.Errorf("topic %s cleanup.policy unavailable", topic)
+	}
+	if *policy != "delete" {
+		return fmt.Errorf("topic %s has unsafe cleanup.policy %q: require delete", topic, *policy)
+	}
+	return nil
 }
 
 func offsetBounds(ctx context.Context, cl *kgo.Client, topic string) (kadm.ListedOffsets, kadm.ListedOffsets, error) {
