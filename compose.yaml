@@ -3,12 +3,14 @@ services:
   kafka:
     image: apache/kafka:4.1.2
     ports:
-      - "127.0.0.1:9092:9092"
+      - "127.0.0.1:${KAFKA_HOST_PORT:-9092}:9092"
+    labels:
+      io.cad.p04-test-owner: "${P04_KAFKA_TEST_OWNER:-}"
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_LISTENERS: HOST://:9092,INTERNAL://:19092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:9092,INTERNAL://kafka:19092
+      KAFKA_ADVERTISED_LISTENERS: HOST://localhost:${KAFKA_HOST_PORT:-9092},INTERNAL://kafka:19092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: HOST:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
@@ -39,5 +41,14 @@ services:
         description=$$(/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:19092 --describe --topic telemetry.raw)
         echo "$$description"
         echo "$$description" | grep -Eq 'PartitionCount: 16([[:space:]]|$$)'
+        configs=$$(/opt/kafka/bin/kafka-configs.sh --bootstrap-server kafka:19092 --entity-type topics --entity-name telemetry.raw --describe --all)
+        echo "$$configs"
+        echo "$$configs" | grep -Eq '(^|[[:space:]])cleanup.policy=delete([[:space:]]|$$)'
 volumes:
   kafka-data:
+    labels:
+      io.cad.p04-test-owner: "${P04_KAFKA_TEST_OWNER:-}"
+networks:
+  default:
+    labels:
+      io.cad.p04-test-owner: "${P04_KAFKA_TEST_OWNER:-}"

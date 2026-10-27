@@ -5,8 +5,11 @@ Go-реализация курсовой системы обнаружения �
 [утверждённое ТЗ](docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md).
 
 Реализованы frozen offline R/B/I2, Parquet replayer, versioned input codec,
-TickAssembler, Kafka input/recovery PoC и PostgreSQL foundation V1–V5. Worker/Master,
-Snapshot/Restore и прикладной checkpoint/outbox runtime — следующие этапы.
+TickAssembler, Kafka Producer/Consumer recovery PoC, PostgreSQL foundation V1–V5
+и Archive Writer с Summit bootstrap/F18 mapping и идемпотентной записью в
+`project.telemetry`. Production archival Kafka Consumer и координация его progress
+с архивом, полноценный Worker, математический Snapshot/Restore, production Master
+и три выходных transport modes пока не реализованы.
 Runtime и тесты — Go; Python для запуска не требуется.
 
 ## Требования и исходные данные
@@ -233,6 +236,11 @@ Host Go-приложения используют `localhost:9092`; контей
 предназначен для локального PoC. Healthcheck проверяет Kafka API.
 `topic-init` создаёт topic с 16 partitions, повторно проверяет именно фактический
 count и завершается ошибкой при несовпадении; существующий topic не расширяется.
+Effective `cleanup.policy` также проверяется через Admin API (`--describe --all`):
+разрешён только `delete`, включая унаследованный broker default. Неизвестная или
+недоступная конфигурация и любые комбинации с `compact` дают отказ. Существующая
+конфигурация topic автоматически не исправляется. Для отдельного стенда можно
+задать `KAFKA_HOST_PORT` и явно передать `docker compose -p <project> ...`.
 Автосоздание topics выключено. Kafka хранит log в named volume `kafka-data`;
 `stop`/`down` сохраняют его. Намеренный сброс **только стенда**:
 `docker compose down -v` (удаляет его Kafka-данные).
@@ -324,8 +332,16 @@ mathematical snapshot + input position, либо восстанавливать 
 
 Обычный `go test ./...` автономен, Kafka suites opt-in. Явно включённый Kafka
 режим падает при отсутствии брокера; strict также требует outage test.
-Outage test останавливает **только Kafka этого Compose-проекта**, запускается
-последовательно; не запускать его одновременно с D2 или другими Kafka suites.
+Обычные Kafka suites используют `P04_KAFKA_BROKERS` (default `localhost:9092`).
+Outage test создаёт отдельный Compose-проект и свободный loopback port; адрес
+обычных suites не является разрешением остановить их broker. Можно явно задать
+`P04_KAFKA_OUTAGE_PROJECT=p04-test-...` и `P04_KAFKA_OUTAGE_PORT`, но проект должен
+быть новым, а порт свободным. Reservation исключает одновременный захват одного
+имени двумя worktree. Перед stop/start проверяются случайный ownership token,
+project/service labels, port binding и неизменный container ID. При неизвестном
+владельце операции запрещены; cleanup удаляет только проверенные собственные
+ресурсы. Docker недоступен или стенд не создан — strict FAIL. Без opt-in outage
+даёт SKIP, а при strict отсутствие `P04_KAFKA_OUTAGE=1` даёт FAIL.
 
 ```powershell
 $env:P04_KAFKA_STRICT = '1'
@@ -346,6 +362,9 @@ Synthetic: 560 records + 48 markers, 48 ticks всех 16 групп: полны
 неполные, partial F18/NaN и полностью пустые. Проверяются содержимое, порядок,
 invalid JSON/schema/version/binding/key/physical routing, count mismatch,
 cancellation, invalid/missing/expired checkpoints, broker stop/start и rebalance.
+Отдельные тесты отклоняют `compact`, `compact,delete`, `delete,compact` до первой
+публикации; разрешают explicit/inherited `delete` и проверяют fail-closed при
+недоступности DescribeConfigs после успешного чтения metadata.
 Отдельный generated Parquet→Replayer Kafka→assembler test проверяет 4 records,
 48 ticks и полное поэлементное содержимое.
 
@@ -360,13 +379,15 @@ markers. Оба пути хранят лишь текущие ticks и 16 hash s
 assembled ticks. Это отдельная проверка от P03 mathematical golden acceptance,
 команды которой приведены выше; synthetic не заменяет original D2.
 
-### Граница будущего архива project.telemetry
+### PostgreSQL Archive Writer и граница будущего Kafka ingestion
 
 Дополнительный контракт КР: доступные F18 измерения из Kafka долговременно
 сохраняются в **существующей** `project.telemetry`; автоматического удаления нет.
-Наличие таблицы ещё не означает надёжного Kafka→SQL ingestion. P04 проверяет её
-DDL/каноническую F18 query и существующие SQL integration suites, но не создаёт
-архивирующий runtime, новую архивную таблицу или V6. V1–V5 остаются неизменными.
+P04-DB реализует самостоятельный `internal/modules/telemetry/archive/postgres`:
+Summit bootstrap, F18 mapping и Archive Writer. Его можно вызывать напрямую для
+prepared D2 без Kafka и пересчёта математики. Production Kafka→SQL consumer и
+атомарное сохранение его progress ещё отсутствуют. Новых архивных таблиц или V6
+нет; V1–V5 остаются неизменными.
 
 `project` хранит topology/metric sources/значения; `cad_v2` — executions,
 ownership/checkpoints/outbox/results. Перед ingestion должны быть заполнены
@@ -381,9 +402,10 @@ ownership/checkpoints/outbox/results. Перед ingestion должны быть
 | `cpu0_mean_temp`, `cpu1_mean_temp` | cpu 0..1 | CPU_MEAN_TEMP |
 | `gpu0_core_temp`..`gpu5_core_temp` | gpu 0..5 | GPU_CORE_TEMP |
 
-Проверять canonical source_key, совместимость вида/типа и единственность каждого
-F18 key на node до записи. DDL защищает FK, `(component_id,metric_type_id)` и вид
-компонента, но не глобальную canonical уникальность source_key. Записывать только
+Writer проверяет вид/индекс компонента, тип/единицы метрики и единственность каждого
+F18 source на node. Исторические spelling `source_key` сохраняются; mapping строится
+по компоненту и типу метрики. DDL защищает FK, `(component_id,metric_type_id)` и вид
+компонента. Writer записывает только
 доступные finite координаты согласно mask, включая finite zero; NaN/отсутствие
 никогда не заменять нулём и не записывать как PostgreSQL numeric NaN.
 `telemetry.value` — `numeric NOT NULL`, `ts` — `timestamptz`, FK restrict;
@@ -391,12 +413,15 @@ F18 key на node до записи. DDL защищает FK, `(component_id,met
 одну каноническую round-trip decimal конверсию; golden F18 остаётся отдельно
 проверяемым исходным input, без обещания хранения IEEE payload bits в numeric.
 
-Будущий writer: bounded batch/COPY в временный staging, проверка конфликтующих
-повторов и insert отсутствующих значений одной транзакцией. Exact повтор
-идемпотентен; другой value при той же паре — явная ошибка с rollback, а не
-безусловный `ON CONFLICT DO NOTHING` или overwrite. Проверка должна оставаться
-верной при конкуренции (serialization/locks + повторное сравнение). Все telemetry
-данные и **отдельный архивный next_offset** фиксируются атомарно в PostgreSQL
+`WriteBatch` принимает до 4096 records; SQL statements содержат до 1024 измерений.
+Запись выполняется через `INSERT ... SELECT FROM UNNEST ... ON CONFLICT DO NOTHING`,
+затем отдельный READ COMMITTED запрос с row locks проверяет равенство значений.
+Весь batch атомарен: exact повтор идемпотентен, конфликтующий value вызывает
+rollback, существующие измерения не перезаписываются. Успех возвращается после
+COMMIT; неоднозначный ответ допускает безопасный повтор тех же records.
+
+Будущая интеграция должна фиксировать telemetry и **отдельный архивный next_offset**
+атомарно в PostgreSQL
 до продвижения позиции; Kafka commit лишь вспомогателен. Если archive consumer
 независим от detector — отдельная Consumer Group, позиция и fencing, чтобы
 checkpoint детектора не выдавал недописанный архив за готовый. Архивируются и
@@ -452,4 +477,5 @@ GroupProcessor, без повторного Temporal/RBI2Journal на Master:
 raw/temporal/evidence/events/summary с теми же V1 golden, затем перестановки
 межгруппового прихода, exact/conflicting duplicates, crash на каждой join/outbox
 границе и reassign Worker. P04 фиксирует проектное решение; сам join,
-Snapshot/Restore, production checkpoint/archive writer и Master не реализованы.
+Snapshot/Restore, production checkpoint/outbox runtime, archival Kafka Consumer
+и Master не реализованы. Самостоятельный Archive Writer уже реализован в P04-DB.

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"os/exec"
 	"reflect"
 	"strings"
 	"sync"
@@ -580,21 +579,34 @@ func TestKafkaBrokerOutage(t *testing.T) {
 		if os.Getenv("P04_KAFKA_STRICT") == "1" {
 			t.Fatal("strict acceptance needs P04_KAFKA_OUTAGE=1 for the owned Compose broker restart test")
 		}
-		t.Skip("P04_KAFKA_OUTAGE=1 allows restarting only this repo's Compose broker")
+		t.Skip("P04_KAFKA_OUTAGE=1 creates an owned, isolated Compose broker")
 	}
+	stand := newOutageBroker(t)
+	t.Setenv("P04_KAFKA_BROKERS", stand.endpoint())
 	cfg, a := integration(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
-	if strings.Join(cfg.Seeds, ",") != "localhost:9092" {
-		t.Fatal("outage test restricted to local Compose broker")
+	// A second worktree cannot adopt this project or authorize a stop merely by
+	// knowing its name, endpoint, or container ID.
+	foreign := *stand
+	foreign.owner = "not-this-invocation-" + stand.owner
+	if err := foreign.action(ctx, "stop"); err == nil {
+		t.Fatal("foreign invocation was allowed to stop the broker")
+	}
+	if err := foreign.requireFresh(ctx); err == nil {
+		t.Fatal("existing project was accepted as fresh")
+	}
+	running, err := stand.docker(ctx, "inspect", "--format", "{{.State.Running}}", stand.id)
+	if err != nil || strings.TrimSpace(string(running)) != "true" {
+		t.Fatalf("foreign-owner rejection must leave broker running: %s %v", running, err)
 	}
 	compose := func(args ...string) {
 		t.Helper()
-		cmd := exec.CommandContext(ctx, "docker", append([]string{"compose"}, args...)...)
-		cmd.Dir = "../../../../.."
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("compose %v: %v %s", args, err, out)
+		if len(args) != 2 || args[1] != "kafka" {
+			t.Fatal("unexpected outage action")
+		}
+		if err := stand.action(ctx, args[0]); err != nil {
+			t.Fatal(err)
 		}
 	}
 	p := producer(t, ctx, cfg)
@@ -626,9 +638,8 @@ func TestKafkaBrokerOutage(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 	compose("stop", "kafka")
-	defer compose("start", "kafka")
 	short, shortCancel := context.WithTimeout(ctx, 200*time.Millisecond)
-	err := timeoutProducer.Complete(short, domain.TimestampComplete{GroupID: "a16", Timestamp: cfg.Window.Start})
+	err = timeoutProducer.Complete(short, domain.TimestampComplete{GroupID: "a16", Timestamp: cfg.Window.Start})
 	shortCancel()
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("unavailable broker must fail delivery deadline", err)
