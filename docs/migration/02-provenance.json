@@ -846,5 +846,143 @@
         "sha256": "36121b221f2e7843500b300a57b5041cb922cd0685a39f790b37c45e01a3eb68"
       }
     ]
+  },
+  "p01_integration": {
+    "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+    "mapping": [
+      {
+        "source": "db/migrations/100_schema.up.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "6c63c3bc537be39c627f1f0450c60055e6550f5e33222684be79b20837795d57",
+        "target": "db/migrations/V2__p01_schema.sql",
+        "target_sha256": "3f13f62a2aa722585d710a3f4f66224f3998e9631e3c4ec7759239fc26656f3e",
+        "transformation": "renamed into single V1-V5 series; integration comment prepended; original SQL bytes unchanged"
+      },
+      {
+        "source": "db/migrations/101_ownership.up.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "a6de69eaa375fd9801136cf2d35078265a56c883084991aa8eb6f72a5ee092bd",
+        "target": "db/migrations/V3__p01_ownership.sql",
+        "target_sha256": "b9004f8f24c294fb7d273538eab5442c6a7bedb87d8bf516b9a14a4d542254ea",
+        "transformation": "renamed into single V1-V5 series; integration comment prepended; original SQL bytes unchanged"
+      },
+      {
+        "source": "db/migrations/102_checkpoint_outbox.up.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "04d0d706910939b1e2020bfda6331449c1bcd68dc23e2b7d3f516ed39614a914",
+        "target": "db/migrations/V4__p01_checkpoint_outbox.sql",
+        "target_sha256": "c7a897db98d7b5dcfdb7ced81bc23a65f8c2feb6542bd13e2d3f4c4039371af6",
+        "transformation": "renamed into single V1-V5 series; integration comment prepended; original SQL bytes unchanged"
+      },
+      {
+        "source": "db/migrations/103_master.up.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "791bc7884b4337d57df35a49c1d3373978ddefd886604ac45b14e366b1df5f4c",
+        "target": "db/migrations/V5__p01_master.sql",
+        "target_sha256": "0d8f11375ab312a237cd3210155d1b5440612393b25d2b2d57290819b2ebc5a3",
+        "transformation": "renamed into single V1-V5 series; integration comment prepended; original SQL bytes unchanged"
+      },
+      {
+        "source": "db/scripts/grants.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "42bc9231b00b5d8dc5aae165556d2cc68942486ebb783db32a5d092dc9515b83",
+        "target": "db/scripts/grants.sql",
+        "target_sha256": "42bc9231b00b5d8dc5aae165556d2cc68942486ebb783db32a5d092dc9515b83",
+        "transformation": "byte-identical; optional role grants, not migration"
+      },
+      {
+        "source": "db/tests/fixtures.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "266be0416be81cebe2a76d651549ebd61b877eaf0bc828374f6c93a9639e308d",
+        "target": "db/tests/fixtures.sql",
+        "target_sha256": "266be0416be81cebe2a76d651549ebd61b877eaf0bc828374f6c93a9639e308d",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      },
+      {
+        "source": "db/tests/01_invariants.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "2e5c640fef02da8503d794beccf696b135fabe96bdea6a95c74d75e051be7e7e",
+        "target": "db/tests/01_invariants.sql",
+        "target_sha256": "2e5c640fef02da8503d794beccf696b135fabe96bdea6a95c74d75e051be7e7e",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      },
+      {
+        "source": "db/tests/02_transactions.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "d30106e34f6d44afeafe08ac7a69b9d7dfca207a7de919cbc6a17fb4fe175b8a",
+        "target": "db/tests/02_transactions.sql",
+        "target_sha256": "d30106e34f6d44afeafe08ac7a69b9d7dfca207a7de919cbc6a17fb4fe175b8a",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      },
+      {
+        "source": "db/tests/03_events.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "17b6fbbc91ef58d36d222cb8fd9192be289b90eb6ba6ec84f531a76615455d83",
+        "target": "db/tests/03_events.sql",
+        "target_sha256": "17b6fbbc91ef58d36d222cb8fd9192be289b90eb6ba6ec84f531a76615455d83",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      },
+      {
+        "source": "db/tests/04_privileges.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "a0f6e04105aa5679a850f4ab78ca6c8f1afc734ac2bcdc8f360491f5ec2092bb",
+        "target": "db/tests/04_privileges.sql",
+        "target_sha256": "a0f6e04105aa5679a850f4ab78ca6c8f1afc734ac2bcdc8f360491f5ec2092bb",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      },
+      {
+        "source": "db/tests/05_execution_scope.sql",
+        "source_commit": "f6ae695ee8620387cdcbc60c11c42987b55936c4",
+        "source_sha256": "4dd40b548cdc6d46e9726f1bdb55cb4f76c9d9c897d835f702333d5f69a4db2c",
+        "target": "db/tests/05_execution_scope.sql",
+        "target_sha256": "4dd40b548cdc6d46e9726f1bdb55cb4f76c9d9c897d835f702333d5f69a4db2c",
+        "transformation": "byte-identical; executed by Go integration test in rollback transactions"
+      }
+    ],
+    "ledger": "public.schema_migrations",
+    "versions": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "down_policy": "No automatic down and no imported destructive down files. Original P01 down scripts remain in source branch; controlled reviewed recovery plan required for a tracked persistent database.",
+    "persistent_p01_adoption": "Untracked pre-existing cad_v2 is rejected; no automatic adoption or history rewrite.",
+    "validation": {
+      "postgresql": "17.11",
+      "fresh_V1_through_V5": "PASS",
+      "upgrade_tracked_V1_to_V5_preserves_numeric_telemetry": "PASS",
+      "rerun_applies_zero": "PASS",
+      "failed_V5_rolls_back_entire_series": "PASS",
+      "untracked_cad_v2_refused": "PASS",
+      "original_P01_SQL_suites": [
+        "01_invariants.sql",
+        "02_transactions.sql",
+        "03_events.sql",
+        "04_privileges.sql",
+        "05_execution_scope.sql"
+      ],
+      "concurrent_fencing_backend_crash_master_dedup": "PASS"
+    }
+  },
+  "documentation_policy": "No new Markdown other than the existing main specification. Operational notes in existing root README.md; provenance in this JSON.",
+  "author_correction": {
+    "expected_remote_head": "397a7a11b38d4b6ec2cf333e206f0321f4cff593",
+    "mapping": [
+      {
+        "old": "574a31a04849bc52d1adf4abeece72911422f998",
+        "new": "72106b11b0c111d103e5cea44684fde549ae9647"
+      },
+      {
+        "old": "848af2d260ba4c8f4a495dacba230ae739d9986a",
+        "new": "9f841ba466b3d18e7ce78c7f5442b92e8a9e113f"
+      },
+      {
+        "old": "397a7a11b38d4b6ec2cf333e206f0321f4cff593",
+        "new": "32dc10f8905c77aac28729dd776988e1cdfbc9a5"
+      }
+    ],
+    "scope": "Only three P02 commits in our PR branch; explicit user approval received. Main and P01 not rewritten."
   }
 }

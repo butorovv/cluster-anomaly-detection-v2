@@ -82,12 +82,12 @@ func Apply(ctx context.Context, conn *pgx.Conn, files fs.FS) (applied int, err e
 	if err = tx.QueryRow(ctx, "SHOW search_path").Scan(&originalPath); err != nil {
 		return 0, err
 	}
-	var tracked, existing bool
-	if err = tx.QueryRow(ctx, "SELECT to_regclass('public.schema_migrations') IS NOT NULL, to_regnamespace('project') IS NOT NULL").Scan(&tracked, &existing); err != nil {
+	var tracked, existing, runtimeSchema bool
+	if err = tx.QueryRow(ctx, "SELECT to_regclass('public.schema_migrations') IS NOT NULL, to_regnamespace('project') IS NOT NULL, to_regnamespace('cad_v2') IS NOT NULL").Scan(&tracked, &existing, &runtimeSchema); err != nil {
 		return 0, err
 	}
-	if !tracked && existing {
-		return 0, fmt.Errorf("untracked project schema: controlled migration adoption required")
+	if !tracked && (existing || runtimeSchema) {
+		return 0, fmt.Errorf("untracked project/cad_v2 schema: controlled migration adoption required")
 	}
 	if _, err = tx.Exec(ctx, `CREATE TABLE IF NOT EXISTS public.schema_migrations (
  version integer PRIMARY KEY CHECK(version > 0), name text NOT NULL UNIQUE,
@@ -116,6 +116,9 @@ func Apply(ctx context.Context, conn *pgx.Conn, files fs.FS) (applied int, err e
 	rows.Close()
 	if err = rows.Err(); err != nil {
 		return 0, err
+	}
+	if runtimeSchema && count < 2 {
+		return 0, fmt.Errorf("untracked cad_v2 schema: controlled migration adoption required")
 	}
 	for _, m := range series[count:] {
 		if _, err = tx.Exec(ctx, m.sql, pgx.QueryExecModeSimpleProtocol); err != nil {

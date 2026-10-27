@@ -94,10 +94,11 @@ CLI V2 на одном fixture. V1 не получает build/cache/generated f
 Полное согласованное ТЗ сохранено без изменений в
 [docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md](docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md).
 
-Срез P02: [перенос БД и R/B/I2](docs/migration/02-v1-db-frozen-rbi2.md),
-[provenance и SHA](docs/migration/02-provenance.json),
-[миграции PostgreSQL](db/README.md). Реальная D2 golden parity остаётся
-обязательным условием перехода к distributed runtime.
+Срез P02 переносит frozen R/B/I2 из V1 `c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc`.
+[Provenance, SHA и карта переноса](docs/migration/02-provenance.json) сохранены
+в JSON. Реальная D2 golden parity остаётся обязательным условием перехода
+к distributed runtime. Новые Markdown-отчёты не добавляются: инструкции
+находятся в этом существующем README, главный контракт — ТЗ в `docs/spec`.
 
 ## Frozen offline R/B/I2
 
@@ -132,5 +133,99 @@ TMPDIR=/path/to/large-temp OFFLINE_V1_SOURCE=/path/to/v1 \
 ```
 
 Тест сравнивает семантику всех записей и canonical output для четырёх δ;
-синтетические модели используются только внутри тестов. Команды реальной D2
-приёмки и список недостающих файлов приведены в отчёте P02.
+синтетические модели используются только внутри тестов. Проверка declarations
+40 scientific source/test files подтверждает сохранность математических операций.
+Из адаптации Source исключён только исследовательский disk guard 5 GiB;
+все content/hash/binding/grid проверки сохранены.
+
+`REAL_D2_GOLDEN: NOT_RUN`: отсутствуют четыре pinned файла:
+`data/prepared/summit-D1-pilot/D1.parquet`, `manifest.json` в том же каталоге,
+`results/statistical-20220118-8h-v1.json`, `results/isolation-20220118-v1.json`.
+Их точные SHA сохранены в provenance и group profile. Историческое имя
+`D1.parquet` относится к исходнику, из которого выбирается окно D2; его нельзя
+заменять новым D2-only файлом. Для независимого research comparator также нужны
+pre-PR14 `raw.ndjson`, `journal-ticks.csv`, `event-tick-evidence.csv` и
+`two-level-journal.ndjson`. Сохранённые `docs/migration/v1-reference` —
+исторические R+B metadata, а не RBI2 golden.
+
+```sh
+TMPDIR=/path/to/large-temp OFFLINE_V1_SOURCE=/path/to/pinned-v1 \
+  OFFLINE_REAL_ROOT=/path/to/frozen-v1 \
+  go test ./internal/app/offline -run '^TestRealD2AllDeltaCanonicalParity$' -count=1 -v
+
+GROUP_REAL_ROOT=/path/to/frozen-v1 \
+  GROUP_REAL_REFERENCE=/path/to/pre-PR14-output \
+  GROUP_RBI2_RESEARCH=/path/to/research-oracles \
+  go test ./internal/modules/detection/group -run '^TestRealRBI2D2Parity$' -count=1 -v
+```
+
+## PostgreSQL: единая серия V1–V5
+
+PostgreSQL 17, новый database и migration owner с правами создания объектов:
+
+```sh
+DATABASE_URL='postgresql://...' go run ./db/cmd/migrate
+TEST_DATABASE_URL='postgresql://.../postgres' go test ./db -count=1 -v
+```
+
+| Версия | Назначение | Источник |
+|---|---|---|
+| V1__core_schema.sql | каноническая `project` schema и 5 metric types | V1 c6de846, побайтно |
+| V2__p01_schema.sql | `cad_v2` tables/domain/identity | P01 100_schema.up.sql |
+| V3__p01_ownership.sql | ownership/lease/fencing functions | P01 101_ownership.up.sql |
+| V4__p01_checkpoint_outbox.sql | atomic checkpoint/outbox/envelope API | P01 102_checkpoint_outbox.up.sql |
+| V5__p01_master.sql | idempotent Master acceptance | P01 103_master.up.sql |
+
+P01 source: `f6ae695ee8620387cdcbc60c11c42987b55936c4`, ветка
+`p01/postgresql-foundation`. Интеграция выполнена в нашей PR-ветке; исходная
+ветка P01 и main не изменяются. В up-файлах добавлен только integration comment;
+весь исходный SQL, включая исторические комментарии P01, сохранён после него.
+Исторический текст о range 100–103 описывает исходный standalone комплект.
+Текущие версии — V2–V5. Проверяемая карта/исходные и итоговые SHA есть в JSON.
+
+Runner `db.Apply` в одной транзакции применяет pending DDL и записывает
+`public.schema_migrations(version,name,sha256,applied_at)`, удерживая advisory
+lock. Единственная executable серия — `db/migrations/V<number>__*.sql`.
+Повторный запуск применяет 0 миграций. Изменённые имена/checksums, неизвестные
+применённые версии, дубликаты и пропуски номеров — ошибки. Search_path
+соединения восстанавливается. Поддержано обновление tracked V1 → V5 с сохранением
+core telemetry. `project.event` — эксплуатационный факт, `project.telemetry` —
+long-format history; `cad_v2.master_events` и checkpoints — отдельные сущности.
+
+Существующая неучтённая `project` или `cad_v2` не принимается автоматически.
+Если P01 100–103 уже применялись к persistent/shared DB, нужен отдельный план
+adoption, а не переименование файлов или подмена ledger. Runner не делает
+reset, DROP volumes и down. Destructive down-файлы и standalone runner P01
+не импортированы; backup/recovery с изменением tracked history требует отдельного
+рассмотрения. `db/demo` не входит в runner; production DML содержит только
+обязательные metric types. Optional demo — только отдельная учебная база:
+
+```sh
+psql "$DEMO_DATABASE_URL" -v ON_ERROR_STOP=1 -1 -f db/demo/V1__demo_data.sql
+```
+
+`db/scripts/grants.sql` — optional выдача прав уже существующим runtime ролям,
+не миграция. Runtime не должен владеть таблицами, быть superuser или наследовать
+migration owner. Запускать как admin/migration owner с psql variables:
+
+```sh
+psql "$DATABASE_URL" -v worker_role=cad_worker -v master_role=cad_master \
+  -f db/scripts/grants.sql
+```
+
+Проверки на PostgreSQL 17.11 создают/удаляют только новые случайные `p02_test_*`
+БД, требуют CREATEDB, для privilege suite — прав создания/переключения test role,
+для crash test — завершения своего тестового backend. Проверяются fresh V1→V5,
+upgrade с V1, history/repeat/checksum, rollback всей серии при сбое V5,
+сохранность core telemetry, исходные пять P01 SQL suites и Go concurrent
+fencing/crash/Master-dedup. PostgreSQL optional: без TEST_DATABASE_URL явный SKIP.
+Python test/runtime dependency не добавляется.
+
+P01 SQL — foundation. Snapshot DTO/codec validation, GroupProcessor integration,
+ownership discovery и transport result envelope ещё требуют реализации и
+continuation parity; SQL fixture bytes не являются snapshot. Будущий processor
+владеет bundle и journal одной группы, обрабатывает Tick и flush exclusive end.
+Snapshot должен сохранять temporal positive/unknown/barriers, last/end/split,
+open parent, witnesses/evidence/maxima/VoteSegments, legacy Engine/RBSubspans,
+assembler и accepted-input state, с проверкой identity/hosts/SHA и round-trip.
+Worker/Master/Kafka/HTTP runtime этим PR не реализуется.

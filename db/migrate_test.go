@@ -77,14 +77,23 @@ func testDatabase(t *testing.T) *pgx.Conn {
 	t.Cleanup(func() { conn.Close(context.Background()) })
 	return conn
 }
+func baselineFiles(t *testing.T) fstest.MapFS {
+	t.Helper()
+	b, err := Files.ReadFile("migrations/V1__core_schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fstest.MapFS{"migrations/V1__core_schema.sql": {Data: b}}
+}
 func TestFreshBaselineAndHistory(t *testing.T) {
+	files := baselineFiles(t)
 	c := testDatabase(t)
 	ctx := context.Background()
 	var version, pathBefore, pathAfter string
 	c.QueryRow(ctx, "SHOW server_version").Scan(&version)
 	t.Log("PostgreSQL", version)
 	c.QueryRow(ctx, "SHOW search_path").Scan(&pathBefore)
-	if n, err := Apply(ctx, c, Files); err != nil || n != 1 {
+	if n, err := Apply(ctx, c, files); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
 	c.QueryRow(ctx, "SHOW search_path").Scan(&pathAfter)
@@ -155,7 +164,7 @@ func TestFreshBaselineAndHistory(t *testing.T) {
 			t.Fatalf("%s: %v", v.sql, err)
 		}
 	}
-	if n, err := Apply(ctx, c, Files); err != nil || n != 0 {
+	if n, err := Apply(ctx, c, files); err != nil || n != 0 {
 		t.Fatal(n, err)
 	}
 	var count int
@@ -187,7 +196,7 @@ func TestFreshBaselineAndHistory(t *testing.T) {
 	if n, err := Apply(ctx, c, upgraded); err != nil || n != 0 {
 		t.Fatal(n, err)
 	}
-	if _, err := Apply(ctx, c, Files); err == nil {
+	if _, err := Apply(ctx, c, files); err == nil {
 		t.Fatal("unknown applied version silently ignored")
 	}
 	upgraded["migrations/V1__core_schema.sql"] = &fstest.MapFile{Data: append(baseline, []byte("\n--changed\n")...)}
