@@ -1,0 +1,460 @@
+{
+  "analysis_seconds": 10.3029792,
+  "build_info": {
+    "GoVersion": "go1.27.2",
+    "Path": "cluster-anomaly-detection/cmd/group",
+    "Main": {
+      "Path": "cluster-anomaly-detection",
+      "Version": "v0.0.0-20261018102450-adb5205ed1fe"
+    },
+    "Deps": [
+      {
+        "Path": "github.com/andybalholm/brotli",
+        "Version": "v1.1.1",
+        "Sum": "h1:PR2pgnyFznKEugtsUo0xLdDop5SKXd5Qf5ysW+7XdTA="
+      },
+      {
+        "Path": "github.com/google/uuid",
+        "Version": "v1.6.0",
+        "Sum": "h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0="
+      },
+      {
+        "Path": "github.com/klauspost/compress",
+        "Version": "v1.17.9",
+        "Sum": "h1:6KIumPrER1LHsvBVuDa0r5xaG0Es51mhhB9BQB2qeMA="
+      },
+      {
+        "Path": "github.com/parquet-go/bitpack",
+        "Version": "v1.0.0",
+        "Sum": "h1:AUqzlKzPPXf2bCdjfj4sTeacrUwsT7NlcYDMUQxPcQA="
+      },
+      {
+        "Path": "github.com/parquet-go/jsonlite",
+        "Version": "v1.0.0",
+        "Sum": "h1:87QNdi56wOfsE5bdgas0vRzHPxfJgzrXGml1zZdd7VU="
+      },
+      {
+        "Path": "github.com/parquet-go/parquet-go",
+        "Version": "v0.32.0",
+        "Sum": "h1:NWDqTUHfrCS4cJP/Fj2HlxvqsrVedWG3sayMkf+znzM="
+      },
+      {
+        "Path": "github.com/pierrec/lz4/v4",
+        "Version": "v4.1.21",
+        "Sum": "h1:yOVMLb6qSIDP67pl/5F7RepeKYu/VmTyEXvuMI5d9mQ="
+      },
+      {
+        "Path": "github.com/twpayne/go-geom",
+        "Version": "v1.6.1",
+        "Sum": "h1:iLE+Opv0Ihm/ABIcvQFGIiFBXd76oBIar9drAwHFhR4="
+      },
+      {
+        "Path": "golang.org/x/sys",
+        "Version": "v0.38.0",
+        "Sum": "h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc="
+      },
+      {
+        "Path": "gonum.org/v1/gonum",
+        "Version": "v0.17.0",
+        "Sum": "h1:VbpOemQlsSMrYmn7T2OUvQ4dqxQXU+ouZFQsZOx50z4="
+      },
+      {
+        "Path": "google.golang.org/protobuf",
+        "Version": "v1.34.2",
+        "Sum": "h1:6xV6lTsCfpGD21XK49h7MhtcApnLqkfYgPcdHftf6hg="
+      }
+    ],
+    "Settings": [
+      {
+        "Key": "-buildmode",
+        "Value": "exe"
+      },
+      {
+        "Key": "-compiler",
+        "Value": "gc"
+      },
+      {
+        "Key": "CGO_ENABLED",
+        "Value": "1"
+      },
+      {
+        "Key": "CGO_CFLAGS"
+      },
+      {
+        "Key": "CGO_CPPFLAGS"
+      },
+      {
+        "Key": "CGO_CXXFLAGS"
+      },
+      {
+        "Key": "CGO_LDFLAGS"
+      },
+      {
+        "Key": "GOARCH",
+        "Value": "amd64"
+      },
+      {
+        "Key": "GOOS",
+        "Value": "windows"
+      },
+      {
+        "Key": "GOAMD64",
+        "Value": "v1"
+      },
+      {
+        "Key": "vcs",
+        "Value": "git"
+      },
+      {
+        "Key": "vcs.revision",
+        "Value": "adb5205ed1fec142db12e9dc11447c436588c76d"
+      },
+      {
+        "Key": "vcs.time",
+        "Value": "2026-10-18T10:24:50Z"
+      },
+      {
+        "Key": "vcs.modified",
+        "Value": "false"
+      }
+    ]
+  },
+  "candidate_ticks": {
+    "0": 682,
+    "10": 989,
+    "30": 1576,
+    "60": 2472
+  },
+  "delta_seconds": [
+    0,
+    10,
+    30,
+    60
+  ],
+  "event_counts": {
+    "0": 285,
+    "10": 292,
+    "30": 295,
+    "60": 287
+  },
+  "fit_seconds": 0,
+  "gc_count": 159,
+  "go_version": "go1.27.2",
+  "goarch": "amd64",
+  "gomaxprocs": 16,
+  "goos": "windows",
+  "group_profile_sha256": "a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36",
+  "group_ticks_per_second": 4472.492771799442,
+  "groups": 16,
+  "heap_sampling_cadence_ticks": 30,
+  "host_states_per_second": 80504.86989238996,
+  "if_supported_events": {
+    "0": 274,
+    "10": 277,
+    "30": 279,
+    "60": 271
+  },
+  "input_sha256_after": {
+    "configs/group-detection.summit-v1.json": "0ceb556aa0767d48d5e661d821a44a8f2442457a1c94dc4c63281de47ebe40b1",
+    "configs/local-b1.summit-20220118.json": "9e7e95f787b564817849de95b37b63ef5c5bc8af053a7dce3f9b20c1cd3b2ea5",
+    "configs/summit-hardware-reference.json": "068fe4c36e4acb4469b51e705b1f2b5317b728e52448971b42e9d695aac5d05f",
+    "data/prepared/summit-D1-pilot/D1.parquet": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
+    "data/prepared/summit-D1-pilot/manifest.json": "6d603a5445d1a76be24408eed84933e96a4a10af6c3bfd32471d93ca7dd9f291",
+    "results/isolation-20220118-v1.json": "6aa1ca4f2f76b56418aafaa1ea25e6812a3b9fdcc0d309aeed44dc1db03f2da3",
+    "results/statistical-20220118-8h-v1.json": "36da27a4a4f485baa4b1b1b899c26a36efc15401327fd85abc3d63ea3c1ade80"
+  },
+  "input_sha256_before": {
+    "configs/group-detection.summit-v1.json": "0ceb556aa0767d48d5e661d821a44a8f2442457a1c94dc4c63281de47ebe40b1",
+    "configs/local-b1.summit-20220118.json": "9e7e95f787b564817849de95b37b63ef5c5bc8af053a7dce3f9b20c1cd3b2ea5",
+    "configs/summit-hardware-reference.json": "068fe4c36e4acb4469b51e705b1f2b5317b728e52448971b42e9d695aac5d05f",
+    "data/prepared/summit-D1-pilot/D1.parquet": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
+    "data/prepared/summit-D1-pilot/manifest.json": "6d603a5445d1a76be24408eed84933e96a4a10af6c3bfd32471d93ca7dd9f291",
+    "results/isolation-20220118-v1.json": "6aa1ca4f2f76b56418aafaa1ea25e6812a3b9fdcc0d309aeed44dc1db03f2da3",
+    "results/statistical-20220118-8h-v1.json": "36da27a4a4f485baa4b1b1b899c26a36efc15401327fd85abc3d63ea3c1ade80"
+  },
+  "primary_delta_seconds": 0,
+  "raw_counts": {
+    "a01": {
+      "ticks": 2880,
+      "r_positive": 32,
+      "b_positive": 210,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 23,
+      "r_only": 9,
+      "b_only": 187,
+      "neither": 2661,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 723,
+      "if_available_host_states": 51840
+    },
+    "a02": {
+      "ticks": 2880,
+      "r_positive": 199,
+      "b_positive": 206,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 148,
+      "r_only": 51,
+      "b_only": 58,
+      "neither": 2623,
+      "r_positive_zero_mad_pair": 187,
+      "r_positive_zero_mad_above": 187,
+      "if_anomalous_host_states": 761,
+      "if_available_host_states": 51840
+    },
+    "a03": {
+      "ticks": 2880,
+      "r_positive": 34,
+      "b_positive": 218,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 23,
+      "r_only": 11,
+      "b_only": 195,
+      "neither": 2651,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 846,
+      "if_available_host_states": 51840
+    },
+    "a04": {
+      "ticks": 2880,
+      "r_positive": 29,
+      "b_positive": 207,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 21,
+      "r_only": 8,
+      "b_only": 186,
+      "neither": 2665,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 897,
+      "if_available_host_states": 51840
+    },
+    "a05": {
+      "ticks": 2880,
+      "r_positive": 21,
+      "b_positive": 211,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 16,
+      "r_only": 5,
+      "b_only": 195,
+      "neither": 2664,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 710,
+      "if_available_host_states": 51840
+    },
+    "a06": {
+      "ticks": 2880,
+      "r_positive": 30,
+      "b_positive": 192,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 19,
+      "r_only": 11,
+      "b_only": 173,
+      "neither": 2677,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 678,
+      "if_available_host_states": 51840
+    },
+    "a07": {
+      "ticks": 2880,
+      "r_positive": 25,
+      "b_positive": 181,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 19,
+      "r_only": 6,
+      "b_only": 162,
+      "neither": 2693,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 637,
+      "if_available_host_states": 51840
+    },
+    "a08": {
+      "ticks": 2880,
+      "r_positive": 33,
+      "b_positive": 205,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 23,
+      "r_only": 10,
+      "b_only": 182,
+      "neither": 2665,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 673,
+      "if_available_host_states": 51840
+    },
+    "a09": {
+      "ticks": 2880,
+      "r_positive": 28,
+      "b_positive": 193,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 19,
+      "r_only": 9,
+      "b_only": 174,
+      "neither": 2678,
+      "r_positive_zero_mad_pair": 28,
+      "r_positive_zero_mad_above": 28,
+      "if_anomalous_host_states": 756,
+      "if_available_host_states": 51840
+    },
+    "a10": {
+      "ticks": 2880,
+      "r_positive": 31,
+      "b_positive": 178,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 16,
+      "r_only": 15,
+      "b_only": 162,
+      "neither": 2687,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 631,
+      "if_available_host_states": 51840
+    },
+    "a11": {
+      "ticks": 2880,
+      "r_positive": 74,
+      "b_positive": 211,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 63,
+      "r_only": 11,
+      "b_only": 148,
+      "neither": 2658,
+      "r_positive_zero_mad_pair": 18,
+      "r_positive_zero_mad_above": 54,
+      "if_anomalous_host_states": 784,
+      "if_available_host_states": 51840
+    },
+    "a12": {
+      "ticks": 2880,
+      "r_positive": 74,
+      "b_positive": 195,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 54,
+      "r_only": 20,
+      "b_only": 141,
+      "neither": 2665,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 1234,
+      "if_available_host_states": 51840
+    },
+    "a13": {
+      "ticks": 2880,
+      "r_positive": 74,
+      "b_positive": 214,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 58,
+      "r_only": 16,
+      "b_only": 156,
+      "neither": 2650,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 1243,
+      "if_available_host_states": 51840
+    },
+    "a14": {
+      "ticks": 2880,
+      "r_positive": 71,
+      "b_positive": 210,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 62,
+      "r_only": 9,
+      "b_only": 148,
+      "neither": 2661,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 1231,
+      "if_available_host_states": 51840
+    },
+    "a15": {
+      "ticks": 2880,
+      "r_positive": 70,
+      "b_positive": 216,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 59,
+      "r_only": 11,
+      "b_only": 157,
+      "neither": 2653,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 1304,
+      "if_available_host_states": 51840
+    },
+    "a16": {
+      "ticks": 2880,
+      "r_positive": 74,
+      "b_positive": 213,
+      "y_unknown": 2880,
+      "r_unknown": 0,
+      "b_unknown": 0,
+      "both": 59,
+      "r_only": 15,
+      "b_only": 154,
+      "neither": 2652,
+      "r_positive_zero_mad_pair": 0,
+      "r_positive_zero_mad_above": 0,
+      "if_anomalous_host_states": 1233,
+      "if_available_host_states": 51840
+    }
+  },
+  "run_id": "70bd4e3d0d926bc49d6d36aacc9c3d66d1ba9a7817d4bb7fa908225aaf63853f",
+  "sampled_peak_heap_bytes": 29066344,
+  "summary_only": false,
+  "ticks": 2880,
+  "timing": {
+    "features_seconds": 0.37042230000000004,
+    "r_seconds": 0.0869767,
+    "b_seconds": 0.013716699999999998,
+    "y_seconds": 0.05063970000000002,
+    "if_seconds": 5.302510400000004,
+    "temporal_seconds": 0.0345871
+  },
+  "total_alloc_bytes": 2116591496,
+  "total_seconds": 10.5294566,
+  "version": "summit-group-research-v1",
+  "window": {
+    "start": "2022-01-18T08:00:00Z",
+    "end_exclusive": "2022-01-18T16:00:00Z"
+  },
+  "y_status": "unknown_when_no_approved_bounds",
+  "zero_mad_pair_events": {
+    "0": 42,
+    "10": 42,
+    "30": 40,
+    "60": 37
+  }
+}
