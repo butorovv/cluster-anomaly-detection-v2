@@ -484,3 +484,27 @@ raw/temporal/evidence/events/summary с теми же V1 golden, затем пе
 Kafka Consumer и Master не реализованы. Snapshot/Restore реализован в P06,
 Worker checkpoint/outbox runtime — в P07 (пока terminal-only events).
 Самостоятельный Archive Writer реализован в P04-DB.
+
+## P08: Master Core
+
+`cmd/master` принимает общий envelope v1 через `POST /v1/results`, возвращает ACK
+только после COMMIT `cad_v2.accept_result` и предоставляет пагинированный
+`GET /v1/events?execution_id=UUID&group_id=a01&after=EVENT_ID&limit=100`.
+`MASTER_DATABASE_URL` задаёт DSN; `--listen` по умолчанию `127.0.0.1:8080`.
+Обычная runtime-роль Master использует существующий `db/scripts/grants.sql`.
+`/healthz` проверяет HTTP lifecycle; startup проверяет PostgreSQL.
+
+Общий generic `events/domain.Message[T]` сохраняет P07 wire representation;
+RawMessage на приёме сохраняет оригинальный payload, типизированный RBI2Event
+используется Worker. Проверяются duplicate JSON keys, schema/version, scientific
+identity и execution/group/event binding; SQL сериализует конкурирующий приём,
+дедупликацию и revision projection. Master не считает Temporal/Journal.
+
+Слои: `events/domain`, `events/usecase`, `events/repository/postgres`,
+`events/delivery/httpinput`, `app/master`, `cmd/master`. Полная документация
+следующих этапов интегрируется сюда; новые Markdown-отчёты не создаются.
+
+Проверка P08: реальные PostgreSQL tests под `-race` подтвердили exact retries,
+конфликтующий payload/alternate message_id, terminal revision 3 до open revisions
+1/2, сохранность payload и изоляцию executions. Проверка 40 scientific declarations
+на LF checkout V1 `c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc` прошла.
