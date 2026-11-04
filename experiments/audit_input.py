@@ -61,7 +61,7 @@ def main():
               'explanation': 'D1-pilot is the prepared full-day asset name (00:00–23:59:50); D2 is its immutable 08:00 inclusive–16:00 exclusive evaluation window. No D1 training window is replayed.',
               'wire_exact_float_bit_evidence': 'P13 TestRealAcceptance/TestRealD2InputPipeline: 829440 records and 46080 assembled markers; no invalid/partial/empty real D2 ticks',
               'raw_source_sha_status': 'declared by immutable manifest, original raw source not rehashed in this audit'}
-    with args.output.open('x', encoding='utf-8') as f:
+    with args.output.open('x', encoding='utf-8', newline='\n') as f:
         json.dump(result, f, indent=2)
         f.write('\n')
 

@@ -42,7 +42,7 @@ def main():
             return
         columns = list(dict.fromkeys(k for row in rows for k in row))
         with (args.output / name).open('w', newline='', encoding='utf-8') as f:
-            writer = csv.DictWriter(f, fieldnames=columns)
+            writer = csv.DictWriter(f, fieldnames=columns, lineterminator='\n')
             writer.writeheader()
             writer.writerows(rows)
     # Speedup uses ONLY the matched observed N=1 baseline.
@@ -83,7 +83,7 @@ def main():
     if transports:
         labels = [r['mode'] + (f" {r['poll_ms']}ms" if r['mode'] == 'polling' else '') for r in transports]
         fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-        for ax, component, title in ((axes[0], 'send_to_master_receive', 'Send → Master intake'), (axes[1], 'source_to_final_join_confirmation', 'Source CreateTime → final join ACK')):
+        for ax, component, title in ((axes[0], 'send_to_master_receive', 'Send → Master intake (log scale)'), (axes[1], 'source_to_final_join_confirmation', 'Source CreateTime → final join ACK')):
             x = list(range(len(transports)))
             for offset, q in ((-.22, 'p50_seconds'), (0, 'p95_seconds'), (.22, 'p99_seconds')):
                 ax.bar([i+offset for i in x], [r[f'{component}_{q}'] for r in transports], width=.22, label=q[:3])

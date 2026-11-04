@@ -50,20 +50,22 @@ def analyze(path):
                         intake[item['message_id']] = item
     if len(ticks) != run['comparison']['raw_rows']:
         raise ValueError('missing tick traces')
-    received, commits, pending = [], [], []
+    received, commits, pending, transport, service = [], [], [], [], []
     for message, item in intake.items():
         received_at = seconds(item['received_at'])
         sent = max(t for t in attempts[message] if t <= received_at)
         received.append(received_at)
         commits.append(seconds(item['committed_at']))
         pending.extend([(sent, 1), (received_at, -1)])
+        transport.append(received_at-sent)
+        service.append(seconds(item['committed_at'])-received_at)
     depth, max_depth = 0, 0
     for _, delta in sorted(pending):
         depth += delta
         max_depth = max(max_depth, depth)
     master_sum = sum(seconds(i['committed_at'])-seconds(i['received_at']) for i in intake.values())
     intake_span = max(commits)-min(received)
-    send_wait, source_durable, reconstruction_errors, join_wait = [], [], [], []
+    send_wait, source_durable, reconstruction_errors, join_wait, e2e, source_times = [], [], [], [], [], []
     joins = {}
     for item in intake.values():
         if item['kind'] == 'tick_fragment':
@@ -73,6 +75,7 @@ def analyze(path):
         message = hashlib.sha256(json.dumps(identity, separators=(',', ':')).encode()).hexdigest()
         item, ack = intake[message], durable[key]
         source, computed = seconds(tick['source_first_at']), seconds(tick['computed_at'])
+        source_times.append(source)
         received_at, committed = seconds(item['received_at']), seconds(item['committed_at'])
         confirmed = seconds(ack['confirmed_at'])
         sent = max(t for t in attempts[message] if t <= received_at)
@@ -80,10 +83,39 @@ def analyze(path):
         send_wait.append(sent-confirmed)
         source_durable.append(confirmed-source)
         join_wait.append(joins[tick['tick']]-committed)
+        e2e.append(joins[tick['tick']]-source)
         components = [(computed-source), (confirmed-computed), (sent-confirmed),
                       (received_at-sent), (committed-received_at), (joins[tick['tick']]-committed)]
         reconstruction_errors.append(abs(sum(components)-(joins[tick['tick']]-source)))
+    verified = {}
+    for name, values in [('send_to_master_receive', transport), ('master_intake_to_commit_confirmation', service),
+                         ('source_to_final_join_confirmation', e2e), ('compute', [t['compute_seconds'] for t in ticks.values()]),
+                         ('computed_to_durable_confirmation', [t['durability_wait_seconds'] for t in durable.values()])]:
+        actual = distribution(values)
+        saved = run['measurements'][name]
+        if actual['count'] != saved['count'] or any(abs(actual[q]-saved[q]) > 0.00001 for q in
+                                                  ['mean_seconds', 'p50_seconds', 'p95_seconds', 'p99_seconds']):
+            raise ValueError(f'saved quantiles differ from actual traces: {name}')
+        verified[name] = actual
+    throughput = len(ticks)/(max(joins.values())-min(source_times))
+    if abs(throughput-run['measurements']['group_ticks_per_second']) > .00001:
+        raise ValueError('saved throughput differs from real processing clocks')
+    samples = json.loads((root/'metrics-samples.json').read_text(encoding='utf-8-sig'))
+    resources = {}
+    for source, target in [('WorkerCPU', 'worker_cpu_seconds'), ('MasterCPU', 'master_cpu_seconds'),
+                           ('WorkerRSS', 'worker_peak_aggregate_rss_bytes'), ('MasterRSS', 'master_peak_rss_bytes'),
+                           ('Backlog', 'outbox_backlog_max'), ('Lag', 'input_kafka_lag_records_max')]:
+        value = max(s.get(source, 0) for s in samples)
+        if abs(value-run['measurements'][target]) > .00001:
+            raise ValueError(f'saved resource aggregate differs from samples: {target}')
+        resources[target] = value
+    for key, value in run['measurements']['counters'].items():
+        if max(s.get('counters', {}).get(key, 0) for s in samples) != value:
+            raise ValueError(f'saved counter differs from samples: {key}')
     return {'scenario': run['configuration']['name'], 'status': 'PASS',
+            'verified_distributions': verified, 'verified_throughput': throughput,
+            'verified_resource_aggregates': resources,
+            'resource_samples_sha256': hashlib.sha256((root/'metrics-samples.json').read_bytes()).hexdigest(),
             'source_result_sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'log_sources': sources,
             'source_to_durable': distribution(source_durable),
             'durable_ack_to_send_signed_seconds': {'min': min(send_wait), 'mean': sum(send_wait)/len(send_wait),
@@ -95,7 +127,7 @@ def analyze(path):
             'max_sent_not_yet_intaken_messages': max_depth,
             'worker_cpu_seconds': run['measurements']['worker_cpu_seconds'],
             'master_cpu_seconds': run['measurements']['master_cpu_seconds'],
-            'input_kafka_lag_status': 'NOT_VERIFIED_LEGACY_SAMPLER',
+            'input_kafka_lag_status': run['measurements'].get('input_kafka_lag_status', 'NOT_VERIFIED_LEGACY_SAMPLER'),
             'broker_vs_consumer_local_queue': 'NOT_MEASURED: old traces have neither produce ACK nor PollRecords return timestamps',
             'postgres_lock_wait_seconds': 'NOT_MEASURED: intake service includes decode/validation/SQL/commit; no historical pg_stat_activity samples'}
 
@@ -106,7 +138,7 @@ def main():
     p.add_argument('--output', type=Path, required=True)
     args = p.parse_args()
     results = [analyze(path) for path in args.run]
-    with args.output.open('x', encoding='utf-8') as f:
+    with args.output.open('x', encoding='utf-8', newline='\n') as f:
         json.dump({'schema_version': 1, 'runs': results,
                    'interpretation': 'sum_intake_service_over_span is serialized-loop occupancy only for Kafka; HTTP intervals overlap; quantiles of components are not additive'}, f, indent=2)
         f.write('\n')
