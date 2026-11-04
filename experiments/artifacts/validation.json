@@ -173,5 +173,11 @@
     "go_vet": "PASS",
     "kafka_disconnect_race": "PASS",
     "compose_three_modes": "PASS"
+  },
+  "final_lease_fencing_race": {
+    "status": "PASS",
+    "command": "go test -race ./internal/modules/detection/repository/postgres -run ^TestStoreCheckpointOutboxRecoveryAndLeaseFencing$ -count=1 -v -timeout 1m",
+    "seconds": 4.562,
+    "real_postgres": true
   }
 }

@@ -135,8 +135,8 @@
     },
     {
       "id": "KR-19",
-      "status": "PASS",
-      "evidence": "README statistical vs hardware limits; full RPZ outside task"
+      "status": "PARTIAL",
+      "evidence": "README explicitly separates statistical and hardware conclusions; final university RPZ is outside task and not yet verified"
     }
   ],
   "full_distributed_d2_passes": 40,
