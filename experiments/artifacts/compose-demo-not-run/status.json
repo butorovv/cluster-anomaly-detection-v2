@@ -1,0 +1,5 @@
+{
+  "reason": "Docker engine unavailable",
+  "status": "NOT_RUN",
+  "command": "pwsh -File deploy/demo.ps1 -EnvironmentFile deploy/.env"
+}

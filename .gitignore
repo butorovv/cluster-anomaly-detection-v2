@@ -28,3 +28,4 @@
 .DS_Store
 Thumbs.db
 /experiments/artifacts/**/bin/
+*.env

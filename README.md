@@ -9,10 +9,9 @@ TickAssembler, Kafka Producer/Consumer, PostgreSQL foundation V1–V5,
 полный математический Snapshot/Restore и [Worker runtime](#worker-runtime-checkpoint-и-recovery)
 с Consumer Group, SQL ownership/fencing и atomic checkpoint/outbox. Archive Writer
 поддерживает Summit bootstrap/F18 mapping и идемпотентную запись в
-`project.telemetry`. Production archival Kafka Consumer и координация его progress
-с архивом, межгрупповой outside join, production Master и три выходных transport
-modes пока не реализованы. Worker сохраняет только терминальные RBI2 events;
-полная distributed Raw/Evidence golden parity пока не заявляется.
+`project.telemetry`. Production archival Kafka Consumer и координация его progress с архивом остаются
+отдельным расширением. P08–P10 добавляют Master, три транспорта и durable outside
+join. Статусы parity, отказов и измерений подтверждаются JSON-артефактами ниже.
 Runtime и тесты — Go; Python для запуска не требуется.
 
 ## Требования и исходные данные
@@ -105,8 +104,8 @@ duplicate/late ошибки fatal и останавливают сборку; ex
 различаются. Полный durable recovery математики и exactly-once в этом входном срезе отсутствуют.
 
 `group.AnnotateOutside` использует другие группы того же tick. Его IF Outside-поля
-не меняют голоса, но входят в golden Raw/Evidence. До независимого GroupProcessor
-нужно решение о детерминированном обогащении вне него. Поля и семантика сохранены.
+не меняют голоса, но входят в golden Raw/Evidence. В P10 обогащение выполняется после независимого GroupProcessor на Master;
+поля и семантика сохранены.
 
 ## Проверки и воспроизведение parity
 
@@ -452,7 +451,7 @@ event IFScoreMax/IFSimultaneousMax/IFHosts используют локальны
 2-of-3, δ, temporal transitions, EventID/RunID/ConfigID и Journal intervals
 от outside-аннотации не зависят. Локальные S/Available/Anomalous не изменяются.
 
-Предлагаемая граница — durable deterministic diagnostic join **после** независимых
+Реализованная P10 граница — durable deterministic diagnostic join **после** независимых
 GroupProcessor, без повторного Temporal/RBI2Journal на Master:
 
 1. Worker считает локальную математику и Journal один раз, сохраняет Raw с
@@ -466,24 +465,19 @@ GroupProcessor, без повторного Temporal/RBI2Journal на Master:
    `AnnotateOutside` над копиями Raw. Обогащает только пять полей Raw и уже
    сохранённого Evidence.Raw по `(run,group,timestamp)`. Evidence ID и решение
    положительности не пересчитываются; events/Temporal остаются прежними.
-4. Durable join input/completion/outbox допускает replay после crash без повторной
-   публикации. Finalization идёт по timestamp watermark, затем group; внутри
-   группы порядок worker sequence сохраняется. Events имеют собственный тип и
-   sequence: если общий exporter требует causal evidence-before-event, event
-   ждёт watermark последнего зависимого evidence/закрытия; порядок равных времён
-   берётся из existing canonical exporter, не из порядка прихода Kafka.
+4. Durable fragments, финальные results и completion marker допускают replay.
+   Каждый timestamp завершается своей транзакцией. Глобальный watermark здесь
+   не вводится. Канонический export читает завершённый execution в порядке
+   timestamp/group; events — самостоятельные terminal сообщения.
 5. Нет полного набора — нет final outside и нет «нулей вместо ещё не пришло».
    Timeout — диагностический blocked/incomplete run, не научное решение.
    Recovery использует durable join state и те же keys; задержка одной группы
    задерживает только final diagnostics/export, не локальный detector state.
 
-Приёмка будущего join: для frozen windows/δ0/10/30/60 сравнить canonical
-raw/temporal/evidence/events/summary с теми же V1 golden, затем перестановки
-межгруппового прихода, exact/conflicting duplicates, crash на каждой join/outbox
-границе и reassign Worker. P04 фиксирует проектное решение; сам join, archival
-Kafka Consumer и Master не реализованы. Snapshot/Restore реализован в P06,
-Worker checkpoint/outbox runtime — в P07 (пока terminal-only events).
-Самостоятельный Archive Writer реализован в P04-DB.
+Приёмка P10 сопоставляет каждый Raw/Temporal/Evidence/parent field с независимым
+pinned V1, включая δ0/10/30/60, разные Worker counts, перестановки и recovery.
+Результаты и ограничения — в разделе P10 ниже. Самостоятельный Archive Writer
+реализован в P04-DB; его отдельный archival Kafka consumer не входит в этот runtime.
 
 ## Worker runtime: checkpoint и recovery
 
@@ -546,13 +540,9 @@ Master использует V5 `accept_result`; его runtime описан в �
 сериализованы адаптером. Отдельный admin client только читает source metadata,
 второго consumer нет. Kafka commits отключены полностью.
 
-Cadence P07 фиксирована **1 completed tick**. Partial tick живёт только в RAM,
-никакой prefetched cursor не становится durable. При падении он перечитывается
-целиком с последнего complete boundary. Контракты `Transition`/`Ack`/SQL уже
-отделяют вычисление от durable barrier: cadence 3/6 потребует накопить outputs и
-сохранить snapshot последнего завершённого tick вместе с его cursor, не меняя
-Step/Flush/Snapshot и не включая offset частичного следующего tick. Сам batching
-и его измерения остаются следующей работой.
+P07 использовал cadence=1. P11 расширяет durable boundary до 1/3/6 complete ticks
+без изменения Step/Flush/Snapshot. Partial tick и весь неподтверждённый batch
+переигрываются от последнего PostgreSQL next_offset; см. P11 ниже.
 
 ### Регистрация и запуск
 
@@ -827,3 +817,160 @@ INSERT. Это необходимо из-за существующего `V5.acc
 Master не получает прямой UPDATE на execution metadata. Тот же concurrent тест
 прошёл под ограниченной runtime-ролью, у которой прямой `SELECT ... FOR UPDATE`
 отклоняется. `db.GrantRuntime` применяет тот же grants.sql из Go bootstrap/tests.
+
+## P11: cadence, отказные сценарии и методика измерений
+
+`--checkpoint-interval-ticks 1|3|6` задаётся при регистрации и на каждом Worker.
+Несовпадение с immutable `executions.checkpoint_interval_ticks` — ошибка.
+RunID/ConfigID/EventID от cadence не зависят. `NewPartitionWithCadence` вызывает
+исходный Step на каждом marker и блокирует input до ACK только на границе batch.
+`Transition.Results` содержит все завершённые ticks, `Result.Events` — все parents,
+закрытые в любом tick batch. Последний tick окна выполняет Finish и фиксирует
+короткий хвост тем же checkpoint/outbox барьером. Graceful shutdown не подтверждает
+RAM-only хвост; следующий owner переигрывает его.
+
+Unit race suite проверяет cadence × все δ, потерю complete batch tail + частичного
+следующего tick, точные поля результатов, IDs, snapshot SHA и короткую finalization.
+Реальные SQL tests проверяют batch atomicity, COMMIT rollback/lost ACK и immutable
+cadence; `TestWorkerCadenceProcessCrashAndReplay` принудительно убивает отдельный
+Worker и проверяет повторную сборку input, открытый EventID, все VoteSegments и
+RBSubspans, отсутствие потерянных/дублированных fragments. Фактические статусы
+интеграционных запусков сохраняются отдельно; наличие теста не означает PASS.
+
+Экспериментальные configs:
+
+- `p10-full-matrix.json`: точная математическая parity, затем kill Worker внутри
+  durable open parent, rebalance и restart Master; cadence=1.
+- `p11-batch-crash.json`: mid-event kill при cadence=3/6 с полным D2 comparator.
+- `p11-measured.json`: scaling 1/2/4/8/16, cadence 1/3/6 и все transports при
+  одинаковых frozen inputs, δ0, 16 групп, speed=0; polling 10/100/500 ms.
+
+```powershell
+go run ./experiments/runner --config experiments/configs/p10-full-matrix.json --resume
+go run ./experiments/runner --config experiments/configs/p11-batch-crash.json --resume
+go run ./experiments/runner --config experiments/configs/p11-measured.json --resume
+python experiments/summarize.py --matrix experiments/artifacts/p11-measured/matrix.json --matrix experiments/artifacts/p11-batch-crash/matrix.json --output experiments/artifacts/summary-new
+```
+
+`--resume` пропускает сохранённый PASS с той же RunSpec. Неуспешные попытки и их
+logs сохраняются перед новым запуском. Для нового независимого повторения изменить
+`output`; для восстановления анализа без replay использовать
+`--analyze-existing path/to/run.json` (нужны сохранённые logs и metrics samples).
+Большие операционные `.log` и binary файлы остаются локальными; численные результаты,
+конфигурации, provenance и агрегированные resource samples хранятся в Git.
+
+`--measure=true` на Worker/Master включает технические JSON traces без F18.
+Измерения не входят в immutable scientific envelope. Определения:
+
+| Показатель | Граница |
+|---|---|
+| compute | monotonic Step + Finish; без snapshot serialization/SQL |
+| input queue | реальный Kafka CreateTime первой записи tick → первый приём Worker |
+| durability wait | завершение вычисления tick → получение durable checkpoint ACK; включает ожидание batch и serialization |
+| transport | начало отправки durable message → вход в Master intake; включает decode и очередь внутри polling page |
+| Master commit | вход intake → получение ACK PostgreSQL; последний fragment включает весь outside join |
+| E2E | реальный CreateTime первой записи tick → ACK последнего fragment всех групп timestamp, то есть финального join |
+| throughput | complete group ticks / интервал earliest source CreateTime → last join ACK |
+
+ACK — наблюдаемая верхняя граница durable commit, не точный server commit instant.
+Durability и transport могут перекрываться: dispatcher видит committed outbox
+раньше, чем input handler получил ACK. Поэтому эти компоненты нельзя механически
+складывать. Исторический Summit timestamp используется только для корреляции.
+Все процессы находятся на одном хосте; отрицательные/невалидные clock samples
+вызывают ошибку анализа. Межхостовой стенд требует отдельной проверки clock skew.
+
+Quantiles — exact nearest rank по traces, registry histograms на `/metrics` —
+ограниченные buckets для наблюдения. Resource sampler раз в секунду читает native
+process CPU seconds/RSS (Windows или Linux), heap, input lag и durable backlog.
+Пики RSS/backlog/lag ограничены частотой sampling. Счётчики различают accepted,
+duplicates, conflicts, output attempts/retries и payload bytes. Дополнительно учитываются фактические байты protocol streams: HTTP client
+для Push/Polling, producer + consumer client для Kafka (обе broker legs).
+Это включает HTTP/Kafka framing и control requests, но исключает TCP/IP headers,
+PostgreSQL/input и внутренний broker traffic: последние — `NOT_MEASURED`.
+Result compression явно выключена во всех режимах; input Snappy остаётся общим. CPU/RSS broker, PostgreSQL и Replayer отдельно не измеряются.
+
+Каждый Worker имеет GOMAXPROCS=1, Master=2, Replayer=1. PostgreSQL fsync и
+synchronous_commit включены; Kafka all-ISR в single-broker стенде не доказывает
+переживание потери broker disk. Kafka auxiliary commit выполняется после durable PostgreSQL обработки всего
+PollRecords batch (до 128); logical ACK/progress по-прежнему фиксируется на каждое
+сообщение. Kafka output требует retention до durable intake
+Master. Для нового Kafka execution output start регистрируется **до** первого
+Worker publish, чтобы чужие старые executions не искажали transport benchmark;
+restart использует сохранённый output cursor.
+
+Один полный запуск на конфигурацию даёт предварительные сравнительные точки,
+не confidence intervals. Shared database, централизованный diagnostic join,
+внутренние CPU/I/O конкуренты и Windows scheduler ограничивают выводы о speedup.
+Нельзя переносить такие числа на межхостовую production сеть без новых измерений.
+
+## P12: Compose, наблюдаемость и демонстрация
+
+```mermaid
+flowchart LR
+  R[Replayer: prepared F18] --> K[Kafka telemetry.raw: 16 partitions]
+  K --> W[Dynamic Worker Consumer Group]
+  W --> A[TickAssembler → frozen GroupProcessor]
+  A --> C[PostgreSQL: snapshot + input offset + terminal outbox + fragments]
+  C --> D[Current-owner dispatcher / HTTP outbox endpoint]
+  D --> P[Polling / HTTP Push / group.results]
+  P --> M[Master validation + SQL dedup]
+  M --> J[Durable timestamp join: existing AnnotateOutside]
+  J --> F[Final Raw / Temporal / Evidence]
+  M --> E[Unchanged terminal RBI2 events]
+```
+
+`deploy/compose.yaml` содержит PostgreSQL, Kafka, административный bootstrap,
+Master, масштабируемый Worker и opt-in Replayer. Assets монтируются read-only;
+не копируются в image. Bootstrap применяет V1–V7, создаёт отдельные минимальные
+runtime roles, применяет тот же `grants.sql`, проверяет topics и явно регистрирует
+новый execution с initial offsets. Runtime не получает migration ownership.
+Порты хоста привязаны к loopback; служебный plaintext HTTP/Kafka предназначен для
+изолированной исследовательской сети. Пароли examples заменить; для DSN использовать
+URL-safe значения или percent encoding.
+
+Kafka configuration сверена с [официальным single-node example](https://github.com/apache/kafka/blob/4.1.2/docker/examples/docker-compose-files/single-node/plaintext/docker-compose.yml).
+Каждый Worker сообщает свой container IP, а не общий round-robin DNS alias.
+Healthchecks ждут PostgreSQL, Kafka, завершения bootstrap и runtime `/readyz`.
+`/healthz` — liveness; `/readyz` дополнительно проверяет SQL, а у Worker — восстановленное
+назначение. `/metrics` возвращает JSON: execution/owner labels, counters, gauges,
+bounded histograms и native CPU/RSS. Большие F18 payload в logs не выводятся.
+
+```powershell
+Copy-Item deploy/.env.example deploy/.env
+# В deploy/.env задать настоящий ASSETS_ROOT, новые пароли и новый EXECUTION_ID.
+docker compose --env-file deploy/.env -p cad-demo -f deploy/compose.yaml config --quiet
+docker compose --env-file deploy/.env -p cad-demo -f deploy/compose.yaml up -d --build --wait --scale worker=4 master worker
+docker compose --env-file deploy/.env -p cad-demo -f deploy/compose.yaml run --rm --no-deps replayer
+# Обзор owner/epoch/recovery/checkpoint:
+docker compose --env-file deploy/.env -p cad-demo -f deploy/compose.yaml logs --follow worker
+```
+
+Для смены transport требуется новый execution UUID с тем же scientific run.
+Изменение режима существующего execution отклоняется. Для повторного replay тоже
+использовать новый execution, а не дописывать второй D2 в finalized execution.
+
+`deploy/demo.ps1` автоматизирует три режима на одном scientific δ30 run: запуск
+нескольких Worker, ожидание durable open parent, сопоставление owner с конкретным
+container через `/metrics`, kill, rebalance/Restore и проверку сохранённого EventID.
+Итоговые summary и операционные параметры сохраняются в JSON, logs — локально.
+Демонстрационный smoke не заменяет независимый full golden comparator.
+
+```powershell
+pwsh -File deploy/demo.ps1 -EnvironmentFile deploy/.env -Workers 4 -Output experiments/artifacts/demo-new
+```
+
+Скрипт не удаляет volumes и оставляет проект для осмотра. Для остановки достаточно
+`docker compose ... stop`; не применять prune или down -v к пользовательским данным.
+В текущей среде Docker engine недоступен: `compose config` и Linux cross-build
+проверены, container smoke/demo — `NOT_RUN` с причиной в
+`experiments/artifacts/compose-demo-not-run/status.json`.
+
+Материалы для РПЗ: разделы README описывают immutable scientific contract,
+архитектуру, границы транзакции/fencing, три транспорта и методику измерений;
+`experiments/artifacts` содержит provenance, численные результаты и ограничения.
+R/B/I2 показывают статистическую групповую аномальность. Они не устанавливают
+аппаратный отказ, физическую причину, подтверждённый incident или диагностическую
+точность без независимой разметки. Полная университетская РПЗ здесь не создаётся.
+Для Kafka delivered outbox означает broker ACK; отставание Master после этого
+видно в E2E/intake, а не в Worker backlog. Для Push/Polling backlog заканчивается
+после durable Master ACK. Сопоставлять backlog без этой разницы нельзя.
