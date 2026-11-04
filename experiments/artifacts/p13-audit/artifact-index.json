@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "artifacts": [
     {
       "path": "experiments/artifacts/p13-audit/all-pinned-saved-parity.json",
@@ -73,8 +73,8 @@
     },
     {
       "path": "experiments/artifacts/p13-audit/kr-matrix.json",
-      "bytes": 17243,
-      "sha256": "54672a2e5da1365a26cdc876609ae6c642a6e075195f0cdc72aec57415220fb5"
+      "bytes": 17547,
+      "sha256": "b237133bc2a81c60a5b61ca9945cf94f733a481d77cf9edef04d7539ed334b6b"
     },
     {
       "path": "experiments/artifacts/p13-audit/latency-decomposition.json",
@@ -117,19 +117,9 @@
       "sha256": "6b5b2a74f522b499af6b578a9b125806a3991a13d4d7e11027295b9bf84d3583"
     },
     {
-      "path": "experiments/artifacts/p13-repeated/repeat-1-http_push/metrics-samples.json",
-      "bytes": 299710,
-      "sha256": "1a0f1b55e7e9d36bf806cb9a4ccdb348bd9f9c6e500f39a9cb70e066a76c6287"
-    },
-    {
       "path": "experiments/artifacts/p13-repeated/repeat-1-http_push.json",
       "bytes": 7937,
       "sha256": "5d03474bb8e2226dede17841bce838b9db4b34d1579ef01d2efe6c94380a32b9"
-    },
-    {
-      "path": "experiments/artifacts/p13-repeated/repeat-1-kafka/metrics-samples.json",
-      "bytes": 345463,
-      "sha256": "fafabf257a72448a5e5e1bdd2945fb10f387d06a8948066114456e68a32519d6"
     },
     {
       "path": "experiments/artifacts/p13-repeated/repeat-1-kafka.json",
@@ -137,19 +127,9 @@
       "sha256": "7383079fb5c52a2ab525484e1614aa0bbe00b1bce75b2f97b7470cdda94b81db"
     },
     {
-      "path": "experiments/artifacts/p13-repeated/repeat-1-polling/metrics-samples.json",
-      "bytes": 246151,
-      "sha256": "17d0c4dfbc155687e0759a45c144a4682ae686226d2a394767a68e724c9d9e29"
-    },
-    {
       "path": "experiments/artifacts/p13-repeated/repeat-1-polling.json",
       "bytes": 7886,
       "sha256": "173188028258144ed68bf46d9c53640456394a9d713cca62e3e7f156db6fe68f"
-    },
-    {
-      "path": "experiments/artifacts/p13-repeated/repeat-2-http_push/metrics-samples.json",
-      "bytes": 312767,
-      "sha256": "669445fd3b6a74d8eb7ded0f941cc9345d2c36a91073fc098225af8dca9e15ff"
     },
     {
       "path": "experiments/artifacts/p13-repeated/repeat-2-http_push.json",
@@ -157,19 +137,9 @@
       "sha256": "1ccec72c5b1680a1725ee9e405fd3ab5762865e30950fd1cc8239d81b94fca14"
     },
     {
-      "path": "experiments/artifacts/p13-repeated/repeat-2-kafka/metrics-samples.json",
-      "bytes": 344227,
-      "sha256": "38ec45611ef2e1eb2c68f9ca8cc79a82544e1421a51747fd4134800f9a288964"
-    },
-    {
       "path": "experiments/artifacts/p13-repeated/repeat-2-kafka.json",
       "bytes": 10947,
       "sha256": "ef7dafb7de341c9b8ed1906883efe408390b1fb8028e3df516c3addd748b727a"
-    },
-    {
-      "path": "experiments/artifacts/p13-repeated/repeat-2-polling/metrics-samples.json",
-      "bytes": 262999,
-      "sha256": "4749a73135c778c70b6d10d291cf93edf7ec450c5eac59361775cd348db6047e"
     },
     {
       "path": "experiments/artifacts/p13-repeated/repeat-2-polling.json",
@@ -180,6 +150,73 @@
       "path": "experiments/artifacts/p13-audit/git-blob-verification.json",
       "bytes": 541,
       "sha256": "aac60df155a698326d74134bd7b6df4954c5bf38786fd8eaca2e3e6b791a9f4b"
+    },
+    {
+      "path": "experiments/artifacts/raw-samples-manifest.json",
+      "bytes": 5007,
+      "sha256": "1aea5eabd469a6aee03a703f947d4230b2dd750c38400f4ba5564323f94bdfb5"
+    },
+    {
+      "path": "experiments/artifacts/artifact-catalog.json",
+      "bytes": 35698,
+      "sha256": "1520e10f5051e62c91a23c7f71dd9bab1e2fbf7f5fe79fbf19ef5a0424aca62c"
+    },
+    {
+      "path": "experiments/artifacts/raw-samples-cleanup.json",
+      "bytes": 1364,
+      "sha256": "49b97114338f266fea98b9e571b3d95a7d6fc524b0c1ff98e6e40afb7b0151e5"
     }
-  ]
+  ],
+  "archived_raw_artifacts": [
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-1-http_push/metrics-samples.json",
+      "bytes": 299710,
+      "sha256": "1a0f1b55e7e9d36bf806cb9a4ccdb348bd9f9c6e500f39a9cb70e066a76c6287",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-1-http_push/metrics-samples.json"
+    },
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-1-kafka/metrics-samples.json",
+      "bytes": 345463,
+      "sha256": "fafabf257a72448a5e5e1bdd2945fb10f387d06a8948066114456e68a32519d6",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-1-kafka/metrics-samples.json"
+    },
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-1-polling/metrics-samples.json",
+      "bytes": 246151,
+      "sha256": "17d0c4dfbc155687e0759a45c144a4682ae686226d2a394767a68e724c9d9e29",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-1-polling/metrics-samples.json"
+    },
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-2-http_push/metrics-samples.json",
+      "bytes": 312767,
+      "sha256": "669445fd3b6a74d8eb7ded0f941cc9345d2c36a91073fc098225af8dca9e15ff",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-2-http_push/metrics-samples.json"
+    },
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-2-kafka/metrics-samples.json",
+      "bytes": 344227,
+      "sha256": "38ec45611ef2e1eb2c68f9ca8cc79a82544e1421a51747fd4134800f9a288964",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-2-kafka/metrics-samples.json"
+    },
+    {
+      "path": "experiments/artifacts/p13-repeated/repeat-2-polling/metrics-samples.json",
+      "bytes": 262999,
+      "sha256": "4749a73135c778c70b6d10d291cf93edf7ec450c5eac59361775cd348db6047e",
+      "storage": "external_archive",
+      "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+      "archive_member": "experiments/artifacts/p13-repeated/repeat-2-polling/metrics-samples.json"
+    }
+  ],
+  "historical_git_blob_verification_commit": "cee8febd89a5e0d1a27faaaec5d3c7cd47cbeebd",
+  "raw_archive_manifest": "experiments/artifacts/raw-samples-manifest.json"
 }

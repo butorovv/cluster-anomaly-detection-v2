@@ -858,7 +858,8 @@ logs сохраняются перед новым запуском. Для но�
 `output`; для восстановления анализа без replay использовать
 `--analyze-existing path/to/run.json` (нужны сохранённые logs и metrics samples).
 Большие операционные `.log` и binary файлы остаются локальными; численные результаты,
-конфигурации, provenance и агрегированные resource samples хранятся в Git.
+конфигурации, provenance и итоговые resource aggregates хранятся в Git. Подробные
+samples сохраняются вне Git в проверяемом архиве (раздел хранения артефактов ниже).
 
 `--measure=true` на Worker/Master включает технические JSON traces без F18.
 Измерения не входят в immutable scientific envelope. Определения:
@@ -994,7 +995,7 @@ Provenance: `golden-manifest.json`, `v1-generated-golden.json`,
 
 Таблицы: `experiments/artifacts/final-summary/parity.csv` и `measurements.csv`;
 графики scaling/resources/transport-latency/recovery находятся рядом. Original
-run JSON и resource samples — в `p11-measured/`.
+run JSON — в `p11-measured/`; подробные resource samples вынесены в локальный архив.
 
 | Worker (cadence=3, Push) | group ticks/s | speedup относительно 1 |
 |---|---:|---:|
@@ -1161,7 +1162,7 @@ VoteSegments/RBSubspans и canonical hashes. Вместе с прежними с
 JSON, точные значения каждого trial и график наблюдаемых диапазонов:
 `p13-audit/repetitions.json` и `repetitions.png`. Источники —
 `experiments/artifacts/p13-repeated/matrix.json`, individual reports и resource
-samples; большие logs/binaries остаются вне Git. Общие scientific IDs, hashes,
+samples из локального архива; большие logs/binaries остаются вне Git. Общие scientific IDs, hashes,
 binary/configuration SHA и размеры payload проверяются перед сравнением:
 
 ```powershell
@@ -1212,3 +1213,49 @@ Startup error теперь закрывает output sender ровно один 
 KR-19 — **PARTIAL**, поскольку полная РПЗ вне задачи. Функциональные и
 математические требования подтверждены, но полное закрытие КР/готовность всей
 РПЗ к защите не объявляется. Frozen science, SQL V1–V5 и генеральное ТЗ сохранены.
+
+### Хранение экспериментальных артефактов
+
+`experiments/artifacts/artifact-catalog.json` классифицирует все 123 исходных
+experimental files на commit `cee8feb`: 24 файла для воспроизведения/provenance,
+82 компактных результата/графика и 17 подробных resource timelines. Первые две
+категории остаются в Git. Raw `metrics-samples.json` (140 506 строк, 4 004 850
+байт) архивированы вне репозитория и исключены точечным `.gitignore` правилом.
+Локальные оригиналы сохранены на прежних местах; история Git не переписывается.
+
+Резервная копия:
+`C:/study/NIR_KP_6_SEM/NIR_KR_7_SEM/experiment-archives/cluster-anomaly-detection-v2/metrics-cee8feb-20261105/`.
+Она содержит `metrics-samples.zip`, `manifest.json` и `SHA256SUMS`. Проверены SHA
+архива, каждого из 17 распакованных members и побайтное восстановление в отдельный
+каталог. Компактный tracked locator/provenance с исходными путями, размерами и SHA:
+`experiments/artifacts/raw-samples-manifest.json`. На другом компьютере сначала
+скопировать весь архивный каталог, затем указать его новый manifest path.
+
+```powershell
+$rawSamples = Get-Content experiments/artifacts/raw-samples-manifest.json -Raw | ConvertFrom-Json
+$sampleManifest = $rawSamples.external_manifest_path
+python experiments/archive_samples.py verify --manifest $sampleManifest
+# Восстановление layout для глубокого reanalysis; одинаковые файлы сохраняются,
+# отличающиеся существующие файлы никогда не перезаписываются.
+python experiments/archive_samples.py restore --manifest $sampleManifest --destination .
+# Новый backup завершённых запусков, включая будущие ignored samples:
+python experiments/archive_samples.py create --repo . --archive-dir C:/experiment-backups/new-unique-directory
+```
+
+Графики/CSV не требуют raw timelines: `experiments/summarize.py` читает только
+сохранённые matrix/run JSON с aggregates, `summarize_repetitions.py` — compact
+matrix JSON. Их можно воспроизвести из чистого checkout без архива и replay:
+
+```powershell
+python experiments/summarize.py --matrix experiments/artifacts/p11-measured/matrix.json --matrix experiments/artifacts/p11-batch-crash/matrix.json --output .cache/plots-from-compact-new
+python experiments/summarize_repetitions.py --matrix experiments/artifacts/p13-repeated/matrix.json --output .cache/repetitions-from-compact-new.json
+```
+
+`audit_measurements.py` и Go `--analyze-existing` дополнительно требуют raw samples
+и оригинальные trace logs. Samples восстанавливаются командой выше; logs уже
+хранились локально вне Git и не удалялись. Для другого layout также скорректировать
+`log_directory` в локальной копии run JSON. В `p13-audit/artifact-index.json`
+schema 2 raw entries помечены `external_archive`; их SHA проверяются по members
+архива, остальные entries — по Git blobs. Исторический git-blob verification
+сохраняет привязку к исходному commit. Итоговые научные результаты, golden
+manifests, configs, validation и код/тесты не удаляются.

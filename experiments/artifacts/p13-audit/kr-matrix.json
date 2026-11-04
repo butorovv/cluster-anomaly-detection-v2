@@ -414,7 +414,10 @@
       "evidence": [
         {
           "path": "README.md",
-          "sha256": "3210f2671688ddadf5a329b624ac55e306c045df82860ce06acc9ceaa40c2e38"
+          "sha256": "18941646283b331e1ac5887bdca16f1f596fc37b88102c4740b298f4fa508d48",
+          "previous_document_sha256": "3210f2671688ddadf5a329b624ac55e306c045df82860ce06acc9ceaa40c2e38",
+          "previous_document_commit": "cee8febd89a5e0d1a27faaaec5d3c7cd47cbeebd",
+          "sha_scope": "current Git blob (LF); archive instructions added without changing scientific limitations"
         }
       ],
       "limitations": [

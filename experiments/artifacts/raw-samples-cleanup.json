@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "source_commit": "cee8febd89a5e0d1a27faaaec5d3c7cd47cbeebd",
+  "comparison_base_commit": "46d37fddab6586829f45e2905f76b79f655369d7",
+  "before_pr_diff": {
+    "files": 207,
+    "insertions": 171228,
+    "deletions": 302
+  },
+  "after_pr_diff": {
+    "files": 195,
+    "insertions": 32081,
+    "deletions": 302
+  },
+  "insertion_reduction_percent": 81.26,
+  "raw_files_archived": 17,
+  "raw_lines_removed_from_PR": 140506,
+  "raw_bytes": 4004850,
+  "zip_bytes": 306740,
+  "archive_manifest": "experiments/artifacts/raw-samples-manifest.json",
+  "archive_sha256": "a18082621f073b645f44c6dec0016f0cecac0616cd97caddec85844c45dd2fa3",
+  "verification": {
+    "archive_and_manifest_checksums": "PASS",
+    "all_17_member_hashes_and_sizes": "PASS",
+    "roundtrip_restore_exact_bytes": "PASS",
+    "local_originals_still_present": "PASS",
+    "archive_unit_tests": "4 PASS",
+    "compact_plot_regeneration": "5 PNG and repetitions JSON byte-identical",
+    "science_code_tests_migrations_results_preserved": "PASS"
+  },
+  "history_rewritten": false,
+  "note": "Git tracking removed with --cached only after verified external backup; ignored local originals retained. Archive SHA covers exact uncompressed member bytes. PR measurements compare final tree to the unchanged main base, not the deletion-heavy cleanup commit."
+}

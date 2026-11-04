@@ -28,4 +28,6 @@
 .DS_Store
 Thumbs.db
 /experiments/artifacts/**/bin/
+# Detailed resource timelines are backed up outside Git; retain run summaries.
+/experiments/artifacts/**/metrics-samples.json
 *.env
