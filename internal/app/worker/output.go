@@ -66,9 +66,7 @@ func RunWithOutput(ctx context.Context, cfg Config, store *checkpoints.Store, po
 	cfg.Output = dispatcher
 	runner, err := New(cfg, store)
 	if err != nil {
-		if dispatcher.Sender != nil {
-			_ = dispatcher.Sender.Close()
-		}
+		_ = dispatcher.Close()
 		return err
 	}
 	baseHandler := cfg.Metrics.Handler(httpoutbox.Handler(dispatcher))

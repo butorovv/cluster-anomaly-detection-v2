@@ -31,6 +31,8 @@ type Dispatcher struct {
 	Measure                     bool
 	mu                          sync.Mutex
 	owners                      map[string]domain.Owner
+	closeOnce                   sync.Once
+	closeErr                    error
 }
 
 func (d *Dispatcher) Track(ctx context.Context, o domain.Owner) error {
@@ -63,6 +65,16 @@ func (d *Dispatcher) Owner(groupID string) (domain.Owner, bool) {
 	o, ok := d.owners[groupID]
 	return o, ok
 }
+
+// Close also covers startup failures before Run has been entered.
+func (d *Dispatcher) Close() error {
+	d.closeOnce.Do(func() {
+		if d.Sender != nil {
+			d.closeErr = d.Sender.Close()
+		}
+	})
+	return d.closeErr
+}
 func (d *Dispatcher) Run(ctx context.Context) error {
 	if d.Mode == "polling" {
 		<-ctx.Done()
@@ -71,7 +83,7 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	if d.Sender == nil {
 		return fmt.Errorf("output sender required")
 	}
-	defer d.Sender.Close()
+	defer d.Close()
 	if d.Logger == nil {
 		d.Logger = slog.Default()
 	}

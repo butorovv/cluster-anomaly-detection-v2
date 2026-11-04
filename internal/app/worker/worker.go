@@ -372,6 +372,9 @@ func (r *Runner) close() error {
 }
 
 func (r *Runner) Run(ctx context.Context) (retErr error) {
+	if r.cfg.Output != nil {
+		defer func() { retErr = errors.Join(retErr, r.cfg.Output.Close()) }()
+	}
 	cluster, topic, err := kafkainput.DescribeSource(ctx, r.cfg.Broker)
 	if err != nil {
 		return err
