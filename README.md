@@ -815,3 +815,11 @@ replays, поскольку input topic фиксирован контракто�
 проверку reference, replay, drain и comparator; это **не** отдельная latency
 обработки или транспорта. Для научного сравнения производительности использовать
 специальную методику P11 с processing timestamps, а не исторический event_time.
+
+Concurrent join использует единый порядок блокировок physical groups перед FK
+INSERT. Это необходимо из-за существующего `V5.accept_result FOR UPDATE`: без
+предварительного порядка два timestamp могли удерживать FK `KEY SHARE` и ждать
+взаимного upgrade. Детерминированный SQL regression воспроизвёл три `40P01` без
+исправления и прошёл под `-race` после него. Ownership rows этим Master-барьером
+не блокируются. Первоначальный FAIL и результаты исправления сохраняются в
+`experiments/artifacts/p10-join-lock-regression.json`; V1–V5 не изменены.
