@@ -1,0 +1,13 @@
+{
+  "tcp_dynamic_port_count": 16384,
+  "fix": "fresh DescribeSourceWithClient requests reuse existing franz-go connection pool",
+  "failure": "WSAEADDRINUSE while creating per-message metadata clients",
+  "observed_at": "2026-11-04T11:28:33.5765078Z",
+  "system_settings_changed": false,
+  "schema_version": 1,
+  "tcp_dynamic_port_start": 49152,
+  "time_wait_total": 16134,
+  "time_wait_to_broker": 16125,
+  "scenario": "g16-d0-w4-kafka-c1",
+  "status": "IN_PROGRESS"
+}

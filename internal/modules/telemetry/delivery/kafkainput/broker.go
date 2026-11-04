@@ -28,6 +28,15 @@ func DescribeSource(ctx context.Context, broker Broker) (clusterID, topicID stri
 		return "", "", err
 	}
 	defer cl.Close()
+	return DescribeSourceWithClient(ctx, cl, broker.topic())
+}
+
+// DescribeSourceWithClient performs fresh identity/policy requests over the
+// existing connection pool. Result dispatch must not create sockets per record.
+func DescribeSourceWithClient(ctx context.Context, cl *kgo.Client, topic string) (clusterID, topicID string, err error) {
+	if cl == nil || topic == "" {
+		return "", "", fmt.Errorf("Kafka client/topic required")
+	}
 	metadata, err := kadm.NewClient(cl).BrokerMetadata(ctx)
 	if err != nil {
 		return "", "", err
@@ -35,7 +44,7 @@ func DescribeSource(ctx context.Context, broker Broker) (clusterID, topicID stri
 	if metadata.Cluster == "" {
 		return "", "", fmt.Errorf("Kafka cluster ID required")
 	}
-	topicID, err = CheckTopic(ctx, cl, broker.topic())
+	topicID, err = CheckTopic(ctx, cl, topic)
 	return metadata.Cluster, topicID, err
 }
 

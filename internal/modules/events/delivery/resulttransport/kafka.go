@@ -22,7 +22,6 @@ const resultPartitions = 16
 type SourceIdentity struct{ ClusterID, TopicID string }
 type KafkaSender struct {
 	client   *kgo.Client
-	seeds    []string
 	Identity SourceIdentity
 }
 
@@ -51,12 +50,12 @@ func NewKafka(ctx context.Context, seeds []string, create bool) (*KafkaSender, e
 			return nil, err
 		}
 	}
-	cluster, topic, err := kafkainput.DescribeSource(ctx, kafkainput.Broker{Seeds: seeds, Topic: ResultsTopic})
+	cluster, topic, err := kafkainput.DescribeSourceWithClient(ctx, cl, ResultsTopic)
 	if err != nil {
 		cl.Close()
 		return nil, err
 	}
-	return &KafkaSender{client: cl, seeds: append([]string(nil), seeds...), Identity: SourceIdentity{ClusterID: cluster, TopicID: topic}}, nil
+	return &KafkaSender{client: cl, Identity: SourceIdentity{ClusterID: cluster, TopicID: topic}}, nil
 }
 
 func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) error {
@@ -71,7 +70,7 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 	if err != nil {
 		return err
 	}
-	cluster, topic, err := kafkainput.DescribeSource(ctx, kafkainput.Broker{Seeds: s.seeds, Topic: ResultsTopic})
+	cluster, topic, err := kafkainput.DescribeSourceWithClient(ctx, s.client, ResultsTopic)
 	if err != nil {
 		return err
 	}
@@ -111,7 +110,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 	checkIdentity := func(c context.Context) error {
 		bounded, done := context.WithTimeout(c, 10*time.Second)
 		defer done()
-		cluster, topic, e := kafkainput.DescribeSource(bounded, kafkainput.Broker{Seeds: seeds, Topic: ResultsTopic})
+		cluster, topic, e := kafkainput.DescribeSourceWithClient(bounded, admin, ResultsTopic)
 		if e != nil {
 			return e
 		}
