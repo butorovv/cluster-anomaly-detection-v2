@@ -13,6 +13,10 @@ TickAssembler, Kafka Producer/Consumer, PostgreSQL foundation V1–V5,
 отдельным расширением. P08–P10 добавляют Master, три транспорта и durable outside
 join. Статусы parity, отказов и измерений подтверждаются JSON-артефактами ниже.
 Runtime и тесты — Go; Python для запуска не требуется.
+Сохранённые результаты `experiments/artifacts/` и независимые golden находятся
+во внешнем архиве, который **не включён в GitHub**. Все пути к историческим
+артефактам ниже доступны после восстановления по разделу
+[хранения результатов](#хранение-экспериментальных-артефактов).
 
 ## Требования и исходные данные
 
@@ -779,11 +783,12 @@ baseline/research artifacts; provenance и SHA записаны в
 
 Свежие эталоны из отдельного чистого LF checkout pinned V1 для 4/8/16 × δ0/10/30/60
 зарегистрированы в `experiments/artifacts/v1-generated-golden.json`. Большие
-NDJSON остаются вне Git; manifest содержит исходные пути, команды, pin, SHA и
+NDJSON и manifest остаются вне Git; manifest содержит исходные пути, команды, pin, SHA и
 параметры. Воспроизведение создаёт **новую** директорию и не изменяет V1:
 
 ```powershell
 pwsh -File experiments/generate-golden.ps1 -V1Repository $env:V1_REPOSITORY -Assets $env:ASSETS_ROOT -Output .cache/golden-new -Manifest .cache/golden-new-manifest.json
+$env:V1_GOLDEN_MANIFEST = (Resolve-Path .cache/golden-new-manifest.json).Path
 $env:SYSTEM_TEST_DATABASE_URL = 'postgres://TEST_ADMIN@127.0.0.1:PGPORT/postgres?sslmode=disable'
 $env:SYSTEM_KAFKA_ISOLATED = '1'
 $env:P07_TEST_KAFKA_BROKERS = '127.0.0.1:KAFKAPORT'
@@ -858,8 +863,8 @@ logs сохраняются перед новым запуском. Для но�
 `output`; для восстановления анализа без replay использовать
 `--analyze-existing path/to/run.json` (нужны сохранённые logs и metrics samples).
 Большие операционные `.log` и binary файлы остаются локальными; численные результаты,
-конфигурации, provenance и итоговые resource aggregates хранятся в Git. Подробные
-samples сохраняются вне Git в проверяемом архиве (раздел хранения артефактов ниже).
+конфигурации запусков хранятся в Git; provenance, численные результаты,
+resource aggregates и samples — во внешнем архиве (раздел хранения ниже).
 
 `--measure=true` на Worker/Master включает технические JSON traces без F18.
 Измерения не входят в immutable scientific envelope. Определения:
@@ -1137,7 +1142,7 @@ scaling эксперименты на выделенном межхостово�
 
 ```powershell
 # Для чистого checkout сначала задать env из P10 и сгенерировать pinned V1 golden.
-# Сохранённые в Git PASS не являются новым запуском на новом стенде.
+# Сохранённые в архиве PASS не являются новым запуском на новом стенде.
 $auditConfig = Get-Content experiments/configs/p13-repeated.json -Raw | ConvertFrom-Json
 $auditConfig.output = '.cache/p13-runs-new'
 $auditConfig.golden_manifest = '.cache/golden-new-manifest.json'
@@ -1216,46 +1221,76 @@ KR-19 — **PARTIAL**, поскольку полная РПЗ вне задач�
 
 ### Хранение экспериментальных артефактов
 
-`experiments/artifacts/artifact-catalog.json` классифицирует все 123 исходных
-experimental files на commit `cee8feb`: 24 файла для воспроизведения/provenance,
-82 компактных результата/графика и 17 подробных resource timelines. Первые две
-категории остаются в Git. Raw `metrics-samples.json` (140 506 строк, 4 004 850
-байт) архивированы вне репозитория и исключены точечным `.gitignore` правилом.
-Локальные оригиналы сохранены на прежних местах; история Git не переписывается.
+Git содержит исходники, unit/integration tests, SQL-миграции, frozen configs,
+Compose/Dockerfile, scripts и `experiments/configs/`. Все сгенерированные
+результаты исключены правилом `/experiments/artifacts/`; локальные оригиналы
+сохранены. История Git не переписывалась. Ранее записанные в README результаты
+являются историческими измерениями; их доказательства находятся в архиве.
 
-Резервная копия:
-`C:/study/NIR_KP_6_SEM/NIR_KR_7_SEM/experiment-archives/cluster-anomaly-detection-v2/metrics-cee8feb-20261105/`.
-Она содержит `metrics-samples.zip`, `manifest.json` и `SHA256SUMS`. Проверены SHA
-архива, каждого из 17 распакованных members и побайтное восстановление в отдельный
-каталог. Компактный tracked locator/provenance с исходными путями, размерами и SHA:
-`experiments/artifacts/raw-samples-manifest.json`. На другом компьютере сначала
-скопировать весь архивный каталог, затем указать его новый manifest path.
+Полная внешняя резервная копия на commit `8e1e3bf`:
+`C:/study/NIR_KP_6_SEM/NIR_KR_7_SEM/experiment-archives/cluster-anomaly-detection-v2/all-results-8e1e3bf-20261105/`.
+Она содержит `experiment-results.zip`, `manifest.json` с SHA-256 каждого файла
+и `SHA256SUMS`. Всего 618 файлов, 5 181 236 133 исходных байта;
+ZIP занимает 1 072 456 101 байт. SHA-256 ZIP:
+`291c8abace271250e967dec6521c7ec469cba436ae14268bdebe95ea8452cae5`;
+manifest: `a5e6784066e7a565245a6b9f3f156dd215bc79595c8cad8d9dd3b5a223454d4d`.
+ В неё включены все локальные `experiments/artifacts/`,
+логи/измерения/графики, 12 независимо сгенерированных pinned V1 golden-наборов,
+исторические V1 эталоны по исходному manifest и прежняя резервная копия samples.
+Проверяются SHA всего ZIP, каждого распакованного файла и восстановление в новый
+каталог. Архив может содержать локальные параметры тестового стенда; это данные
+для отдельного хранения, а не часть Docker image или поставки приложения.
 
-```powershell
-$rawSamples = Get-Content experiments/artifacts/raw-samples-manifest.json -Raw | ConvertFrom-Json
-$sampleManifest = $rawSamples.external_manifest_path
-python experiments/archive_samples.py verify --manifest $sampleManifest
-# Восстановление layout для глубокого reanalysis; одинаковые файлы сохраняются,
-# отличающиеся существующие файлы никогда не перезаписываются.
-python experiments/archive_samples.py restore --manifest $sampleManifest --destination .
-# Новый backup завершённых запусков, включая будущие ignored samples:
-python experiments/archive_samples.py create --repo . --archive-dir C:/experiment-backups/new-unique-directory
-```
-
-Графики/CSV не требуют raw timelines: `experiments/summarize.py` читает только
-сохранённые matrix/run JSON с aggregates, `summarize_repetitions.py` — compact
-matrix JSON. Их можно воспроизвести из чистого checkout без архива и replay:
+**Внешний локальный архив не включён в GitHub и должен быть сохранён отдельно**,
+вместе с `manifest.json` и `SHA256SUMS`. Прежний архив
+`metrics-cee8feb-20261105` в том же родительском каталоге не изменён.
 
 ```powershell
-python experiments/summarize.py --matrix experiments/artifacts/p11-measured/matrix.json --matrix experiments/artifacts/p11-batch-crash/matrix.json --output .cache/plots-from-compact-new
-python experiments/summarize_repetitions.py --matrix experiments/artifacts/p13-repeated/matrix.json --output .cache/repetitions-from-compact-new.json
+$archive = 'C:/study/NIR_KP_6_SEM/NIR_KR_7_SEM/experiment-archives/cluster-anomaly-detection-v2/all-results-8e1e3bf-20261105'
+python experiments/archive_results.py verify --manifest "$archive/manifest.json"
+# Только новая директория; существующие файлы никогда не перезаписываются.
+python experiments/archive_results.py restore --manifest "$archive/manifest.json" --destination .cache/results-restored-new
 ```
 
-`audit_measurements.py` и Go `--analyze-existing` дополнительно требуют raw samples
-и оригинальные trace logs. Samples восстанавливаются командой выше; logs уже
-хранились локально вне Git и не удалялись. Для другого layout также скорректировать
-`log_directory` в локальной копии run JSON. В `p13-audit/artifact-index.json`
-schema 2 raw entries помечены `external_archive`; их SHA проверяются по members
-архива, остальные entries — по Git blobs. Исторический git-blob verification
-сохраняет привязку к исходному commit. Итоговые научные результаты, golden
-manifests, configs, validation и код/тесты не удаляются.
+Внутри восстановленного каталога `repo/` сохраняет исходную структуру
+`experiments/artifacts/` и `.cache/`. `external/historical-golden/` содержит
+исторические независимые эталоны с прежними относительными путями;
+`previous-archives/` — неизменённую прежнюю резервную копию raw samples.
+Manifest также сохраняет оригинальные абсолютные пути. Для анализа можно
+использовать пути прямо из `repo/`, не копируя файлы обратно в checkout:
+
+```powershell
+$results = '.cache/results-restored-new/repo/experiments/artifacts'
+python experiments/summarize.py --matrix "$results/p11-measured/matrix.json" --matrix "$results/p11-batch-crash/matrix.json" --matrix "$results/p10-full-matrix/matrix.json" --matrix "$results/p10-first-d2/matrix.json" --output .cache/plots-restored-new
+python experiments/summarize_repetitions.py --matrix "$results/p13-repeated/matrix.json" --output .cache/repetitions-restored-new.json
+```
+
+CSV и графики строятся из matrix/run JSON с aggregates; сырые samples им не
+нужны. `audit_measurements.py` и Go `--analyze-existing` дополнительно требуют
+samples и trace logs: в локальной копии run JSON задать `log_directory` по новому
+расположению. Для команд выше по README с исходным layout можно скопировать
+`repo/experiments/artifacts` обратно только в отсутствующую директорию checkout.
+Не перезаписывать локальные результаты. Пути provenance в старых manifests
+исторические; для проверки сохранённых bytes использовать новый архивный manifest.
+
+Полное независимое воспроизведение требует оригинальных Summit assets с SHA
+из начала README и V1 repository с pin
+`c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc`. Наличие архива не заменяет эти inputs.
+`experiments/generate-golden.ps1` строит pinned V1 в отдельном checkout и создаёт
+12 наборов для 4/8/16 групп и δ=0/10/30/60, фиксируя команды и SHA в новом manifest;
+результаты V2 не используются как независимый baseline. Команды генерации и
+запуска runner приведены в разделе P10. Сохранённые configs получают путь к
+новому manifest из `$env:V1_GOLDEN_MANIFEST`; для возобновления архивного запуска
+можно указать восстановленный manifest вместо генерации. Перед новым опытом
+использовать новый output. Исторические PASS не требуют повторного D2-прогона.
+
+Для нового полного backup до следующей очистки:
+
+```powershell
+python experiments/archive_results.py create --repo . --archive-dir C:/experiment-backups/new-unique-directory
+```
+
+Эта команда ожидает восстановленный исходный layout результатов и manifests;
+у новых запусков обновить provenance перед созданием архива. Все источники
+остаются на месте. Архивирование/восстановление не удаляет данные и не затрагивает
+PostgreSQL databases или Docker volumes.

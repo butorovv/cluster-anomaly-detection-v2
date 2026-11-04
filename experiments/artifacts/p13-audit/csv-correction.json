@@ -1,8 +1,0 @@
-{
-  "schema_version": 1,
-  "original_measurements_csv_sha256": "c7e148c836acf66d6fd09f719154dbd9b1f851a1dec390742dc983a987b66256",
-  "corrected_measurements_csv_sha256": "63bc7726094acbc804463932ccda766317a02a871aa89b547cb44da0561fc3b1",
-  "correction": "Historical lag zeros removed from derived CSV; quality status added. Original run JSON retained. Other source measurements unchanged.",
-  "original_git_blob_sha256": "da025f18138eda42de0398bc4ed2726abee5c2ba36a6b6c6e2986f0afe4cfcc8",
-  "artifact_line_endings": "LF, matching .gitattributes; hashes refer to committed bytes"
-}

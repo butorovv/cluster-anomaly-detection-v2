@@ -5,7 +5,7 @@
   "input_sha256": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
   "brokers": "${P07_TEST_KAFKA_BROKERS}",
   "golden_root": "${V1_GOLDEN_ROOT}",
-  "golden_manifest": "experiments/artifacts/v1-generated-golden.json",
+  "golden_manifest": "${V1_GOLDEN_MANIFEST}",
   "output": "experiments/artifacts/p13-repeated",
   "timeout_seconds": 1200,
   "runs": [

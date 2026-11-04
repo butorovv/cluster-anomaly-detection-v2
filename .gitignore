@@ -27,7 +27,6 @@
 .vscode/
 .DS_Store
 Thumbs.db
-/experiments/artifacts/**/bin/
-# Detailed resource timelines are backed up outside Git; retain run summaries.
-/experiments/artifacts/**/metrics-samples.json
+# Generated experiment outputs live in verified external backups.
+/experiments/artifacts/
 *.env
