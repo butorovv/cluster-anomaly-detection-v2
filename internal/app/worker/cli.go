@@ -28,15 +28,24 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	profile := flags.String("profile-sha256", "", "trusted frozen profile SHA256")
 	source := flags.String("input-sha256", "", "prepared input SHA256 binding")
 	execution := flags.String("execution-id", "", "registered execution UUID")
+	ownerID := flags.String("owner-id", "", "unique process owner UUID (random by default)")
 	consumer := flags.String("consumer-group", "", "shared Kafka consumer group")
 	brokers := flags.String("kafka-brokers", "localhost:9092", "comma-separated Kafka seeds")
 	start := flags.String("start", analysis.NIRWindows()[1].Start.Format(time.RFC3339), "inclusive UTC run start")
 	end := flags.String("end", analysis.NIRWindows()[1].End.Format(time.RFC3339), "exclusive UTC run end")
+	diagnostics := flags.Bool("diagnostics", true, "durable local fragments for complete outside join; immutable execution contract")
+	measure := flags.Bool("measure", false, "emit per-tick operational timing traces without payloads")
+	cadence := flags.Int("checkpoint-interval-ticks", 1, "durable complete-tick batch: 1, 3, 6")
+	groups := flags.Int("groups", 16, "scientific group universe 4/8/16")
 	delta := flags.Int("delta", 0, "frozen TTL: 0, 10, 30, 60")
 	lease := flags.Duration("lease-ttl", repo.DefaultLease, "SQL lease TTL (3..15s)")
 	register := flags.Bool("register-execution", false, "admin-only explicit run/execution registration, then exit")
 	offsets := flags.String("start-offsets", "", "registration-only JSON object with explicit offsets 0..15")
-	output := flags.String("output-transport", "polling", "reserved SQL experiment metadata; no dispatcher is started")
+	output := flags.String("output-transport", "polling", "durable output transport: polling/http_push/kafka")
+	listen := flags.String("listen", "127.0.0.1:0", "Worker HTTP listen address")
+	advertise := flags.String("advertise-url", "", "reachable Worker URL; inferred only for loopback")
+	masterURL := flags.String("master-url", "http://127.0.0.1:8080", "Master URL for http_push")
+	createResults := flags.Bool("create-results-topic", false, "explicitly initialize/validate group.results")
 	level := flags.String("log-level", "info", "info or debug (offsets only, no telemetry payload)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -72,7 +81,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	opts := group.GroupProcessorOptions{GroupID: "a01", Groups: 16, Window: w, DeltaSeconds: *delta, Binding: domain.InputBinding{ExecutionID: *execution, InputSHA256: *source, ProfileSHA256: *profile}}
+	opts := group.GroupProcessorOptions{GroupID: "a01", Groups: *groups, Window: w, DeltaSeconds: *delta, Binding: domain.InputBinding{ExecutionID: *execution, InputSHA256: *source, ProfileSHA256: *profile}}
 	p, err := group.NewGroupProcessor(bundle, opts)
 	if err != nil {
 		return err
@@ -105,7 +114,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("PostgreSQL pool unavailable")
 	}
 	defer pool.Close()
-	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output}
+	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output, Diagnostics: *diagnostics, CheckpointIntervalTicks: *cadence}
 	if *register {
 		if err := json.Unmarshal([]byte(*offsets), &r.StartOffsets); err != nil {
 			return fmt.Errorf("16 explicit registration start offsets required")
@@ -123,10 +132,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	runner, err := New(Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r})
-	if err != nil {
-		return err
-	}
-	log.InfoContext(ctx, "Worker starting", "execution", *execution, "run_id", snap.Identity.RunID, "owner", runner.cfg.OwnerID, "consumer_group", *consumer)
-	return runner.Run(ctx)
+	return RunWithOutput(ctx, Config{Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
 }

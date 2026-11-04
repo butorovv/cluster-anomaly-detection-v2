@@ -27,3 +27,6 @@
 .vscode/
 .DS_Store
 Thumbs.db
+# Generated experiment outputs live in verified external backups.
+/experiments/artifacts/
+*.env

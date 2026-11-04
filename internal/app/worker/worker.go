@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"log/slog"
 	"strconv"
 	"sync"
@@ -16,6 +17,8 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	events "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	delivery "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -23,20 +26,34 @@ import (
 )
 
 type Config struct {
-	Bundle        *group.Bundle
-	Options       group.GroupProcessorOptions
-	Broker        kafkainput.Broker
-	ConsumerGroup string
-	OwnerID       string
-	LeaseTTL      time.Duration
-	Logger        *slog.Logger
+	Metrics                 *observability.Registry
+	Measure                 bool
+	CheckpointIntervalTicks int
+	Bundle                  *group.Bundle
+	Options                 group.GroupProcessorOptions
+	Broker                  kafkainput.Broker
+	ConsumerGroup           string
+	OwnerID                 string
+	LeaseTTL                time.Duration
+	Logger                  *slog.Logger
+	Output                  *delivery.Dispatcher
 }
 
 type assignedPartition struct {
-	lease   repo.Lease
-	core    *core.Partition
-	loading bool
+	lease         repo.Lease
+	core          *core.Partition
+	loading       bool
+	nextOffset    int64
+	highWatermark int64
+	tickStarted   time.Time
+	tickSource    time.Time
+	batchTimings  []tickTiming
 }
+type tickTiming struct {
+	Tick, Received, Computed time.Time
+	Offset                   int64
+}
+
 type Runner struct {
 	cfg      Config
 	store    *repo.Store
@@ -57,8 +74,17 @@ func NewOwnerID() (string, error) {
 }
 
 func New(cfg Config, store *repo.Store) (*Runner, error) {
-	if store == nil || store.DB == nil || cfg.ConsumerGroup == "" || cfg.Options.Groups != 16 || len(cfg.Broker.Seeds) == 0 || (cfg.Broker.Topic != "" && cfg.Broker.Topic != kafkainput.Topic) {
-		return nil, fmt.Errorf("Worker requires registered store, Kafka source and 16-group bundle")
+	if store == nil || store.DB == nil || cfg.ConsumerGroup == "" || (cfg.Options.Groups != 4 && cfg.Options.Groups != 8 && cfg.Options.Groups != 16) || len(cfg.Broker.Seeds) == 0 || (cfg.Broker.Topic != "" && cfg.Broker.Topic != kafkainput.Topic) {
+		return nil, fmt.Errorf("Worker requires registered store, Kafka source and 4/8/16-group bundle")
+	}
+	if cfg.Output != nil && (cfg.Output.ExecutionID != cfg.Options.Binding.ExecutionID || cfg.Output.Mode != store.Registration.OutputTransport) {
+		return nil, fmt.Errorf("dispatcher differs from registered execution transport")
+	}
+	if cfg.CheckpointIntervalTicks == 0 {
+		cfg.CheckpointIntervalTicks = 1
+	}
+	if cfg.CheckpointIntervalTicks != store.Registration.Cadence() {
+		return nil, fmt.Errorf("checkpoint interval differs from immutable execution")
 	}
 	if cfg.LeaseTTL == 0 {
 		cfg.LeaseTTL = repo.DefaultLease
@@ -73,9 +99,21 @@ func New(cfg Config, store *repo.Store) (*Runner, error) {
 			return nil, err
 		}
 	}
+	if !events.ValidExecution(cfg.OwnerID) {
+		return nil, fmt.Errorf("canonical owner UUID required")
+	}
+	if cfg.Metrics == nil {
+		cfg.Metrics = observability.New()
+	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	for _, name := range []string{"processed_ticks", "missing_ticks", "incomplete_ticks", "unknown_ticks", "empty_ticks", "checkpoint_count", "checkpoint_bytes", "checkpoint_failures", "output_attempts", "output_retries", "output_attempt_payload_bytes"} {
+		cfg.Metrics.Add(name, 0)
+	}
+	cfg.Metrics.Label("role", "worker")
+	cfg.Metrics.Label("execution_id", cfg.Options.Binding.ExecutionID)
+	cfg.Metrics.Label("owner_id", cfg.OwnerID)
 	opts := cfg.Options
 	opts.GroupID = "a01"
 	p, err := group.NewGroupProcessor(cfg.Bundle, opts)
@@ -95,6 +133,9 @@ func New(cfg Config, store *repo.Store) (*Runner, error) {
 }
 
 func (r *Runner) assignedHook(ctx context.Context, ids []kafkainput.Identity) error {
+	if len(ids) > 0 {
+		r.cfg.Metrics.Add("rebalance_count", 1)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.closed {
@@ -105,7 +146,9 @@ func (r *Runner) assignedHook(ctx context.Context, ids []kafkainput.Identity) er
 			return fmt.Errorf("assigned source identity mismatch")
 		}
 		r.assigned[id.Partition] = id
-		r.cfg.Logger.InfoContext(ctx, "partition assigned", "partition", id.Partition, "group", id.GroupID, "owner", r.cfg.OwnerID)
+		r.cfg.Metrics.Add("rebalance_assignments", 1)
+		r.cfg.Metrics.Set("assigned_partitions", float64(len(r.assigned)))
+		r.cfg.Logger.InfoContext(ctx, "partition assigned", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", id.Partition, "group", id.GroupID)
 	}
 	return nil
 }
@@ -118,19 +161,28 @@ func (r *Runner) revokeHook(ctx context.Context, ids []kafkainput.Identity) erro
 	var result error
 	for _, id := range ids {
 		delete(r.assigned, id.Partition)
+		r.cfg.Metrics.Add("revoked_partitions", 1)
+		r.cfg.Metrics.Set("assigned_partitions", float64(len(r.assigned)))
 		state := r.parts[id.Partition]
 		delete(r.parts, id.Partition) // discard partial/uncommitted RAM before release
+		if state != nil && r.cfg.Output != nil {
+			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
+		}
 		if state != nil && state.lease.Epoch > 0 {
 			if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
 				result = errors.Join(result, err)
 			}
 		}
-		r.cfg.Logger.InfoContext(ctx, "partition revoked/lost", "partition", id.Partition, "group", id.GroupID)
+		r.cfg.Logger.InfoContext(ctx, "partition revoked/lost", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", id.Partition, "group", id.GroupID)
 	}
 	return result
 }
 
 func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.Position, error) {
+	restoreStart := time.Now()
+	if int(id.Partition) >= r.cfg.Options.Groups {
+		return kafkainput.Position{Identity: id, NextOffset: r.store.Registration.StartOffsets[strconv.Itoa(int(id.Partition))]}, nil
+	}
 	r.mu.Lock()
 	active, ok := r.assigned[id.Partition]
 	if r.closed || !ok || active != id {
@@ -179,7 +231,7 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 	options := r.cfg.Options
 	options.GroupID = id.GroupID
 	start := r.store.Registration.StartOffsets[strconv.Itoa(int(id.Partition))]
-	processor, err := core.NewPartition(r.cfg.Bundle, options, start, saved)
+	processor, err := core.NewPartitionWithCadence(r.cfg.Bundle, options, start, saved, r.cfg.CheckpointIntervalTicks)
 	if err != nil {
 		return kafkainput.Position{}, err
 	}
@@ -195,12 +247,26 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 	if r.closed || r.assigned[id.Partition] != id {
 		return kafkainput.Position{}, fmt.Errorf("assignment disappeared during restore")
 	}
-	state.core, state.loading = processor, false
-	r.cfg.Logger.InfoContext(ctx, "partition restored", "partition", id.Partition, "group", id.GroupID, "epoch", lease.Epoch, "next_offset", next, "recovered", saved != nil)
+	if r.cfg.Output != nil {
+		if err := r.cfg.Output.Track(ctx, events.Owner{ExecutionID: r.cfg.Options.Binding.ExecutionID, GroupID: lease.Group, OwnerID: lease.Owner, Epoch: lease.Epoch}); err != nil {
+			return kafkainput.Position{}, err
+		}
+	}
+	state.core, state.loading, state.nextOffset = processor, false, next
+	// A retained assignment can restore from SQL after a session interruption.
+	// Its uncommitted math/assembler tail was discarded; discard its operational
+	// clocks too, so replay is not counted twice or attributed to a later tick.
+	state.tickStarted, state.tickSource = time.Time{}, time.Time{}
+	state.batchTimings = nil
+	r.cfg.Metrics.Observe("restore", time.Since(restoreStart))
+	r.cfg.Logger.InfoContext(ctx, "partition restored", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", id.Partition, "group", id.GroupID, "epoch", lease.Epoch, "next_offset", next, "recovered", saved != nil)
 	return kafkainput.Position{Identity: id, NextOffset: next}, nil
 }
 
 func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.InputMessage) error {
+	if int(record.Partition) >= r.cfg.Options.Groups {
+		return nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	state := r.parts[record.Partition]
@@ -210,9 +276,38 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 	if _, ok := r.assigned[record.Partition]; !ok {
 		return fmt.Errorf("record after lost assignment")
 	}
+	if state.tickStarted.IsZero() {
+		state.tickStarted = time.Now()
+		state.tickSource = record.Timestamp
+	}
 	transition, err := state.core.Accept(record.Offset, message)
 	if err != nil {
 		return err
+	}
+	state.nextOffset = record.Offset + 1
+	r.cfg.Metrics.Set("kafka_lag_records_"+message.GroupID, float64(max(0, state.highWatermark-state.nextOffset)))
+	if message.Type == domain.CompleteMessage {
+		computed, duration := state.core.LastComputation()
+		timing := tickTiming{Tick: message.Timestamp, Received: state.tickStarted, Computed: state.core.ComputationFinishedAt(), Offset: record.Offset}
+		state.tickStarted = time.Time{}
+		state.batchTimings = append(state.batchTimings, timing)
+		r.cfg.Metrics.Add("processed_ticks", 1)
+		r.cfg.Metrics.Observe("compute", duration)
+		if computed.Raw.Complete < 18 {
+			r.cfg.Metrics.Add("incomplete_ticks", 1)
+		}
+		if message.Completion.Records < 18 {
+			r.cfg.Metrics.Add("missing_ticks", 1)
+		}
+		if message.Completion.Records == 0 {
+			r.cfg.Metrics.Add("empty_ticks", 1)
+		}
+		if computed.Temporal.Vote == group.Unknown {
+			r.cfg.Metrics.Add("unknown_ticks", 1)
+		}
+		if r.cfg.Measure {
+			r.cfg.Logger.InfoContext(ctx, "tick measurement", "execution", r.cfg.Options.Binding.ExecutionID, "group", message.GroupID, "owner", r.cfg.OwnerID, "epoch", state.lease.Epoch, "offset", record.Offset, "tick", message.Timestamp, "received_at", timing.Received, "computed_at", timing.Computed, "compute_seconds", duration.Seconds(), "source_marker_at", record.Timestamp, "source_first_at", state.tickSource)
+		}
 	}
 	r.cfg.Logger.DebugContext(ctx, "input accepted", "partition", record.Partition, "offset", record.Offset, "complete", transition != nil)
 	if transition == nil {
@@ -220,14 +315,27 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 	}
 	bounded, done := context.WithTimeout(ctx, 5*time.Second)
 	defer done()
+	checkpointStart := time.Now()
 	revision, err := r.store.Save(bounded, state.lease, *transition)
+	r.cfg.Metrics.Observe("checkpoint", time.Since(checkpointStart))
 	if err != nil {
+		r.cfg.Metrics.Add("checkpoint_failures", 1)
 		return state.core.Fail(err)
 	}
 	if err = state.core.Ack(revision); err != nil {
 		return err
 	}
-	r.cfg.Logger.InfoContext(ctx, "checkpoint committed", "partition", record.Partition, "group", message.GroupID, "epoch", state.lease.Epoch, "revision", revision, "next_offset", transition.Checkpoint.NextOffset, "tick", message.Timestamp, "finalized", transition.Checkpoint.Finalized, "events", len(transition.Result.Events))
+	r.cfg.Metrics.Add("checkpoint_count", 1)
+	r.cfg.Metrics.Add("checkpoint_bytes", int64(len(transition.Checkpoint.Snapshot)))
+	confirmed := time.Now()
+	for _, timing := range state.batchTimings {
+		r.cfg.Metrics.Observe("durability_wait", confirmed.Sub(timing.Computed))
+		if r.cfg.Measure {
+			r.cfg.Logger.InfoContext(ctx, "tick durable", "execution", r.cfg.Options.Binding.ExecutionID, "group", message.GroupID, "tick", timing.Tick, "revision", revision, "confirmed_at", confirmed, "checkpoint_started_at", checkpointStart, "durability_wait_seconds", confirmed.Sub(timing.Computed).Seconds())
+		}
+	}
+	state.batchTimings = nil
+	r.cfg.Logger.InfoContext(ctx, "checkpoint committed", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", record.Partition, "group", message.GroupID, "epoch", state.lease.Epoch, "revision", revision, "next_offset", transition.Checkpoint.NextOffset, "tick", message.Timestamp, "finalized", transition.Checkpoint.Finalized, "events", len(transition.Result.Events))
 	return nil
 }
 
@@ -257,6 +365,9 @@ func (r *Runner) close() error {
 	var result error
 	for partition, state := range r.parts {
 		delete(r.parts, partition)
+		if r.cfg.Output != nil {
+			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
+		}
 		delete(r.assigned, partition)
 		if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
 			result = errors.Join(result, err)
@@ -266,6 +377,9 @@ func (r *Runner) close() error {
 }
 
 func (r *Runner) Run(ctx context.Context) (retErr error) {
+	if r.cfg.Output != nil {
+		defer func() { retErr = errors.Join(retErr, r.cfg.Output.Close()) }()
+	}
 	cluster, topic, err := kafkainput.DescribeSource(ctx, r.cfg.Broker)
 	if err != nil {
 		return err
@@ -279,6 +393,19 @@ func (r *Runner) Run(ctx context.Context) (retErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer func() { retErr = errors.Join(retErr, r.close()) }()
+	outputStopped := make(chan struct{})
+	outputFailure := make(chan error, 1)
+	if r.cfg.Output != nil {
+		go func() {
+			defer close(outputStopped)
+			if err := r.cfg.Output.Run(ctx); err != nil {
+				outputFailure <- err
+				cancel()
+			}
+		}()
+	} else {
+		close(outputStopped)
+	}
 	heartbeat := make(chan error, 1)
 	stopped := make(chan struct{})
 	go func() {
@@ -298,14 +425,29 @@ func (r *Runner) Run(ctx context.Context) (retErr error) {
 			}
 		}
 	}()
-	cfg := kafkainput.ConsumerConfig{Broker: r.cfg.Broker, Binding: r.cfg.Options.Binding, Window: domain.InputWindow{Start: r.cfg.Options.Window.Start, End: r.cfg.Options.Window.End}, Group: r.cfg.ConsumerGroup, Load: r.load, Assigned: r.assignedHook, Revoked: r.revokeHook, Lost: r.revokeHook, RestoreTimeout: r.cfg.LeaseTTL + 5*time.Second, Report: func(e error) { r.cfg.Logger.WarnContext(ctx, "Kafka session interrupted", "error", e) }}
+	cfg := kafkainput.ConsumerConfig{Broker: r.cfg.Broker, Binding: r.cfg.Options.Binding, Window: domain.InputWindow{Start: r.cfg.Options.Window.Start, End: r.cfg.Options.Window.End}, Group: r.cfg.ConsumerGroup, FetchProgress: r.fetchProgress, Load: r.load, Assigned: r.assignedHook, Revoked: r.revokeHook, Lost: r.revokeHook, RestoreTimeout: r.cfg.LeaseTTL + 5*time.Second, Report: func(e error) { r.cfg.Logger.WarnContext(ctx, "Kafka session interrupted", "error", e) }}
 	retErr = kafkainput.ConsumeGroup(ctx, cfg, r.handle)
 	cancel()
 	<-stopped
+	<-outputStopped
+	select {
+	case err := <-outputFailure:
+		retErr = errors.Join(retErr, err)
+	default:
+	}
 	select {
 	case err := <-heartbeat:
 		retErr = errors.Join(retErr, err)
 	default:
 	}
 	return retErr
+}
+
+func (r *Runner) fetchProgress(partition int32, highWatermark int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if state := r.parts[partition]; state != nil {
+		state.highWatermark = highWatermark
+		r.cfg.Metrics.Set("kafka_lag_records_"+state.lease.Group, float64(max(0, highWatermark-state.nextOffset)))
+	}
 }

@@ -1,0 +1,11 @@
+.git
+.cache
+.codex
+.agents
+experiments/artifacts
+data
+results
+*.exe
+*.log
+.env
+.env.*

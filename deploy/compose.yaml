@@ -1,0 +1,128 @@
+name: cad-demo
+x-environment: &runtime
+  ASSETS_ROOT: /assets
+  EXECUTION_ID: ${EXECUTION_ID:?Set a fresh execution UUID}
+  PROFILE_SHA256: ${PROFILE_SHA256:-a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36}
+  INPUT_SHA256: ${INPUT_SHA256:-cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7}
+  KAFKA_BROKERS: kafka:9092
+  OUTPUT_TRANSPORT: ${OUTPUT_TRANSPORT:-http_push}
+  GROUPS_COUNT: ${GROUPS_COUNT:-16}
+  DELTA_SECONDS: ${DELTA_SECONDS:-0}
+  CHECKPOINT_INTERVAL_TICKS: ${CHECKPOINT_INTERVAL_TICKS:-1}
+  POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-100}
+  RUN_START: ${RUN_START:-2022-01-18T08:00:00Z}
+  RUN_END: ${RUN_END:-2022-01-18T16:00:00Z}
+  REPLAY_SPEED: ${REPLAY_SPEED:-100}
+  MEASURE: ${MEASURE:-false}
+x-app: &app
+  image: ${CAD_IMAGE:-cad-system:local}
+  networks: [cad]
+  volumes:
+    - type: bind
+      source: ${ASSETS_ROOT:?Set immutable Summit assets directory}
+      target: /assets
+      read_only: true
+  init: true
+  stop_grace_period: 20s
+services:
+  postgres:
+    image: postgres:17.5-alpine
+    environment:
+      POSTGRES_DB: cad
+      POSTGRES_USER: cad_admin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set local administrative password}
+    command: [postgres, -c, max_connections=160, -c, shared_buffers=256MB]
+    ports: ["127.0.0.1:${PG_PORT:-55432}:5432"]
+    volumes: [pg-data:/var/lib/postgresql/data]
+    networks: [cad]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U cad_admin -d cad"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+  kafka:
+    image: apache/kafka:4.1.2
+    environment:
+      CLUSTER_ID: 4L6g3nShT-eMCtK--X86sw
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,EXTERNAL://:29092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:${KAFKA_PORT:-29092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+      KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
+    ports: ["127.0.0.1:${KAFKA_PORT:-29092}:29092"]
+    volumes: [kafka-data:/var/lib/kafka/data]
+    networks: [cad]
+    healthcheck:
+      test: [CMD-SHELL, "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+  bootstrap:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    command: [bootstrap]
+    environment:
+      <<: *runtime
+      DATABASE_URL: postgres://cad_admin:${POSTGRES_PASSWORD}@postgres:5432/cad?sslmode=disable
+      WORKER_DB_PASSWORD: ${WORKER_DB_PASSWORD:?Set Worker password}
+      MASTER_DB_PASSWORD: ${MASTER_DB_PASSWORD:?Set Master password}
+    depends_on:
+      postgres: {condition: service_healthy}
+      kafka: {condition: service_healthy}
+  master:
+    <<: *app
+    command: [master]
+    environment:
+      <<: *runtime
+      MASTER_DATABASE_URL: postgres://cad_master:${MASTER_DB_PASSWORD}@postgres:5432/cad?sslmode=disable
+      GOMAXPROCS: 2
+    ports: ["127.0.0.1:${MASTER_PORT:-8080}:8080"]
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8080/readyz]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  worker:
+    <<: *app
+    command: [worker]
+    environment:
+      <<: *runtime
+      WORKER_DATABASE_URL: postgres://cad_worker:${WORKER_DB_PASSWORD}@postgres:5432/cad?sslmode=disable
+      GOMAXPROCS: 1
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+      master: {condition: service_healthy}
+    deploy: {replicas: 2}
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://127.0.0.1:8081/readyz]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  replayer:
+    <<: *app
+    profiles: [replay]
+    command: [replayer]
+    environment: *runtime
+    depends_on:
+      worker: {condition: service_healthy}
+volumes:
+  pg-data:
+  kafka-data:
+networks:
+  cad:

@@ -22,6 +22,9 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport"
+	eventrepo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
+	eventusecase "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
@@ -43,6 +46,15 @@ type workerRig struct {
 }
 
 func workerIntegration(t *testing.T, delta int) *workerRig {
+	return workerIntegrationMode(t, delta, "polling")
+}
+func workerIntegrationMode(t *testing.T, delta int, mode string) *workerRig {
+	return workerIntegrationFixture(t, delta, mode, nil)
+}
+func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture, diagnostics ...bool) *workerRig {
+	return workerIntegrationWithCadence(t, delta, mode, frozen, 1, diagnostics...)
+}
+func workerIntegrationWithCadence(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture, cadence int, diagnostics ...bool) *workerRig {
 	t.Helper()
 	if os.Getenv("P07_WORKER_INTEGRATION") != "1" {
 		t.Skip("opt-in P07_WORKER_INTEGRATION=1 requires isolated real Kafka/PostgreSQL")
@@ -77,7 +89,12 @@ func workerIntegration(t *testing.T, delta int) *workerRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := workerfixture.New(t, 6, delta)
+	var f workerfixture.Fixture
+	if frozen != nil {
+		f = *frozen
+	} else {
+		f = workerfixture.New(t, 6, delta)
+	}
 	execution, err := NewOwnerID()
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +143,7 @@ func workerIntegration(t *testing.T, delta int) *workerRig {
 	}
 	_ = migration.Close(ctx)
 	consumer := "p07-" + execution
-	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: "polling", StartOffsets: map[string]int64{}}
+	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, CheckpointIntervalTicks: cadence, Diagnostics: len(diagnostics) > 0 && diagnostics[0], StartOffsets: map[string]int64{}}
 	for i := int32(0); i < 16; i++ {
 		v := ends[kafkainput.Topic][i]
 		if v.Err != nil {
@@ -153,8 +170,11 @@ func waitWorker(t *testing.T, timeout time.Duration, condition func() bool) {
 }
 
 func (r *workerRig) start(t *testing.T) (*Runner, context.CancelFunc, <-chan error) {
+	return r.startOutput(t, nil)
+}
+func (r *workerRig) startOutput(t *testing.T, output *eventusecase.Dispatcher) (*Runner, context.CancelFunc, <-chan error) {
 	t.Helper()
-	runner, err := New(Config{Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}, r.store)
+	runner, err := New(Config{CheckpointIntervalTicks: r.store.Registration.Cadence(), Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Output: output}, r.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +210,7 @@ func (r *workerRig) waitRevision(t *testing.T, revision int64) {
 	waitWorker(t, 40*time.Second, func() bool {
 		var count int
 		err := r.pool.QueryRow(context.Background(), "SELECT count(*) FROM cad_v2.group_checkpoints WHERE checkpoint_revision=$1", revision).Scan(&count)
-		return err == nil && count == 16
+		return err == nil && count == r.fixture.Options.Groups
 	})
 }
 
@@ -229,10 +249,10 @@ func (r *workerRig) sendTick(t *testing.T, tick int) {
 	}
 }
 
-func (r *workerRig) assertEvents(t *testing.T) {
+func (r *workerRig) expectedEvents(t *testing.T) map[string]group.RBI2Event {
 	t.Helper()
 	want := map[string]group.RBI2Event{}
-	for g := 1; g <= 16; g++ {
+	for g := 1; g <= r.fixture.Options.Groups; g++ {
 		opts := r.fixture.Options
 		opts.GroupID = fmt.Sprintf("a%02d", g)
 		p, err := group.NewGroupProcessor(r.fixture.Bundle, opts)
@@ -282,8 +302,13 @@ func (r *workerRig) assertEvents(t *testing.T) {
 			t.Fatalf("final mathematical state differs from continuous oracle for %s: %v", opts.GroupID, err)
 		}
 	}
+	return want
+}
+func (r *workerRig) assertEvents(t *testing.T) {
+	t.Helper()
+	want := r.expectedEvents(t)
 	got := map[string]group.RBI2Event{}
-	for g := 1; g <= 16; g++ {
+	for g := 1; g <= r.fixture.Options.Groups; g++ {
 		outputs, err := r.store.Pending(context.Background(), fmt.Sprintf("a%02d", g))
 		if err != nil {
 			t.Fatal(err)
@@ -356,7 +381,7 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := rig.fixture.Options
-	cmd := exec.Command(binary, "--assets", rig.fixture.Root, "--profile-sha256", options.Binding.ProfileSHA256, "--input-sha256", options.Binding.InputSHA256, "--execution-id", options.Binding.ExecutionID, "--consumer-group", rig.group, "--kafka-brokers", strings.Join(rig.broker.Seeds, ","), "--start", options.Window.Start.Format(time.RFC3339), "--end", options.Window.End.Format(time.RFC3339), "--delta", "30", "--lease-ttl", "3s", "--log-level", "debug")
+	cmd := exec.Command(binary, "--assets", rig.fixture.Root, "--profile-sha256", options.Binding.ProfileSHA256, "--input-sha256", options.Binding.InputSHA256, "--execution-id", options.Binding.ExecutionID, "--consumer-group", rig.group, "--kafka-brokers", strings.Join(rig.broker.Seeds, ","), "--start", options.Window.Start.Format(time.RFC3339), "--end", options.Window.End.Format(time.RFC3339), "--delta", "30", "--lease-ttl", "3s", "--log-level", "debug", "--diagnostics=false")
 	cmd.Env = append(os.Environ(), "WORKER_DATABASE_URL="+rig.dsn)
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -395,6 +420,16 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 	if err := json.Unmarshal(durable.Snapshot, &saved); err != nil || saved.Journal.Open == nil {
 		t.Fatal("open event absent at crash", err)
 	}
+	heldTemporalWitness := false
+	for _, occurrence := range saved.Journal.Clock.States {
+		if !occurrence.Positive.IsZero() && occurrence.Positive.Before(saved.Journal.Last) && saved.Journal.Last.Sub(occurrence.Positive) <= 30*time.Second {
+			heldTemporalWitness = true
+		}
+	}
+	if saved.DeltaSeconds != 30 || !heldTemporalWitness {
+		t.Fatal("crash must occur with active historical delta30 witness, not merely a delta30 configuration")
+	}
+	t.Logf("crash_delta30_historical_memory=true durable_next_offset=%d open_event_id=%s", durable.NextOffset, saved.Journal.Open.ID)
 	expectedEventID := saved.Journal.Open.ID
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
@@ -435,5 +470,34 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("restart changed open parent EventID")
+	}
+}
+
+// Bind before any publication so tests never replay output owned by another
+// execution. Restart must keep these exact durable positions and incarnation.
+func (r *workerRig) bindResults(t *testing.T, consumer string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sender, err := resulttransport.NewKafka(ctx, r.broker.Seeds, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := sender.Identity
+	_ = sender.Close()
+	ends, err := kadm.NewClient(r.producer).ListEndOffsets(ctx, resulttransport.ResultsTopic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := map[string]int64{}
+	for p := int32(0); p < 16; p++ {
+		entry, ok := ends[resulttransport.ResultsTopic][p]
+		if !ok || entry.Err != nil {
+			t.Fatal("results end unavailable")
+		}
+		starts[strconv.Itoa(int(p))] = entry.Offset
+	}
+	if err := (eventrepo.MasterStore{DB: r.pool}).BindResults(ctx, r.fixture.Options.Binding.ExecutionID, pin.ClusterID, pin.TopicID, consumer, starts); err != nil {
+		t.Fatal(err)
 	}
 }

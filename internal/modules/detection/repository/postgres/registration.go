@@ -29,13 +29,24 @@ type Registration struct {
 	Binding                           telemetry.InputBinding
 	ClusterID, TopicID, ConsumerGroup string
 	StartOffsets                      map[string]int64
-	OutputTransport                   string // reserved V2 metadata; P07 has no dispatcher
+	OutputTransport                   string
+	CheckpointIntervalTicks           int
+	Diagnostics                       bool // immutable v2 transport contract, separate from scientific identity
+}
+
+// Cadence is operational metadata; zero preserves the existing cadence=1 API.
+func (r Registration) Cadence() int {
+	if r.CheckpointIntervalTicks == 0 {
+		return 1
+	}
+	return r.CheckpointIntervalTicks
 }
 
 type sourceMetadata struct {
-	Version int                    `json:"version"`
-	TopicID string                 `json:"topic_id"`
-	Binding telemetry.InputBinding `json:"binding"`
+	Version     int                    `json:"version"`
+	TopicID     string                 `json:"topic_id"`
+	Binding     telemetry.InputBinding `json:"binding"`
+	Diagnostics bool                   `json:"diagnostics,omitempty"`
 }
 
 func hashJSON(v any) string { b, _ := json.Marshal(v); return core.SnapshotHash(b) }
@@ -45,8 +56,8 @@ func uuidValid(v string) bool {
 }
 
 func (r Registration) validate() error {
-	if !uuidValid(r.Binding.ExecutionID) || r.Binding.Validate() != nil || r.ClusterID == "" || r.TopicID == "" || r.ConsumerGroup == "" || r.Identity.Groups != 16 {
-		return fmt.Errorf("explicit UUID execution/source/topic/group and 16-group registration required")
+	if (r.Cadence() != 1 && r.Cadence() != 3 && r.Cadence() != 6) || !uuidValid(r.Binding.ExecutionID) || r.Binding.Validate() != nil || r.ClusterID == "" || r.TopicID == "" || r.ConsumerGroup == "" || (r.Identity.Groups != 4 && r.Identity.Groups != 8 && r.Identity.Groups != 16) {
+		return fmt.Errorf("explicit UUID execution/source/topic/group and 4/8/16-group registration required")
 	}
 	id, err := group.NewRBI2Identity(r.Identity.ProfileSHA256, r.Identity.InputSHA256, r.Identity.Groups, r.Identity.Window, r.Identity.DeltaSeconds)
 	if err != nil || hashJSON(id) != hashJSON(r.Identity) || r.Binding.ProfileSHA256 != id.ProfileSHA256 {
@@ -95,10 +106,10 @@ func Register(ctx context.Context, db DB, r Registration) error {
 	for k, v := range r.StartOffsets {
 		offsets[k] = v
 	}
-	offsets["_p07"] = sourceMetadata{1, r.TopicID, r.Binding}
+	offsets["_p07"] = sourceMetadata{Version: metadataVersion(r.Diagnostics), TopicID: r.TopicID, Binding: r.Binding, Diagnostics: r.Diagnostics}
 	start, _ := json.Marshal(offsets)
 	_, err = tx.Exec(ctx, `INSERT INTO cad_v2.executions(execution_id,run_id,kafka_cluster_id,input_topic,consumer_group,partition_count,output_transport,checkpoint_interval_ticks,snapshot_schema_version,snapshot_codec,start_offsets)
- VALUES($1::uuid,$2,$3,'telemetry.raw',$4,16,$5,1,$6,'json-utf8',$7::jsonb) ON CONFLICT DO NOTHING`, r.Binding.ExecutionID, r.Identity.RunID, r.ClusterID, r.ConsumerGroup, r.OutputTransport, group.MathSnapshotSchemaVersion, start)
+ VALUES($1::uuid,$2,$3,'telemetry.raw',$4,16,$5,$8,$6,'json-utf8',$7::jsonb) ON CONFLICT DO NOTHING`, r.Binding.ExecutionID, r.Identity.RunID, r.ClusterID, r.ConsumerGroup, r.OutputTransport, group.MathSnapshotSchemaVersion, start, r.Cadence())
 	if err != nil {
 		return err
 	}
@@ -164,7 +175,7 @@ func validateRegistration(ctx context.Context, q rowQuery, r Registration) error
 		return err
 	}
 	bh, th, fh := registrationHashes(r)
-	if hashJSON(got) != hashJSON(r.Identity) || hashJSON(savedIdentity) != hashJSON(r.Identity) || bundle != bh || topology != th || features != fh || cluster != r.ClusterID || topic != "telemetry.raw" || consumer != r.ConsumerGroup || output != r.OutputTransport || partitions != 16 || cadence != 1 || version != group.MathSnapshotSchemaVersion || codec != "json-utf8" {
+	if hashJSON(got) != hashJSON(r.Identity) || hashJSON(savedIdentity) != hashJSON(r.Identity) || bundle != bh || topology != th || features != fh || cluster != r.ClusterID || topic != "telemetry.raw" || consumer != r.ConsumerGroup || output != r.OutputTransport || partitions != 16 || cadence != r.Cadence() || version != group.MathSnapshotSchemaVersion || codec != "json-utf8" {
 		return fmt.Errorf("execution frozen/source/snapshot metadata mismatch")
 	}
 	var offsets map[string]json.RawMessage
@@ -175,7 +186,7 @@ func validateRegistration(ctx context.Context, q rowQuery, r Registration) error
 	if err = json.Unmarshal(offsets["_p07"], &meta); err != nil {
 		return fmt.Errorf("P07 topic binding registration required")
 	}
-	if meta.Version != 1 || meta.TopicID != r.TopicID || meta.Binding != r.Binding || len(offsets) != 17 {
+	if meta.Version != metadataVersion(r.Diagnostics) || meta.Diagnostics != r.Diagnostics || meta.TopicID != r.TopicID || meta.Binding != r.Binding || len(offsets) != 17 {
 		return fmt.Errorf("execution topic incarnation/input binding mismatch")
 	}
 	for i := 0; i < 16; i++ {
@@ -191,3 +202,10 @@ func validateRegistration(ctx context.Context, q rowQuery, r Registration) error
 // Timeouts are connection-local. Runtime roles need only SELECT and the SQL
 // security-definer functions, as specified by db/scripts/grants.sql.
 const DefaultLease = 10 * time.Second
+
+func metadataVersion(diagnostics bool) int {
+	if diagnostics {
+		return 2
+	}
+	return 1
+}

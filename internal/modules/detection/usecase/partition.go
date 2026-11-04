@@ -27,7 +27,8 @@ type Checkpoint struct {
 
 type Transition struct {
 	Checkpoint Checkpoint
-	Result     group.GroupProcessorResult // local only; never a final Master group_result
+	Result     group.GroupProcessorResult   // local only; never a final Master group_result
+	Results    []group.GroupProcessorResult // completed ticks staged in this durable transition
 }
 
 type Partition struct {
@@ -36,6 +37,11 @@ type Partition struct {
 	options            group.GroupProcessorOptions
 	revision, readNext int64
 	pending            *Transition
+	batch              []group.GroupProcessorResult
+	cadence            int
+	lastResult         group.GroupProcessorResult
+	lastCompute        time.Duration
+	lastComputedAt     time.Time
 	finished           bool
 	failed             error
 }
@@ -57,6 +63,15 @@ func DecodeCheckpoint(c Checkpoint) (group.GroupProcessorSnapshot, error) {
 }
 
 func NewPartition(bundle *group.Bundle, options group.GroupProcessorOptions, startOffset int64, saved *Checkpoint) (*Partition, error) {
+	return NewPartitionWithCadence(bundle, options, startOffset, saved, 1)
+}
+
+// NewPartitionWithCadence changes only the durable boundary; Step/Finish remain
+// exactly once per complete tick. Uncommitted batches are always replayed.
+func NewPartitionWithCadence(bundle *group.Bundle, options group.GroupProcessorOptions, startOffset int64, saved *Checkpoint, cadence int) (*Partition, error) {
+	if cadence != 1 && cadence != 3 && cadence != 6 {
+		return nil, fmt.Errorf("checkpoint interval must be 1, 3 or 6 ticks")
+	}
 	if startOffset < 0 {
 		return nil, fmt.Errorf("explicit nonnegative start offset required")
 	}
@@ -89,7 +104,7 @@ func NewPartition(bundle *group.Bundle, options group.GroupProcessorOptions, sta
 			return nil, err
 		}
 	}
-	return &Partition{processor: p, assembler: a, options: options, revision: revision, readNext: nextOffset, finished: finished}, nil
+	return &Partition{processor: p, assembler: a, options: options, revision: revision, readNext: nextOffset, finished: finished, cadence: cadence}, nil
 }
 
 func (p *Partition) Fail(err error) error {
@@ -100,7 +115,7 @@ func (p *Partition) Fail(err error) error {
 }
 
 // Accept is sequential. Record acceptance changes RAM only; a marker creates
-// exactly one complete-tick proposal and prevents further input until Ack.
+// a complete-tick batch proposal at cadence (or finalization), then waits for Ack.
 func (p *Partition) Accept(offset int64, message domain.InputMessage) (*Transition, error) {
 	if p.failed != nil {
 		return nil, p.failed
@@ -119,6 +134,7 @@ func (p *Partition) Accept(offset int64, message domain.InputMessage) (*Transiti
 	if tick == nil {
 		return nil, nil
 	}
+	computeStart := time.Now()
 	result, err := p.processor.Step(*tick)
 	if err != nil {
 		return nil, p.Fail(err)
@@ -134,6 +150,12 @@ func (p *Partition) Accept(offset int64, message domain.InputMessage) (*Transiti
 		}
 		result.Events = append(result.Events, events...)
 	}
+	p.lastComputedAt = time.Now()
+	p.lastResult, p.lastCompute = result, p.lastComputedAt.Sub(computeStart)
+	p.batch = append(p.batch, result)
+	if !final && len(p.batch) < p.cadence {
+		return nil, nil
+	}
 	s, err := p.processor.Snapshot()
 	if err != nil {
 		return nil, p.Fail(err)
@@ -142,7 +164,14 @@ func (p *Partition) Accept(offset int64, message domain.InputMessage) (*Transiti
 	if err != nil {
 		return nil, p.Fail(err)
 	}
-	p.pending = &Transition{Checkpoint: Checkpoint{Revision: p.revision + 1, NextOffset: p.readNext, LastTick: tick.Timestamp, Finalized: final, Snapshot: bytes, SHA256: SnapshotHash(bytes)}, Result: result}
+	// Preserve all parents closed anywhere in the batch, including final Flush.
+	// Per-tick Results retain the original local diagnostics and decision order.
+	aggregate := result
+	aggregate.Events = nil
+	for _, tickResult := range p.batch {
+		aggregate.Events = append(aggregate.Events, tickResult.Events...)
+	}
+	p.pending = &Transition{Checkpoint: Checkpoint{Revision: p.revision + 1, NextOffset: p.readNext, LastTick: tick.Timestamp, Finalized: final, Snapshot: bytes, SHA256: SnapshotHash(bytes)}, Result: aggregate, Results: append([]group.GroupProcessorResult(nil), p.batch...)}
 	return p.pending, nil
 }
 
@@ -155,7 +184,15 @@ func (p *Partition) Ack(revision int64) error {
 	}
 	p.revision, p.finished = revision, p.pending.Checkpoint.Finalized
 	p.pending = nil
+	p.batch = nil
 	return nil
 }
 
 func (p *Partition) Finished() bool { return p.finished && p.failed == nil }
+
+// LastComputation exposes operational timing only; callers use it after a completion marker.
+func (p *Partition) LastComputation() (group.GroupProcessorResult, time.Duration) {
+	return p.lastResult, p.lastCompute
+}
+
+func (p *Partition) ComputationFinishedAt() time.Time { return p.lastComputedAt }

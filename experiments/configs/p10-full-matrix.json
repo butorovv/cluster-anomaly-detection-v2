@@ -1,0 +1,276 @@
+{
+  "schema_version": 1,
+  "assets": "${ASSETS_ROOT}",
+  "profile_sha256": "a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36",
+  "input_sha256": "cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7",
+  "brokers": "${P07_TEST_KAFKA_BROKERS}",
+  "golden_root": "${V1_GOLDEN_ROOT}",
+  "golden_manifest": "${V1_GOLDEN_MANIFEST}",
+  "output": "experiments/artifacts/p10-full-matrix",
+  "timeout_seconds": 1200,
+  "runs": [
+    {
+      "name": "g16-d0-w2-push-c1",
+      "workers": 2,
+      "groups": 16,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d0-w4-push-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d0-w8-push-c1",
+      "workers": 8,
+      "groups": 16,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d0-w16-push-c1",
+      "workers": 16,
+      "groups": 16,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d10-w1-push-c1",
+      "workers": 1,
+      "groups": 16,
+      "delta": 10,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d10-w2-push-c1",
+      "workers": 2,
+      "groups": 16,
+      "delta": 10,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d10-w4-push-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 10,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d10-w8-push-c1",
+      "workers": 8,
+      "groups": 16,
+      "delta": 10,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d10-w16-push-c1",
+      "workers": 16,
+      "groups": 16,
+      "delta": 10,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w1-push-c1",
+      "workers": 1,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w2-push-c1",
+      "workers": 2,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w4-push-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w8-push-c1",
+      "workers": 8,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w16-push-c1",
+      "workers": 16,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d60-w1-push-c1",
+      "workers": 1,
+      "groups": 16,
+      "delta": 60,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d60-w2-push-c1",
+      "workers": 2,
+      "groups": 16,
+      "delta": 60,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d60-w4-push-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 60,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d60-w8-push-c1",
+      "workers": 8,
+      "groups": 16,
+      "delta": 60,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d60-w16-push-c1",
+      "workers": 16,
+      "groups": 16,
+      "delta": 60,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g4-d0-w2-push-c1",
+      "workers": 2,
+      "groups": 4,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g8-d0-w2-push-c1",
+      "workers": 2,
+      "groups": 8,
+      "delta": 0,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d0-w4-polling-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 0,
+      "mode": "polling",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d0-w4-kafka-c1",
+      "workers": 4,
+      "groups": 16,
+      "delta": 0,
+      "mode": "kafka",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0
+    },
+    {
+      "name": "g16-d30-w2-push-kill-worker",
+      "workers": 2,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0,
+      "fault": "kill_worker"
+    },
+    {
+      "name": "g16-d30-w2-push-rebalance",
+      "workers": 2,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0,
+      "fault": "rebalance"
+    },
+    {
+      "name": "g16-d30-w2-push-restart-master",
+      "workers": 2,
+      "groups": 16,
+      "delta": 30,
+      "mode": "http_push",
+      "cadence": 1,
+      "poll_ms": 100,
+      "replay_speed": 0,
+      "fault": "restart_master"
+    }
+  ]
+}

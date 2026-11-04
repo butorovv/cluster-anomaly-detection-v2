@@ -18,7 +18,7 @@ func TestIntegratedFreshAndUpgrade(t *testing.T) {
 		t.Run(fmt.Sprint("upgrade_", upgrade), func(t *testing.T) {
 			c := testDatabase(t)
 			ctx := context.Background()
-			wantApplied := 5
+			wantApplied := 7
 			if upgrade {
 				if n, err := Apply(ctx, c, baselineFiles(t)); err != nil || n != 1 {
 					t.Fatal(n, err)
@@ -30,7 +30,7 @@ func TestIntegratedFreshAndUpgrade(t *testing.T) {
  INSERT INTO project.telemetry(metric_source_id,ts,value) SELECT id,'2022-01-18T08:00:00Z',42.5 FROM project.metric_source`); err != nil {
 					t.Fatal(err)
 				}
-				wantApplied = 4
+				wantApplied = 6
 			}
 			var before, after string
 			if err := c.QueryRow(ctx, "SHOW search_path").Scan(&before); err != nil {
@@ -46,7 +46,7 @@ func TestIntegratedFreshAndUpgrade(t *testing.T) {
 				t.Fatal(n, err)
 			}
 			var versions []int32
-			if err := c.QueryRow(ctx, "SELECT array_agg(version ORDER BY version) FROM public.schema_migrations").Scan(&versions); err != nil || !reflect.DeepEqual(versions, []int32{1, 2, 3, 4, 5}) {
+			if err := c.QueryRow(ctx, "SELECT array_agg(version ORDER BY version) FROM public.schema_migrations").Scan(&versions); err != nil || !reflect.DeepEqual(versions, []int32{1, 2, 3, 4, 5, 6, 7}) {
 				t.Fatal(versions, err)
 			}
 			var tables []string
@@ -65,7 +65,7 @@ func TestIntegratedFreshAndUpgrade(t *testing.T) {
 			if err := rows.Err(); err != nil {
 				t.Fatal(err)
 			}
-			if !reflect.DeepEqual(tables, []string{"execution_partitions", "executions", "group_checkpoints", "master_events", "master_inbox", "master_results", "outbox_messages", "partition_ownership", "runs"}) {
+			if !reflect.DeepEqual(tables, []string{"execution_partitions", "executions", "group_checkpoints", "master_events", "master_inbox", "master_poll_cursors", "master_results", "master_tick_fragments", "master_tick_joins", "outbox_messages", "partition_ownership", "result_consumer_offsets", "result_topic_bindings", "runs", "worker_endpoints", "worker_tick_fragments"}) {
 				t.Fatal(tables)
 			}
 			var metrics, kept int
@@ -106,7 +106,7 @@ func TestIntegratedSeriesAtomicRollback(t *testing.T) {
 	if err := c.QueryRow(ctx, "SELECT to_regnamespace('project') IS NULL AND to_regnamespace('cad_v2') IS NULL AND to_regclass('public.schema_migrations') IS NULL").Scan(&clean); err != nil || !clean {
 		t.Fatal("partial migration committed", clean, err)
 	}
-	if n, err := Apply(ctx, c, Files); err != nil || n != 5 {
+	if n, err := Apply(ctx, c, Files); err != nil || n != 7 {
 		t.Fatal(n, err)
 	}
 }

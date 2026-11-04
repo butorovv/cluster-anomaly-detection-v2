@@ -5,6 +5,7 @@ package kafkainput
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -18,6 +19,9 @@ type Broker struct {
 	Seeds []string
 	// Topic defaults to telemetry.raw. Tests use isolated topics with the same contract.
 	Topic string
+	// DialContext optionally routes real transport connections (e.g. isolated outage tests).
+	// It cannot override group, assignment, offsets or commit policy.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 // DescribeSource binds registration to both Kafka cluster and topic incarnation.
@@ -28,6 +32,15 @@ func DescribeSource(ctx context.Context, broker Broker) (clusterID, topicID stri
 		return "", "", err
 	}
 	defer cl.Close()
+	return DescribeSourceWithClient(ctx, cl, broker.topic())
+}
+
+// DescribeSourceWithClient performs fresh identity/policy requests over the
+// existing connection pool. Result dispatch must not create sockets per record.
+func DescribeSourceWithClient(ctx context.Context, cl *kgo.Client, topic string) (clusterID, topicID string, err error) {
+	if cl == nil || topic == "" {
+		return "", "", fmt.Errorf("Kafka client/topic required")
+	}
 	metadata, err := kadm.NewClient(cl).BrokerMetadata(ctx)
 	if err != nil {
 		return "", "", err
@@ -35,7 +48,7 @@ func DescribeSource(ctx context.Context, broker Broker) (clusterID, topicID stri
 	if metadata.Cluster == "" {
 		return "", "", fmt.Errorf("Kafka cluster ID required")
 	}
-	topicID, err = CheckTopic(ctx, cl, broker.topic())
+	topicID, err = CheckTopic(ctx, cl, topic)
 	return metadata.Cluster, topicID, err
 }
 
@@ -49,7 +62,11 @@ func (b Broker) topic() string {
 func (b Broker) options() []kgo.Opt {
 	// This PoC explicitly uses PLAINTEXT; an EOF during broker restart is not
 	// evidence of a TLS mismatch. Retries remain bounded by caller/deadlines.
-	return []kgo.Opt{kgo.SeedBrokers(b.Seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.AlwaysRetryEOF()}
+	opts := []kgo.Opt{kgo.SeedBrokers(b.Seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.AlwaysRetryEOF()}
+	if b.DialContext != nil {
+		opts = append(opts, kgo.Dialer(b.DialContext))
+	}
+	return opts
 }
 
 // CheckTopic checks metadata without creating or expanding a topic. A changed
