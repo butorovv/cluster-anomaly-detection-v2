@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -174,7 +175,7 @@ func (s *sampler) capture(ctx context.Context) {
 		}
 		sample.Backlog = max(sample.Backlog, data.Gauges["execution_outbox_backlog"])
 		for key, value := range data.Gauges {
-			if len(key) > 18 && key[:18] == "kafka_lag_records_a" {
+			if strings.HasPrefix(key, "kafka_lag_records_a") {
 				sample.Lag += value
 			}
 		}
@@ -205,7 +206,7 @@ type trace struct {
 	Accepted   bool      `json:"accepted"`
 }
 
-func measureLogs(directory, run string, groups int, s *sampler) (Measurements, error) {
+func measureLogs(directory, run string, groups int, s *sampler, expectedTicks ...int) (Measurements, error) {
 	m := Measurements{Status: "FAIL", Clock: "same-host CreateTime Kafka timestamps + process wall clocks; compute durations monotonic; nearest-rank quantiles", Counters: map[string]int64{}, Network: "actual result-client HTTP/Kafka protocol stream read/write bytes and application payload counts; Kafka includes producer+consumer legs; TCP/IP framing and PostgreSQL/input/broker internal traffic NOT_MEASURED"}
 	ticks := map[string]trace{}
 	durable := map[string]trace{}
@@ -304,6 +305,9 @@ func measureLogs(directory, run string, groups int, s *sampler) (Measurements, e
 	if len(ticks) == 0 {
 		return m, fmt.Errorf("empty timing trace")
 	}
+	if len(expectedTicks) != 0 && len(ticks) != expectedTicks[0] {
+		return m, fmt.Errorf("incomplete timing trace: got %d ticks want %d", len(ticks), expectedTicks[0])
+	}
 	for name, values := range map[string][]float64{"compute": compute, "queue": queue, "durability": durability, "transport": transport, "master_commit": masterCommit, "e2e": e2e} {
 		for _, v := range values {
 			if v < 0 || math.IsInf(v, 0) || math.IsNaN(v) {
@@ -369,7 +373,7 @@ func analyzeExisting(path string, out io.Writer) error {
 	if err := json.Unmarshal(b, &s.samples); err != nil {
 		return err
 	}
-	measured, err := measureLogs(directory, result.RunID, result.Spec.Groups, s)
+	measured, err := measureLogs(directory, result.RunID, result.Spec.Groups, s, result.Comparison.Raw)
 	if err != nil {
 		return err
 	}

@@ -1,9 +1,12 @@
 package experiment
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,6 +47,9 @@ func TestMeasurementJoinClocksAndQuantiles(t *testing.T) {
 	if m.EndToEnd.Count != 4 || m.EndToEnd.P50 != 10 || m.Compute.P99 != .01 || m.Transport.P95 != 1 || m.Throughput != .4 {
 		t.Fatal("incorrect component/join measurement", m)
 	}
+	if _, err := measureLogs(root, run, 4, newSampler(), 8); err == nil {
+		t.Fatal("incomplete timing trace accepted")
+	}
 	write(true)
 	if _, err := measureLogs(root, run, 4, newSampler()); err == nil {
 		t.Fatal("negative clock samples accepted")
@@ -51,5 +57,18 @@ func TestMeasurementJoinClocksAndQuantiles(t *testing.T) {
 	d := distribution([]float64{4, 1, 3, 2})
 	if d.P50 != 2 || d.P95 != 4 || d.Mean != 2.5 {
 		t.Fatal("quantile definition drift", d)
+	}
+}
+
+func TestSamplerIncludesNonzeroPartitionLag(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"gauges":{"kafka_lag_records_a01":17,"kafka_lag_records_a16":25,"other":999}}`))
+	}))
+	defer server.Close()
+	s := newSampler()
+	s.Add("worker", server.URL)
+	s.capture(context.Background())
+	if got := s.Samples()[0].Lag; got != 42 {
+		t.Fatalf("lost input Kafka lag: got %v want 42", got)
 	}
 }
