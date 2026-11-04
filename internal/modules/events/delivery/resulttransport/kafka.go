@@ -25,6 +25,7 @@ type SourceIdentity struct{ ClusterID, TopicID string }
 type KafkaSender struct {
 	client   *kgo.Client
 	Identity SourceIdentity
+	metrics  *observability.Registry
 }
 
 func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*observability.Registry) (*KafkaSender, error) {
@@ -57,7 +58,11 @@ func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*obse
 		cl.Close()
 		return nil, err
 	}
-	return &KafkaSender{client: cl, Identity: SourceIdentity{ClusterID: cluster, TopicID: topic}}, nil
+	var registry *observability.Registry
+	if len(metrics) > 0 {
+		registry = metrics[0]
+	}
+	return &KafkaSender{client: cl, Identity: SourceIdentity{ClusterID: cluster, TopicID: topic}, metrics: registry}, nil
 }
 
 func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) error {
@@ -72,7 +77,9 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 	if err != nil {
 		return err
 	}
+	checkStarted := time.Now()
 	cluster, topic, err := kafkainput.DescribeSourceWithClient(ctx, s.client, ResultsTopic)
+	s.metrics.Observe("results_kafka_identity_check", time.Since(checkStarted))
 	if err != nil {
 		return err
 	}
@@ -80,7 +87,10 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 		return fmt.Errorf("results topic incarnation changed")
 	}
 	r := &kgo.Record{Topic: ResultsTopic, Partition: int32(p), Key: []byte(groupID), Value: raw}
-	return s.client.ProduceSync(ctx, r).FirstErr()
+	publishStarted := time.Now()
+	err = s.client.ProduceSync(ctx, r).FirstErr()
+	s.metrics.Observe("results_kafka_publish_ack", time.Since(publishStarted))
+	return err
 }
 
 func (s *KafkaSender) Close() error { s.client.Close(); return nil }
@@ -88,6 +98,10 @@ func (s *KafkaSender) Close() error { s.client.Close(); return nil }
 // ConsumeKafka processes output records synchronously. Durable PostgreSQL
 // positions are loaded before each assignment is allowed to fetch records.
 func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, metrics ...*observability.Registry) (retErr error) {
+	var registry *observability.Registry
+	if len(metrics) > 0 {
+		registry = metrics[0]
+	}
 	if len(seeds) == 0 || strings.TrimSpace(consumerGroup) == "" || pin.ClusterID == "" || pin.TopicID == "" || load == nil || handle == nil {
 		return fmt.Errorf("Kafka consumer configuration incomplete")
 	}
@@ -240,7 +254,10 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		}
 	}()
 	for {
+		pollStarted := time.Now()
 		fetches := cl.PollRecords(ctx, 128)
+		polledAt := time.Now()
+		registry.Observe("results_kafka_poll_wait", polledAt.Sub(pollStarted))
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -248,6 +265,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 			return fmt.Errorf("Kafka output fetch %s/%d: %w", e[0].Topic, e[0].Partition, e[0].Err)
 		}
 		records := fetches.Records()
+		registry.Set("results_kafka_poll_batch_records", float64(len(records)))
 		for _, r := range records {
 			if err := ctx.Err(); err != nil {
 				return err
@@ -266,9 +284,18 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 			if err != nil || p != int(r.Partition) || string(r.Key) != e.GroupID {
 				return fmt.Errorf("physical/logical output routing mismatch at %d@%d", r.Partition, r.Offset)
 			}
+			intakeAt := time.Now()
+			registry.Observe("results_kafka_poll_to_intake", intakeAt.Sub(polledAt))
+			// Record CreateTime is a processing clock assigned by this producer,
+			// never Summit's historical scientific event_time. This combined interval
+			// still includes producer transit, broker and client prefetch queue.
+			if !r.Timestamp.IsZero() && !polledAt.Before(r.Timestamp) {
+				registry.Observe("results_kafka_create_to_poll", polledAt.Sub(r.Timestamp))
+			}
 			if err := handle(ctx, r, r.Value); err != nil {
 				return fmt.Errorf("handle output %d@%d: %w", r.Partition, r.Offset, err)
 			}
+			registry.Observe("results_kafka_intake_service", time.Since(intakeAt))
 			mu.Lock()
 			expected[r.Partition] = r.Offset + 1
 			mu.Unlock()
@@ -277,9 +304,11 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		// auxiliary commit can acknowledge the successfully processed poll batch;
 		// a crash in its middle restores SQL positions, never Kafka progress.
 		if len(records) > 0 {
+			commitStarted := time.Now()
 			if err := cl.CommitRecords(ctx, records...); err != nil {
 				return fmt.Errorf("commit durable output batch: %w", err)
 			}
+			registry.Observe("results_kafka_aux_commit", time.Since(commitStarted))
 		}
 		cl.AllowRebalance()
 	}

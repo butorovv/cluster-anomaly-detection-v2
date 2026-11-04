@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"math"
 	"net/http"
@@ -43,36 +44,42 @@ func distribution(values []float64) Distribution {
 }
 
 type Measurements struct {
-	Status           string           `json:"status"`
-	ResourceStatus   string           `json:"resource_status"`
-	Clock            string           `json:"clock"`
-	SourceStart      time.Time        `json:"source_start"`
-	FinalJoin        time.Time        `json:"final_join_confirmed"`
-	Throughput       float64          `json:"group_ticks_per_second"`
-	Compute          Distribution     `json:"compute"`
-	InputQueue       Distribution     `json:"source_to_first_worker_receive"`
-	DurabilityWait   Distribution     `json:"computed_to_durable_confirmation"`
-	Transport        Distribution     `json:"send_to_master_receive"`
-	MasterCommit     Distribution     `json:"master_intake_to_commit_confirmation"`
-	EndToEnd         Distribution     `json:"source_to_final_join_confirmation"`
-	WorkerCPUSeconds float64          `json:"worker_cpu_seconds"`
-	MasterCPUSeconds float64          `json:"master_cpu_seconds"`
-	WorkerPeakRSS    uint64           `json:"worker_peak_aggregate_rss_bytes"`
-	MasterPeakRSS    uint64           `json:"master_peak_rss_bytes"`
-	OutboxBacklogMax float64          `json:"outbox_backlog_max"`
-	KafkaLagMax      float64          `json:"input_kafka_lag_records_max"`
-	Counters         map[string]int64 `json:"counters"`
-	Samples          int              `json:"resource_samples"`
-	Network          string           `json:"network_measurement"`
+	KafkaTimings            map[string]observability.Histogram `json:"kafka_stage_histograms,omitempty"`
+	PostgresWaitSamples     map[string]int                     `json:"postgres_active_wait_samples,omitempty"`
+	PostgresWaitSampleCount int                                `json:"postgres_wait_sample_count"`
+	KafkaLagStatus          string                             `json:"input_kafka_lag_status"`
+	Status                  string                             `json:"status"`
+	ResourceStatus          string                             `json:"resource_status"`
+	Clock                   string                             `json:"clock"`
+	SourceStart             time.Time                          `json:"source_start"`
+	FinalJoin               time.Time                          `json:"final_join_confirmed"`
+	Throughput              float64                            `json:"group_ticks_per_second"`
+	Compute                 Distribution                       `json:"compute"`
+	InputQueue              Distribution                       `json:"source_to_first_worker_receive"`
+	DurabilityWait          Distribution                       `json:"computed_to_durable_confirmation"`
+	Transport               Distribution                       `json:"send_to_master_receive"`
+	MasterCommit            Distribution                       `json:"master_intake_to_commit_confirmation"`
+	EndToEnd                Distribution                       `json:"source_to_final_join_confirmation"`
+	WorkerCPUSeconds        float64                            `json:"worker_cpu_seconds"`
+	MasterCPUSeconds        float64                            `json:"master_cpu_seconds"`
+	WorkerPeakRSS           uint64                             `json:"worker_peak_aggregate_rss_bytes"`
+	MasterPeakRSS           uint64                             `json:"master_peak_rss_bytes"`
+	OutboxBacklogMax        float64                            `json:"outbox_backlog_max"`
+	KafkaLagMax             float64                            `json:"input_kafka_lag_records_max"`
+	Counters                map[string]int64                   `json:"counters"`
+	Samples                 int                                `json:"resource_samples"`
+	Network                 string                             `json:"network_measurement"`
 }
 type resourceSample struct {
-	At                   time.Time `json:"at"`
+	PostgresWaits        map[string]int `json:"postgres_active_waits,omitempty"`
+	At                   time.Time      `json:"at"`
 	WorkerCPU, MasterCPU float64
 	WorkerRSS, MasterRSS uint64
 	Backlog, Lag         float64
 	Counters             map[string]int64 `json:"counters"`
 }
 type sampler struct {
+	database  *pgxpool.Pool
 	mu        sync.Mutex
 	endpoints map[string]string
 	last      map[string]observability.Data
@@ -132,6 +139,26 @@ func (s *sampler) capture(ctx context.Context) {
 	}
 	s.mu.Unlock()
 	current := map[string]observability.Data{}
+	var waits map[string]int
+	if s.database != nil {
+		bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		rows, err := s.database.Query(bounded, `SELECT coalesce(wait_event_type,'CPU'),coalesce(wait_event,'ACTIVE'),count(*) FROM pg_stat_activity WHERE datname=current_database() AND state='active' AND pid<>pg_backend_pid() GROUP BY 1,2`)
+		if err == nil {
+			waits = map[string]int{}
+			for rows.Next() {
+				var kind, event string
+				var count int
+				if rows.Scan(&kind, &event, &count) == nil {
+					waits[kind+"/"+event] = count
+				}
+			}
+			rows.Close()
+			if rows.Err() != nil {
+				waits = nil
+			}
+		}
+		cancel()
+	}
 	for id, url := range endpoints {
 		bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		req, err := http.NewRequestWithContext(bounded, "GET", url+"/metrics", nil)
@@ -152,7 +179,7 @@ func (s *sampler) capture(ctx context.Context) {
 	for id, data := range current {
 		s.last[id] = data
 	}
-	sample := resourceSample{At: time.Now().UTC(), Counters: map[string]int64{}}
+	sample := resourceSample{At: time.Now().UTC(), Counters: map[string]int64{}, PostgresWaits: waits}
 	for id, data := range s.last {
 		for key, value := range data.Counters {
 			sample.Counters[key] += value
@@ -316,8 +343,31 @@ func measureLogs(directory, run string, groups int, s *sampler, expectedTicks ..
 		}
 	}
 	m.Compute, m.InputQueue, m.DurabilityWait, m.Transport, m.MasterCommit, m.EndToEnd = distribution(compute), distribution(queue), distribution(durability), distribution(transport), distribution(masterCommit), distribution(e2e)
+	m.KafkaTimings = map[string]observability.Histogram{}
+	for _, data := range s.last {
+		for key, value := range data.Histograms {
+			if !strings.HasPrefix(key, "results_kafka_") {
+				continue
+			}
+			total := m.KafkaTimings[key]
+			total.Count += value.Count
+			total.Sum += value.Sum
+			total.Max = max(total.Max, value.Max)
+			if total.Buckets == nil {
+				total.Buckets = make([]int64, len(value.Buckets))
+			}
+			for i, n := range value.Buckets {
+				total.Buckets[i] += n
+			}
+			m.KafkaTimings[key] = total
+		}
+	}
 	m.Throughput = float64(len(ticks)) / m.FinalJoin.Sub(m.SourceStart).Seconds()
 	samples := s.Samples()
+	m.KafkaLagStatus = "MEASURED_PARTITION_HIGH_WATERMARK_1HZ"
+	if len(samples) == 0 {
+		m.KafkaLagStatus = "NOT_MEASURED"
+	}
 	m.Samples = len(samples)
 	m.ResourceStatus = "NOT_MEASURED"
 	if len(s.last) > 0 {
@@ -329,6 +379,15 @@ func measureLogs(directory, run string, groups int, s *sampler, expectedTicks ..
 		}
 	}
 	for _, sample := range samples {
+		if sample.PostgresWaits != nil {
+			m.PostgresWaitSampleCount++
+		}
+		if sample.PostgresWaits != nil && m.PostgresWaitSamples == nil {
+			m.PostgresWaitSamples = map[string]int{}
+		}
+		for key, count := range sample.PostgresWaits {
+			m.PostgresWaitSamples[key] += count
+		}
 		m.WorkerCPUSeconds = max(m.WorkerCPUSeconds, sample.WorkerCPU)
 		m.MasterCPUSeconds = max(m.MasterCPUSeconds, sample.MasterCPU)
 		m.WorkerPeakRSS = max(m.WorkerPeakRSS, sample.WorkerRSS)

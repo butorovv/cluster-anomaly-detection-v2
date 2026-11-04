@@ -28,7 +28,9 @@ def main():
         row = {**cfg, 'ticks_per_second': m['group_ticks_per_second'],
                'worker_cpu_seconds': m['worker_cpu_seconds'], 'master_cpu_seconds': m['master_cpu_seconds'],
                'worker_peak_rss_bytes': m['worker_peak_aggregate_rss_bytes'], 'master_peak_rss_bytes': m['master_peak_rss_bytes'],
-               'outbox_backlog_max': m['outbox_backlog_max'], 'kafka_lag_records_max': m['input_kafka_lag_records_max'],
+               'outbox_backlog_max': m['outbox_backlog_max'],
+               'kafka_lag_status': m.get('input_kafka_lag_status', 'NOT_VERIFIED_LEGACY_SAMPLER'),
+               'kafka_lag_records_max': m['input_kafka_lag_records_max'] if m.get('input_kafka_lag_status', '').startswith('MEASURED_') else None,
                'resource_samples': m['resource_samples']}
         for key in ('compute', 'computed_to_durable_confirmation', 'send_to_master_receive', 'master_intake_to_commit_confirmation', 'source_to_final_join_confirmation'):
             for q in ('count', 'p50_seconds', 'p95_seconds', 'p99_seconds'):
