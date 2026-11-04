@@ -8,6 +8,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/httpinput"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	flags := flag.NewFlagSet("master", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	measure := flags.Bool("measure", false, "emit per-message operational timing traces without payloads")
 	listen := flags.String("listen", "127.0.0.1:8080", "HTTP listen address")
 	mode := flags.String("mode", "http_push", "polling | http_push | kafka")
 	execution := flags.String("execution-id", "", "registered execution (required for polling/kafka)")
@@ -67,7 +69,13 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	ctx, cancelRuntime := context.WithCancel(ctx)
 	defer cancelRuntime()
 	log := slog.New(slog.NewJSONHandler(stderr, nil))
-	service := usecase.Master{Store: repo.MasterStore{DB: pool}}
+	metrics := observability.New()
+	for _, name := range []string{"master_accepted", "master_duplicates", "master_rejected", "master_conflicts"} {
+		metrics.Add(name, 0)
+	}
+	metrics.Label("role", "master")
+	metrics.Label("execution_id", *execution)
+	service := usecase.Master{Store: repo.MasterStore{DB: pool}, Metrics: metrics, Logger: log, Measure: *measure}
 	background := make(chan error, 1)
 	if *mode == "http_push" {
 		background <- nil
@@ -97,7 +105,21 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 			}
 		}()
 	}
-	server := &http.Server{Addr: *listen, Handler: httpinput.Handler(service, log), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
+	baseHandler := metrics.Handler(httpinput.Handler(service, log))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		if q.Method == "GET" && q.URL.Path == "/readyz" {
+			bounded, cancel := context.WithTimeout(q.Context(), 500*time.Millisecond)
+			defer cancel()
+			if err := pool.Ping(bounded); err != nil {
+				http.Error(w, "database unavailable", 503)
+				return
+			}
+			w.WriteHeader(200)
+			return
+		}
+		baseHandler.ServeHTTP(w, q)
+	})
+	server := &http.Server{Addr: *listen, Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 15 * time.Second, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10}
 	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	log.InfoContext(ctx, "Master started", "listen", *listen)

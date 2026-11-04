@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"net"
 	"strings"
 	"sync"
 	"time"
@@ -25,11 +27,11 @@ type KafkaSender struct {
 	Identity SourceIdentity
 }
 
-func NewKafka(ctx context.Context, seeds []string, create bool) (*KafkaSender, error) {
+func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*observability.Registry) (*KafkaSender, error) {
 	if len(seeds) == 0 {
 		return nil, fmt.Errorf("Kafka seeds required")
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.RequiredAcks(kgo.AllISRAcks()))
+	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks()))
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +87,7 @@ func (s *KafkaSender) Close() error { s.client.Close(); return nil }
 
 // ConsumeKafka processes output records synchronously. Durable PostgreSQL
 // positions are loaded before each assignment is allowed to fetch records.
-func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error) (retErr error) {
+func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, metrics ...*observability.Registry) (retErr error) {
 	if len(seeds) == 0 || strings.TrimSpace(consumerGroup) == "" || pin.ClusterID == "" || pin.TopicID == "" || load == nil || handle == nil {
 		return fmt.Errorf("Kafka consumer configuration incomplete")
 	}
@@ -102,7 +104,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		}
 		cancel()
 	}
-	admin, err := kgo.NewClient(kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second))
+	admin, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second))
 	if err != nil {
 		return err
 	}
@@ -225,7 +227,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		}
 		return offsets, nil
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond))
+	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond))
 	if err != nil {
 		return err
 	}
@@ -245,7 +247,8 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		if e := fetches.Errors(); len(e) != 0 {
 			return fmt.Errorf("Kafka output fetch %s/%d: %w", e[0].Topic, e[0].Partition, e[0].Err)
 		}
-		for _, r := range fetches.Records() {
+		records := fetches.Records()
+		for _, r := range records {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
@@ -266,13 +269,26 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 			if err := handle(ctx, r, r.Value); err != nil {
 				return fmt.Errorf("handle output %d@%d: %w", r.Partition, r.Offset, err)
 			}
-			if err := cl.CommitRecords(ctx, r); err != nil {
-				return fmt.Errorf("commit output %d@%d: %w", r.Partition, r.Offset, err)
-			}
 			mu.Lock()
 			expected[r.Partition] = r.Offset + 1
 			mu.Unlock()
 		}
+		// PostgreSQL output positions are already durable per record. Kafka's
+		// auxiliary commit can acknowledge the successfully processed poll batch;
+		// a crash in its middle restores SQL positions, never Kafka progress.
+		if len(records) > 0 {
+			if err := cl.CommitRecords(ctx, records...); err != nil {
+				return fmt.Errorf("commit durable output batch: %w", err)
+			}
+		}
 		cl.AllowRebalance()
 	}
+}
+
+func resultDialer(metrics []*observability.Registry) func(context.Context, string, string) (net.Conn, error) {
+	var r *observability.Registry
+	if len(metrics) > 0 {
+		r = metrics[0]
+	}
+	return observability.CountDial((&net.Dialer{Timeout: 5 * time.Second}).DialContext, r, "results_kafka")
 }

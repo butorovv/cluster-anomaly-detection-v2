@@ -117,11 +117,7 @@ func TestWorkerThreeTransportParityAndRestart(t *testing.T) {
 			}))
 			defer receiver.Close()
 			if mode == "kafka" {
-				sender, err := resulttransport.NewKafka(context.Background(), rig.broker.Seeds, true)
-				if err != nil {
-					t.Fatal(err)
-				}
-				_ = sender.Close()
+				rig.bindResults(t, "p09-master-"+rig.group)
 			}
 			startMaster := func() (context.CancelFunc, <-chan error) {
 				ctx, cancel := context.WithCancel(context.Background())

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"log/slog"
 	"sort"
 	"sync"
@@ -26,6 +27,8 @@ type Dispatcher struct {
 	ExecutionID, Mode, Endpoint string
 	Sender                      Sender
 	Logger                      *slog.Logger
+	Metrics                     *observability.Registry
+	Measure                     bool
 	mu                          sync.Mutex
 	owners                      map[string]domain.Owner
 }
@@ -113,13 +116,24 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 					return decodeErr
 				}
 				bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+				sentAt := time.Now()
+				d.Metrics.Add("output_attempts", 1)
+				d.Metrics.Add("output_attempt_payload_bytes", int64(len(item.Envelope)))
+				if d.Measure {
+					d.Logger.InfoContext(ctx, "output attempt", "execution", o.ExecutionID, "group", g, "message_id", e.MessageID, "kind", e.Kind, "sent_at", sentAt, "bytes", len(item.Envelope))
+				}
 				err = d.Sender.Send(bounded, item.Envelope, g)
+				d.Metrics.Observe("delivery_ack", time.Since(sentAt))
+				if err == nil {
+					d.Metrics.Add("output_successful_sends", 1)
+				}
 				if err == nil {
 					err = d.Store.Ack(bounded, o, e.MessageID)
 				}
 				cancel()
 			}
 			if err != nil && !errors.Is(err, context.Canceled) {
+				d.Metrics.Add("output_retries", 1)
 				retry[g] = min(retry[g]+1, 6)
 				nextTry[g] = time.Now().Add(time.Duration(1<<retry[g]) * 50 * time.Millisecond)
 				d.Logger.WarnContext(ctx, "output retry", "execution", o.ExecutionID, "group", g, "owner", o.OwnerID, "epoch", o.Epoch, "attempt", retry[g], "error", err)

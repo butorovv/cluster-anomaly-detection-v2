@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
@@ -32,7 +33,9 @@ func (p Poller) Run(ctx context.Context) error {
 		return fmt.Errorf("invalid polling configuration")
 	}
 	if p.Client == nil {
-		p.Client = &http.Client{Timeout: 2 * time.Second}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = observability.CountDial(transport.DialContext, p.Master.Metrics, "results_http")
+		p.Client = &http.Client{Timeout: 2 * time.Second, Transport: transport}
 	}
 	if p.Logger == nil {
 		p.Logger = slog.Default()
@@ -60,6 +63,8 @@ func (p Poller) Run(ctx context.Context) error {
 	}
 }
 func (p Poller) poll(ctx context.Context, g string) error {
+	start := time.Now()
+	defer func() { p.Master.Metrics.Observe("poll_request", time.Since(start)) }()
 	owner, err := p.Store.Discover(ctx, p.ExecutionID, g)
 	if err != nil {
 		return err
@@ -78,6 +83,7 @@ func (p Poller) poll(ctx context.Context, g string) error {
 	if err != nil {
 		return err
 	}
+	p.Master.Metrics.Add("poll_http_requests", 1)
 	response, err := p.Client.Do(request)
 	if err != nil {
 		return err

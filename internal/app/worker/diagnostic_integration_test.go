@@ -83,6 +83,7 @@ func TestWorkerCompleteDiagnosticJoin(t *testing.T) {
 						masterDone <- (usecase.Poller{ExecutionID: rig.fixture.Options.Binding.ExecutionID, Groups: groups, Interval: 10 * time.Millisecond, Store: store, Master: service, Logger: discardLog()}).Run(masterCtx)
 					}()
 				} else if mode == "kafka" {
+					rig.bindResults(t, "p10-"+rig.group)
 					go func() {
 						masterDone <- masterapp.RunKafka(masterCtx, rig.broker.Seeds, "p10-"+rig.group, rig.fixture.Options.Binding.ExecutionID, true, store, service)
 					}()

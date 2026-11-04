@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"io"
 	"net/http"
 	"net/url"
@@ -21,7 +22,7 @@ type HTTPSender struct {
 	client   *http.Client
 }
 
-func NewHTTP(endpoint string, timeout time.Duration) (*HTTPSender, error) {
+func NewHTTP(endpoint string, timeout time.Duration, metrics ...*observability.Registry) (*HTTPSender, error) {
 	u, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || u == nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, fmt.Errorf("invalid result HTTP endpoint")
@@ -31,7 +32,13 @@ func NewHTTP(endpoint string, timeout time.Duration) (*HTTPSender, error) {
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/v1/results"
 	u.RawPath = ""
-	return &HTTPSender{endpoint: u.String(), client: &http.Client{Timeout: timeout}}, nil
+	client := &http.Client{Timeout: timeout}
+	if len(metrics) > 0 && metrics[0] != nil {
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.DialContext = observability.CountDial(transport.DialContext, metrics[0], "results_http")
+		client.Transport = transport
+	}
+	return &HTTPSender{endpoint: u.String(), client: client}, nil
 }
 
 func (s *HTTPSender) Send(ctx context.Context, raw []byte, groupID string) error {

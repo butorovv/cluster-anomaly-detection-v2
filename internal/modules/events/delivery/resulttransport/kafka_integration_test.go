@@ -7,6 +7,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/workerfixture"
 	"io"
 	"net"
@@ -76,7 +77,8 @@ func TestKafkaSenderBoundedConnections(t *testing.T) {
 	})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	sender, err := NewKafka(ctx, []string{listener.Addr().String()}, true)
+	metrics := observability.New()
+	sender, err := NewKafka(ctx, []string{listener.Addr().String()}, true, metrics)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +115,9 @@ func TestKafkaSenderBoundedConnections(t *testing.T) {
 	}
 	if count := connections.Load(); count > 8 {
 		t.Fatal("unbounded Kafka bootstrap connections", count)
+	}
+	if counters := metrics.Snapshot().Counters; counters["results_kafka_wire_read_bytes"] <= 0 || counters["results_kafka_wire_write_bytes"] <= 0 {
+		t.Fatal("protocol byte streams not measured", counters)
 	}
 	t.Log(fmt.Sprintf("128 durable sends, %d bootstrap connections", connections.Load()))
 	// A changed pin must reject the next send even though connections are reused.

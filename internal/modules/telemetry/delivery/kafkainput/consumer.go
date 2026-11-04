@@ -54,6 +54,8 @@ type ConsumerConfig struct {
 	// protocol assignment, not permission to process before Load/validation.
 	Observe func(event string, partitions []int32)
 	Report  func(error)
+	// FetchProgress is diagnostic high-watermark sampling; it never authorizes progress.
+	FetchProgress func(partition int32, highWatermark int64)
 }
 
 func (c ConsumerConfig) identity(id string, partition int32) Identity {
@@ -303,6 +305,9 @@ func consume(ctx context.Context, cl *kgo.Client, cfg ConsumerConfig, handle Han
 				continue
 			}
 			return fmt.Errorf("Kafka fetch %s/%d: %w", failure.Topic, failure.Partition, failure.Err)
+		}
+		if cfg.FetchProgress != nil {
+			fetches.EachPartition(func(p kgo.FetchTopicPartition) { cfg.FetchProgress(p.Partition, p.HighWatermark) })
 		}
 		for _, r := range fetches.Records() {
 			if err := ctx.Err(); err != nil {

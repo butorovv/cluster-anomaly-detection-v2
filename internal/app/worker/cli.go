@@ -34,12 +34,14 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	start := flags.String("start", analysis.NIRWindows()[1].Start.Format(time.RFC3339), "inclusive UTC run start")
 	end := flags.String("end", analysis.NIRWindows()[1].End.Format(time.RFC3339), "exclusive UTC run end")
 	diagnostics := flags.Bool("diagnostics", true, "durable local fragments for complete outside join; immutable execution contract")
+	measure := flags.Bool("measure", false, "emit per-tick operational timing traces without payloads")
+	cadence := flags.Int("checkpoint-interval-ticks", 1, "durable complete-tick batch: 1, 3, 6")
 	groups := flags.Int("groups", 16, "scientific group universe 4/8/16")
 	delta := flags.Int("delta", 0, "frozen TTL: 0, 10, 30, 60")
 	lease := flags.Duration("lease-ttl", repo.DefaultLease, "SQL lease TTL (3..15s)")
 	register := flags.Bool("register-execution", false, "admin-only explicit run/execution registration, then exit")
 	offsets := flags.String("start-offsets", "", "registration-only JSON object with explicit offsets 0..15")
-	output := flags.String("output-transport", "polling", "reserved SQL experiment metadata; no dispatcher is started")
+	output := flags.String("output-transport", "polling", "durable output transport: polling/http_push/kafka")
 	listen := flags.String("listen", "127.0.0.1:0", "Worker HTTP listen address")
 	advertise := flags.String("advertise-url", "", "reachable Worker URL; inferred only for loopback")
 	masterURL := flags.String("master-url", "http://127.0.0.1:8080", "Master URL for http_push")
@@ -112,7 +114,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("PostgreSQL pool unavailable")
 	}
 	defer pool.Close()
-	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output, Diagnostics: *diagnostics}
+	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output, Diagnostics: *diagnostics, CheckpointIntervalTicks: *cadence}
 	if *register {
 		if err := json.Unmarshal([]byte(*offsets), &r.StartOffsets); err != nil {
 			return fmt.Errorf("16 explicit registration start offsets required")
@@ -130,5 +132,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return RunWithOutput(ctx, Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
+	return RunWithOutput(ctx, Config{Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
 }

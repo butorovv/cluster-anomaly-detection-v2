@@ -22,6 +22,8 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport"
+	eventrepo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	eventusecase "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
@@ -50,6 +52,9 @@ func workerIntegrationMode(t *testing.T, delta int, mode string) *workerRig {
 	return workerIntegrationFixture(t, delta, mode, nil)
 }
 func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture, diagnostics ...bool) *workerRig {
+	return workerIntegrationWithCadence(t, delta, mode, frozen, 1, diagnostics...)
+}
+func workerIntegrationWithCadence(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture, cadence int, diagnostics ...bool) *workerRig {
 	t.Helper()
 	if os.Getenv("P07_WORKER_INTEGRATION") != "1" {
 		t.Skip("opt-in P07_WORKER_INTEGRATION=1 requires isolated real Kafka/PostgreSQL")
@@ -138,7 +143,7 @@ func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *work
 	}
 	_ = migration.Close(ctx)
 	consumer := "p07-" + execution
-	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, Diagnostics: len(diagnostics) > 0 && diagnostics[0], StartOffsets: map[string]int64{}}
+	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, CheckpointIntervalTicks: cadence, Diagnostics: len(diagnostics) > 0 && diagnostics[0], StartOffsets: map[string]int64{}}
 	for i := int32(0); i < 16; i++ {
 		v := ends[kafkainput.Topic][i]
 		if v.Err != nil {
@@ -169,7 +174,7 @@ func (r *workerRig) start(t *testing.T) (*Runner, context.CancelFunc, <-chan err
 }
 func (r *workerRig) startOutput(t *testing.T, output *eventusecase.Dispatcher) (*Runner, context.CancelFunc, <-chan error) {
 	t.Helper()
-	runner, err := New(Config{Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Output: output}, r.store)
+	runner, err := New(Config{CheckpointIntervalTicks: r.store.Registration.Cadence(), Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Output: output}, r.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -455,5 +460,34 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("restart changed open parent EventID")
+	}
+}
+
+// Bind before any publication so tests never replay output owned by another
+// execution. Restart must keep these exact durable positions and incarnation.
+func (r *workerRig) bindResults(t *testing.T, consumer string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sender, err := resulttransport.NewKafka(ctx, r.broker.Seeds, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := sender.Identity
+	_ = sender.Close()
+	ends, err := kadm.NewClient(r.producer).ListEndOffsets(ctx, resulttransport.ResultsTopic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	starts := map[string]int64{}
+	for p := int32(0); p < 16; p++ {
+		entry, ok := ends[resulttransport.ResultsTopic][p]
+		if !ok || entry.Err != nil {
+			t.Fatal("results end unavailable")
+		}
+		starts[strconv.Itoa(int(p))] = entry.Offset
+	}
+	if err := (eventrepo.MasterStore{DB: r.pool}).BindResults(ctx, r.fixture.Options.Binding.ExecutionID, pin.ClusterID, pin.TopicID, consumer, starts); err != nil {
+		t.Fatal(err)
 	}
 }

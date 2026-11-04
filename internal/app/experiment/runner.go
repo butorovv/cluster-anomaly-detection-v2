@@ -14,7 +14,9 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	checkpoints "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	eventstore "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	telemetry "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5"
@@ -46,6 +48,7 @@ type RunSpec struct {
 	Fault       string  `json:"fault,omitempty"`
 }
 type Config struct {
+	Measure        bool      `json:"measure"`
 	SchemaVersion  int       `json:"schema_version"`
 	Assets         string    `json:"assets"`
 	ProfileSHA     string    `json:"profile_sha256"`
@@ -73,7 +76,9 @@ type Result struct {
 	NextOffsets    map[string]int64  `json:"next_offsets"`
 	BinarySHA256   map[string]string `json:"binary_sha256"`
 	Environment    map[string]any    `json:"environment"`
+	LogDirectory   string            `json:"log_directory,omitempty"`
 	Fault          map[string]any    `json:"fault,omitempty"`
+	Measurements   *Measurements     `json:"measurements,omitempty"`
 	Error          string            `json:"error,omitempty"`
 }
 
@@ -87,9 +92,14 @@ func saveJSON(path string, value any) error {
 func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	flags := flag.NewFlagSet("experiment", flag.ContinueOnError)
 	flags.SetOutput(stderr)
+	resume := flags.Bool("resume", false, "reuse saved PASS runs with identical configuration; retry unfinished/failed runs")
+	analyze := flags.String("analyze-existing", "", "recompute measurements from saved logs/samples without replay")
 	path := flags.String("config", "", "JSON experiment configuration")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *analyze != "" {
+		return analyzeExisting(*analyze, stdout)
 	}
 	if *path == "" || flags.NArg() != 0 {
 		return fmt.Errorf("--config required")
@@ -113,7 +123,7 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if cfg.TimeoutSeconds < 1 {
 		cfg.TimeoutSeconds = 900
 	}
-	if err := os.Mkdir(cfg.Output, 0700); err != nil {
+	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
 		return fmt.Errorf("new artifact output directory required: %w", err)
 	}
 	binaries, hashes, err := build(ctx, cfg.Output)
@@ -122,6 +132,39 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	results := []Result{}
 	for _, spec := range cfg.Runs {
+		if *resume {
+			b, err := os.ReadFile(filepath.Join(cfg.Output, spec.Name+".json"))
+			if err == nil {
+				var previous Result
+				if json.Unmarshal(b, &previous) != nil {
+					return fmt.Errorf("invalid saved result %s", spec.Name)
+				}
+				a, _ := json.Marshal(previous.Spec)
+				b, _ := json.Marshal(spec)
+				if string(a) != string(b) {
+					return fmt.Errorf("saved configuration differs for %s", spec.Name)
+				}
+				if previous.Status != "PASS" {
+					preserved := filepath.Join(cfg.Output, spec.Name+".failed-"+previous.Finished.UTC().Format("20060102T150405.000000000")+".json")
+					if _, err := os.Stat(preserved); os.IsNotExist(err) {
+						if err := saveJSON(preserved, previous); err != nil {
+							return err
+						}
+					}
+				}
+				if previous.Status == "PASS" && previous.Comparison.Status == "PASS" {
+					if cfg.Measure && (previous.Measurements == nil || previous.Measurements.Status != "PASS") {
+						return fmt.Errorf("saved PASS lacks requested measurements: use a new output directory for %s", spec.Name)
+					}
+					results = append(results, previous)
+					fmt.Fprintf(stdout, "SKIP saved PASS %s\n", spec.Name)
+					continue
+				}
+			}
+			if err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
 		fmt.Fprintf(stdout, "RUN %s workers=%d groups=%d delta=%d mode=%s cadence=%d\n", spec.Name, spec.Workers, spec.Groups, spec.Delta, spec.Mode, spec.Cadence)
 		bounded, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 		result, err := runOne(bounded, cfg, spec, binaries, hashes)
@@ -151,7 +194,7 @@ func build(ctx context.Context, out string) (map[string]string, map[string]strin
 		suffix = ".exe"
 	}
 	binDir := filepath.Join(out, "bin")
-	if err := os.Mkdir(binDir, 0700); err != nil {
+	if err := os.MkdirAll(binDir, 0700); err != nil {
 		return nil, nil, err
 	}
 	for _, name := range []string{"worker", "master", "replayer"} {
@@ -254,10 +297,10 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 	}
 }
 func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[string]string) (report Result, retErr error) {
-	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "worker_gomaxprocs": 1, "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
+	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
 	defer func() { report.Finished = time.Now().UTC(); report.ElapsedSeconds = time.Since(start).Seconds() }()
-	if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") || spec.Workers < 1 || spec.Workers > 16 || (spec.Groups != 4 && spec.Groups != 8 && spec.Groups != 16) || (spec.Delta != 0 && spec.Delta != 10 && spec.Delta != 30 && spec.Delta != 60) || spec.Cadence != 1 || (spec.Mode != "polling" && spec.Mode != "http_push" && spec.Mode != "kafka") {
+	if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") || spec.Workers < 1 || spec.Workers > 16 || (spec.Groups != 4 && spec.Groups != 8 && spec.Groups != 16) || (spec.Delta != 0 && spec.Delta != 10 && spec.Delta != 30 && spec.Delta != 60) || (spec.Cadence != 1 && spec.Cadence != 3 && spec.Cadence != 6) || (spec.Mode != "polling" && spec.Mode != "http_push" && spec.Mode != "kafka") {
 		return report, fmt.Errorf("invalid run configuration")
 	}
 	reference := filepath.Join(cfg.GoldenRoot, fmt.Sprintf("g%d-d%d", spec.Groups, spec.Delta))
@@ -270,6 +313,10 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	}
 	report.ExecutionID = execution
 	logDir := filepath.Join(cfg.Output, spec.Name)
+	if _, err := os.Stat(logDir); err == nil {
+		logDir += ".attempt-" + execution
+	}
+	report.LogDirectory = logDir
 	if err := os.Mkdir(logDir, 0700); err != nil {
 		return report, err
 	}
@@ -370,24 +417,60 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		return report, err
 	}
 	report.RunID, report.ConfigID = snap.Identity.RunID, snap.Identity.ConfigID
-	registration := checkpoints.Registration{Identity: snap.Identity, Binding: binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: "system-" + execution, StartOffsets: offsets, OutputTransport: spec.Mode, Diagnostics: true}
+	registration := checkpoints.Registration{Identity: snap.Identity, Binding: binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: "system-" + execution, StartOffsets: offsets, OutputTransport: spec.Mode, Diagnostics: true, CheckpointIntervalTicks: spec.Cadence}
 	if err := checkpoints.Register(ctx, pool, registration); err != nil {
 		return report, err
+	}
+	// Register an explicit output start before any Worker may publish. This avoids
+	// charging earlier independent executions to a fresh Kafka benchmark, while
+	// restart still restores the same durable output cursor and topic incarnation.
+	if spec.Mode == "kafka" {
+		sender, err := resulttransport.NewKafka(ctx, seeds, true)
+		if err != nil {
+			return report, err
+		}
+		pin := sender.Identity
+		_ = sender.Close()
+		ends, err := kafkaAdmin.ListEndOffsets(ctx, resulttransport.ResultsTopic)
+		if err != nil {
+			return report, err
+		}
+		starts := map[string]int64{}
+		for p := int32(0); p < 16; p++ {
+			entry, ok := ends[resulttransport.ResultsTopic][p]
+			if !ok || entry.Err != nil {
+				return report, fmt.Errorf("results initial end unavailable")
+			}
+			starts[strconv.Itoa(int(p))] = entry.Offset
+		}
+		if err := (eventstore.MasterStore{DB: pool}).BindResults(ctx, execution, pin.ClusterID, pin.TopicID, "cad-results-"+execution, starts); err != nil {
+			return report, err
+		}
 	}
 	masterAddress, masterURL, err := freeEndpoint()
 	if err != nil {
 		return report, err
+	}
+	sampler := newSampler()
+	if cfg.Measure {
+		defer sampler.Stop()
 	}
 	masterArgs := []string{"--listen", masterAddress, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
 	if spec.PollMS < 1 {
 		spec.PollMS = 100
 	}
 	masterArgs = append(masterArgs, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
+	if cfg.Measure {
+		masterArgs = append(masterArgs, "--measure=true")
+	}
 	master, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2"})
 	if err != nil {
 		return report, err
 	}
 	defer func() { master.stop() }()
+	if cfg.Measure {
+		sampler.Add("master", masterURL)
+	}
 	workers := []*process{}
 	defer func() {
 		for _, p := range workers {
@@ -403,10 +486,16 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		if err != nil {
 			return nil, err
 		}
-		args := []string{"--assets", cfg.Assets, "--profile-sha256", cfg.ProfileSHA, "--input-sha256", cfg.InputSHA, "--execution-id", execution, "--owner-id", owner, "--consumer-group", registration.ConsumerGroup, "--kafka-brokers", cfg.Brokers, "--groups", strconv.Itoa(spec.Groups), "--delta", strconv.Itoa(spec.Delta), "--lease-ttl", "15s", "--diagnostics=true", "--output-transport", spec.Mode, "--master-url", masterURL, "--listen", address, "--advertise-url", endpoint, "--create-results-topic"}
+		args := []string{"--assets", cfg.Assets, "--profile-sha256", cfg.ProfileSHA, "--input-sha256", cfg.InputSHA, "--execution-id", execution, "--owner-id", owner, "--consumer-group", registration.ConsumerGroup, "--kafka-brokers", cfg.Brokers, "--groups", strconv.Itoa(spec.Groups), "--delta", strconv.Itoa(spec.Delta), "--lease-ttl", "15s", "--diagnostics=true", "--checkpoint-interval-ticks", strconv.Itoa(spec.Cadence), "--output-transport", spec.Mode, "--master-url", masterURL, "--listen", address, "--advertise-url", endpoint, "--create-results-topic"}
+		if cfg.Measure {
+			args = append(args, "--measure=true")
+		}
 		p, err := startProcess(ctx, binaries["worker"], filepath.Join(logDir, fmt.Sprintf("worker-%02d.log", index)), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1"})
 		if err == nil {
 			p.owner, p.endpoint = owner, endpoint
+			if cfg.Measure {
+				sampler.Add(owner, endpoint)
+			}
 		}
 		return p, err
 	}
@@ -447,6 +536,9 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		return report, err
 	}
 	replayArgs := []string{"--input", filepath.Join(cfg.Assets, "data/prepared/summit-D1-pilot/D1.parquet"), "--speed", strconv.FormatFloat(spec.ReplaySpeed, 'g', -1, 64), "--start", window.Start.Format(time.RFC3339), "--end", window.End.Format(time.RFC3339), "--completion-mode", "full-grid", "--wire-format", "v1", "--execution-id", execution, "--input-sha256", cfg.InputSHA, "--profile-sha256", cfg.ProfileSHA, "--output", "kafka", "--kafka-brokers", cfg.Brokers}
+	if cfg.Measure {
+		sampler.Start(ctx)
+	}
 	replayStart := time.Now()
 	replayer, err := startProcess(ctx, binaries["replayer"], filepath.Join(logDir, "replayer.log"), replayArgs, []string{"GOMAXPROCS=1"})
 	if err != nil {
@@ -458,6 +550,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		switch spec.Fault {
 		case "kill_worker":
 			var killedOwner string
+			var killedAt time.Time
 			if err := wait(ctx, func() (bool, error) {
 				g, owner, eventID, epoch, offset, tx, err := lockOpenEvent(ctx, pool)
 				if errors.Is(err, pgx.ErrNoRows) {
@@ -479,6 +572,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 					_ = tx.Rollback(ctx)
 					return false, fmt.Errorf("open event owner process absent")
 				}
+				killedAt = time.Now()
 				victim.stop()
 				_ = tx.Rollback(context.Background())
 				replacement, err := startWorker(len(workers))
@@ -487,7 +581,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 				}
 				workers[index] = replacement
 				killedOwner = owner
-				report.Fault = map[string]any{"kind": "kill_worker", "group": g, "event_id": eventID, "old_owner": owner, "old_epoch": epoch, "durable_next_offset_at_kill": offset, "pid": victim.cmd.Process.Pid, "killed_at": time.Now().UTC()}
+				report.Fault = map[string]any{"kind": "kill_worker", "group": g, "event_id": eventID, "old_owner": owner, "old_epoch": epoch, "durable_next_offset_at_kill": offset, "pid": victim.cmd.Process.Pid, "killed_at": killedAt.UTC()}
 				return true, nil
 			}, active); err != nil {
 				return report, err
@@ -504,7 +598,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 				if current != "" && current != killedOwner && next > oldOffset {
 					report.Fault["new_owner"] = current
 					report.Fault["new_epoch"] = epoch
-					report.Fault["time_to_resumed_checkpoint_seconds"] = time.Since(faultStart).Seconds()
+					report.Fault["time_to_resumed_checkpoint_seconds"] = time.Since(killedAt).Seconds()
 					return true, nil
 				}
 				return false, nil
@@ -572,6 +666,12 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	}, active); err != nil {
 		return report, err
 	}
+	if cfg.Measure {
+		sampler.Stop()
+		if err := saveJSON(filepath.Join(logDir, "metrics-samples.json"), sampler.Samples()); err != nil {
+			return report, err
+		}
+	}
 	store := checkpoints.Store{DB: pool, Registration: registration}
 	finalEnds, err := kafkaAdmin.ListEndOffsets(ctx, kafkainput.Topic)
 	if err != nil {
@@ -605,6 +705,17 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			return report, fmt.Errorf("captured open EventID missing after recovery: %v", err)
 		}
 		report.Fault["event_id_preserved"] = true
+	}
+	if cfg.Measure {
+		sampler.Stop()
+		if err := saveJSON(filepath.Join(logDir, "metrics-samples.json"), sampler.Samples()); err != nil {
+			return report, err
+		}
+		measured, err := measureLogs(logDir, report.RunID, spec.Groups, sampler)
+		report.Measurements = &measured
+		if err != nil {
+			return report, fmt.Errorf("measurement: %w", err)
+		}
 	}
 	report.Status = "PASS"
 	return report, nil

@@ -12,7 +12,7 @@ import (
 )
 
 func RunKafka(ctx context.Context, seeds []string, consumer, execution string, create bool, store repo.MasterStore, master usecase.Master) error {
-	sender, err := resulttransport.NewKafka(ctx, seeds, create)
+	sender, err := resulttransport.NewKafka(ctx, seeds, create, master.Metrics)
 	if err != nil {
 		return err
 	}
@@ -40,5 +40,5 @@ func RunKafka(ctx context.Context, seeds []string, consumer, execution string, c
 	}
 	return resulttransport.ConsumeKafka(ctx, seeds, consumer, pin, func(ctx context.Context, p int32) (int64, error) { return store.ResultOffset(ctx, execution, p) }, func(ctx context.Context, r *kgo.Record, b []byte) error {
 		return master.AcceptKafka(ctx, execution, pin.TopicID, r.Partition, r.Offset, b)
-	})
+	}, master.Metrics)
 }
