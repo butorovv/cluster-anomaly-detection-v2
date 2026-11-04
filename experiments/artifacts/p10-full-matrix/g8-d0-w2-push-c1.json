@@ -1,0 +1,82 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "configuration": {
+    "name": "g8-d0-w2-push-c1",
+    "workers": 2,
+    "groups": 8,
+    "delta": 0,
+    "mode": "http_push",
+    "cadence": 1,
+    "poll_ms": 100,
+    "replay_speed": 0
+  },
+  "execution_id": "4f36fcb0-bf3f-45db-9d87-94eab7c67733",
+  "run_id": "e547c8f1458b9368a2e013db96cadb6da90539a314bd4010de7a7374d468face",
+  "config_id": "b44f95bee95d00b908b30de77d89d8ae56c2a6a8a40d9d8fc8a508413b17da87",
+  "started_at": "2026-11-04T11:15:18.9098794Z",
+  "finished_at": "2026-11-04T11:16:56.4636489Z",
+  "elapsed_seconds": 97.5537695,
+  "replay_seconds": 28.5964185,
+  "comparison": {
+    "status": "PASS",
+    "raw_rows": 23040,
+    "temporal_rows": 23040,
+    "evidence_rows": 643,
+    "parent_events": 409,
+    "positive_ticks": 643,
+    "i2_positive_ticks": 679,
+    "new_events": 265,
+    "rb_subspans": 147,
+    "rb_supported_parents": 144,
+    "canonical_sha256": {
+      "events": "cae933c7a1c4e9ccda312da67a91cc33a8a9215fd3646c998b54e2002e4fd170",
+      "evidence": "c652e6c4b72f596d58ef6f13ad139a3e11ad3fabe8876b0beffcc76222430983",
+      "raw": "c64bde57da1568446afabcd89b48ae9eba293086bab55358e57ffa6e518eb5ff",
+      "temporal": "caff2d501a2afccbbdb7dbda02b431477cd0a27df68b6c89e5ae1fb2c501258e"
+    }
+  },
+  "initial_assignment": {
+    "a01": "fad9ad82-0a1e-448f-af8a-bc41f213a54b",
+    "a02": "166e14e5-c594-409d-a1f3-be46eae24d10",
+    "a03": "166e14e5-c594-409d-a1f3-be46eae24d10",
+    "a04": "fad9ad82-0a1e-448f-af8a-bc41f213a54b",
+    "a05": "fad9ad82-0a1e-448f-af8a-bc41f213a54b",
+    "a06": "166e14e5-c594-409d-a1f3-be46eae24d10",
+    "a07": "166e14e5-c594-409d-a1f3-be46eae24d10",
+    "a08": "fad9ad82-0a1e-448f-af8a-bc41f213a54b"
+  },
+  "next_offsets": {
+    "a01": 1260840,
+    "a02": 1260840,
+    "a03": 1260840,
+    "a04": 1260840,
+    "a05": 1260840,
+    "a06": 1260840,
+    "a07": 1260840,
+    "a08": 1260840
+  },
+  "binary_sha256": {
+    "master": "0f18a458ef9ab1995836fd11b663d83c5ff269e8340efcdce21671495272616f",
+    "replayer": "d9e361690e2f041a1767184dc5bbcb961a7dac603aa19509ec9f91b763a627e3",
+    "worker": "6fb8af2a1fa62555cf1e4fe2f77e54cac4e4da65e63705e09b3a1068072c02d9"
+  },
+  "environment": {
+    "arch": "amd64",
+    "go": "go1.27.2",
+    "host_cpu_identifier": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "input_topic_id": "H/+WKKPtQy+RjcJ6Waq5EQ==",
+    "kafka_cluster_id": "p08TestingCluster2026AA",
+    "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction",
+    "logical_cpus": 16,
+    "master_gomaxprocs": 2,
+    "os": "windows",
+    "postgres_fsync": "on",
+    "postgres_max_connections": "160",
+    "postgres_shared_buffers": "256MB",
+    "postgres_synchronous_commit": "on",
+    "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
+    "worker_gomaxprocs": 1
+  },
+  "log_directory": "experiments\\artifacts\\p10-full-matrix\\g8-d0-w2-push-c1"
+}

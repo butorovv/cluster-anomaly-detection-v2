@@ -9,5 +9,19 @@
   "time_wait_total": 16134,
   "time_wait_to_broker": 16125,
   "scenario": "g16-d0-w4-kafka-c1",
-  "status": "IN_PROGRESS"
+  "status": "FIX_VERIFIED",
+  "original_full_d2": {
+    "status": "PASS",
+    "performance_valid": false,
+    "elapsed_seconds": 974.521
+  },
+  "real_regression": {
+    "bootstrap_connections": 1,
+    "status": "PASS",
+    "go_test_seconds": 1.922,
+    "test": "TestKafkaSenderBoundedConnections",
+    "durable_sends": 128,
+    "race": true,
+    "changed_topic_pin_rejected": true
+  }
 }

@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "configuration": {
+    "name": "g16-d30-w2-push-restart-master",
+    "workers": 2,
+    "groups": 16,
+    "delta": 30,
+    "mode": "http_push",
+    "cadence": 1,
+    "poll_ms": 100,
+    "replay_speed": 0,
+    "fault": "restart_master"
+  },
+  "execution_id": "b06a83b9-b730-41a8-bdc9-7adb6ddb1aa9",
+  "run_id": "7856d710b43c2cac024b31b145cd6f812d3069bbb2683b9b7372d97570fac9db",
+  "config_id": "f2d025aa4b626b130edfd231d46e3d5de101e96819572527e22ad4b686764b16",
+  "started_at": "2026-11-04T11:43:23.9359799Z",
+  "finished_at": "2026-11-04T11:46:46.2995109Z",
+  "elapsed_seconds": 202.363531,
+  "replay_seconds": 28.6368422,
+  "comparison": {
+    "status": "PASS",
+    "raw_rows": 46080,
+    "temporal_rows": 46080,
+    "evidence_rows": 3446,
+    "parent_events": 654,
+    "positive_ticks": 3446,
+    "i2_positive_ticks": 1408,
+    "new_events": 359,
+    "rb_subspans": 295,
+    "rb_supported_parents": 295,
+    "canonical_sha256": {
+      "events": "78a456da5f0d4525c7e38879d7d913bdd839d6f2a391536ce64349408e13e32e",
+      "evidence": "dc31c33995719a8310c1b79880c0197a0054ac69b49ca7cb8c2e353148a3aab1",
+      "raw": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027",
+      "temporal": "636f7dd12c5d389d671b6f682ae282b78dacf5762e1dd7d1df3b2be817378d9b"
+    }
+  },
+  "initial_assignment": {
+    "a01": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a02": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a03": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a04": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a05": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a06": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a07": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a08": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a09": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a10": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a11": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a12": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a13": "e8320cbf-2b77-419f-b30d-56df5e6b144c",
+    "a14": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a15": "00b79834-80d7-4d46-b9a3-a9c0fb1edd0b",
+    "a16": "e8320cbf-2b77-419f-b30d-56df5e6b144c"
+  },
+  "next_offsets": {
+    "a01": 1534440,
+    "a02": 1534440,
+    "a03": 1534440,
+    "a04": 1534440,
+    "a05": 1534440,
+    "a06": 1534440,
+    "a07": 1534440,
+    "a08": 1534440,
+    "a09": 1534440,
+    "a10": 1534440,
+    "a11": 1534440,
+    "a12": 1534440,
+    "a13": 1534440,
+    "a14": 1534440,
+    "a15": 1534440,
+    "a16": 1534440
+  },
+  "binary_sha256": {
+    "master": "0f18a458ef9ab1995836fd11b663d83c5ff269e8340efcdce21671495272616f",
+    "replayer": "d9e361690e2f041a1767184dc5bbcb961a7dac603aa19509ec9f91b763a627e3",
+    "worker": "6fb8af2a1fa62555cf1e4fe2f77e54cac4e4da65e63705e09b3a1068072c02d9"
+  },
+  "environment": {
+    "arch": "amd64",
+    "go": "go1.27.2",
+    "host_cpu_identifier": "Intel64 Family 6 Model 154 Stepping 3, GenuineIntel",
+    "input_topic_id": "H/+WKKPtQy+RjcJ6Waq5EQ==",
+    "kafka_cluster_id": "p08TestingCluster2026AA",
+    "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction",
+    "logical_cpus": 16,
+    "master_gomaxprocs": 2,
+    "os": "windows",
+    "postgres_fsync": "on",
+    "postgres_max_connections": "160",
+    "postgres_shared_buffers": "256MB",
+    "postgres_synchronous_commit": "on",
+    "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
+    "worker_gomaxprocs": 1
+  },
+  "log_directory": "experiments\\artifacts\\p10-full-matrix\\g16-d30-w2-push-restart-master",
+  "fault": {
+    "kind": "restart_master",
+    "restarted_at": "2026-11-04T11:43:27.7330813Z"
+  }
+}
