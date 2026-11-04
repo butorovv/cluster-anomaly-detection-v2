@@ -53,9 +53,13 @@ func Handler(master usecase.Master, log *slog.Logger) http.Handler {
 			}
 			limit = n
 		}
+		if !domain.ValidExecution(r.URL.Query().Get("execution_id")) || limit < 1 || limit > 500 {
+			http.Error(w, "execution UUID and limit 1..500 required", http.StatusBadRequest)
+			return
+		}
 		events, err := master.Store.Events(r.Context(), r.URL.Query().Get("execution_id"), r.URL.Query().Get("group_id"), r.URL.Query().Get("after"), limit)
 		if err != nil {
-			http.Error(w, "event query failed", 400)
+			http.Error(w, "event query unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
