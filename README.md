@@ -5,11 +5,14 @@ Go-реализация курсовой системы обнаружения �
 [утверждённое ТЗ](docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md).
 
 Реализованы frozen offline R/B/I2, Parquet replayer, versioned input codec,
-TickAssembler, Kafka Producer/Consumer recovery PoC, PostgreSQL foundation V1–V5
-и Archive Writer с Summit bootstrap/F18 mapping и идемпотентной записью в
+TickAssembler, Kafka Producer/Consumer, PostgreSQL foundation V1–V5,
+полный математический Snapshot/Restore и [P07 Worker runtime](docs/P07_WORKER.md)
+с Consumer Group, SQL ownership/fencing и atomic checkpoint/outbox. Archive Writer
+поддерживает Summit bootstrap/F18 mapping и идемпотентную запись в
 `project.telemetry`. Production archival Kafka Consumer и координация его progress
-с архивом, полноценный Worker, математический Snapshot/Restore, production Master
-и три выходных transport modes пока не реализованы.
+с архивом, межгрупповой outside join, production Master и три выходных transport
+modes пока не реализованы. Worker сохраняет только терминальные RBI2 events;
+полная distributed Raw/Evidence golden parity пока не заявляется.
 Runtime и тесты — Go; Python для запуска не требуется.
 
 ## Требования и исходные данные
@@ -195,7 +198,8 @@ adoption или reset. `project.event` — эксплуатационный фа
 случайные `p02_test_*` БД; нужны CREATEDB, права для временных test roles и завершения
 своего backend в crash test. Проверяются fresh/upgrade/history/checksum/rollback,
 сохранность telemetry, SQL invariants/privileges и concurrent fencing/crash/dedup.
-SQL foundation не доказывает полноту будущего Snapshot/Restore.
+SQL foundation проверяется отдельно от полноты математического Snapshot/Restore;
+интеграцию с ним выполняет P07 Worker.
 
 `db/queries/f18.sql` сохранён как каноническая F18-проекция long-format истории;
 текущий Parquet runtime её не вызывает. `db/scripts/grants.sql` нужен для выдачи
@@ -322,11 +326,11 @@ assignment `A=16 → A=8/B=8 → B=16 → A2=8/B=8`, повторная загр
 
 Произвольный mid-tick offset сам по себе **не восстанавливает TickAssembler или
 математическое состояние**. Recovery fixture использует marker-only ticks;
-полный D2 harness начинает с начала окна. P05/P06 должны атомарно хранить
-mathematical snapshot + input position, либо восстанавливать bounded input prefix
-от безопасной границы tick перед продолжением. Raw/evidence/results из
-неподтверждённого state нельзя публиковать: будущий checkpoint/outbox transaction
-с ownership fencing остаётся обязательным. PoC не пишет detection results.
+полный D2 harness начинает с начала окна. P07 Worker поверх этого adapter хранит
+полный mathematical snapshot + input position на complete boundary и переигрывает
+только неподтверждённый хвост. Raw/evidence/results из неподтверждённого state
+не публикуются; terminal events проходят SQL checkpoint/outbox transaction с
+ownership fencing. Сам транспортный PoC не пишет detection results.
 
 ### Испытания
 
@@ -432,10 +436,10 @@ partial/invalid records: каждая доступная координата; m
 CPU valid-core count и preprocessing provenance. Пропуск coordinate сохраняет
 отсутствие значения, но не объясняет его причину; timestamptz сохраняет instant,
 а не исходную timezone. Эти ограничения не исправлять скрытой заменой нулями
-или автоматической миграцией. Дизайн provenance отдельно согласовать в P05/P06;
+или автоматической миграцией. Дизайн архивного provenance отдельно согласовать;
 immutable manifests/hashes исходных assets сохраняют научную воспроизводимость.
 
-### AnnotateOutside: детерминированное обогащение для P05/P06
+### AnnotateOutside: проект следующего межгруппового join
 
 Код: `group.Evaluate` в `offline.go` сначала вычисляет локальные Raw всех групп,
 затем `AnnotateOutside(rows)`; `rbi2_offline.go` вызывает Journal после аннотации.
@@ -473,9 +477,10 @@ GroupProcessor, без повторного Temporal/RBI2Journal на Master:
    Recovery использует durable join state и те же keys; задержка одной группы
    задерживает только final diagnostics/export, не локальный detector state.
 
-Приёмка реализации P05/P06: для frozen windows/δ0/10/30/60 сравнить canonical
+Приёмка будущего join: для frozen windows/δ0/10/30/60 сравнить canonical
 raw/temporal/evidence/events/summary с теми же V1 golden, затем перестановки
 межгруппового прихода, exact/conflicting duplicates, crash на каждой join/outbox
-границе и reassign Worker. P04 фиксирует проектное решение; сам join,
-Snapshot/Restore, production checkpoint/outbox runtime, archival Kafka Consumer
-и Master не реализованы. Самостоятельный Archive Writer уже реализован в P04-DB.
+границе и reassign Worker. P04 фиксирует проектное решение; сам join, archival
+Kafka Consumer и Master не реализованы. Snapshot/Restore реализован в P06,
+Worker checkpoint/outbox runtime — в P07 (пока terminal-only events).
+Самостоятельный Archive Writer реализован в P04-DB.
