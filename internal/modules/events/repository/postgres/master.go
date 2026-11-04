@@ -31,21 +31,15 @@ func (s MasterStore) Identity(ctx context.Context, execution string) (group.RBI2
 	return id, nil
 }
 func (s MasterStore) Accept(ctx context.Context, e domain.Envelope) (bool, error) {
-	b, err := json.Marshal(e)
-	if err != nil {
-		return false, err
-	}
 	tx, err := s.DB.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback(context.Background())
-	var accepted bool
-	if err := tx.QueryRow(ctx, `SELECT cad_v2.accept_result($1::uuid,$2::jsonb)`, e.ExecutionID, b).Scan(&accepted); err != nil {
+	accepted, err := s.acceptTx(ctx, tx, e)
+	if err != nil {
 		return false, err
 	}
-	// An unknown COMMIT outcome returns no ACK. Identical transport retries are
-	// reconciled by accept_result; no RAM cursor or output Kafka commit advances.
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}

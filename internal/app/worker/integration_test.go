@@ -22,6 +22,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	eventusecase "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
@@ -43,6 +44,12 @@ type workerRig struct {
 }
 
 func workerIntegration(t *testing.T, delta int) *workerRig {
+	return workerIntegrationMode(t, delta, "polling")
+}
+func workerIntegrationMode(t *testing.T, delta int, mode string) *workerRig {
+	return workerIntegrationFixture(t, delta, mode, nil)
+}
+func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture) *workerRig {
 	t.Helper()
 	if os.Getenv("P07_WORKER_INTEGRATION") != "1" {
 		t.Skip("opt-in P07_WORKER_INTEGRATION=1 requires isolated real Kafka/PostgreSQL")
@@ -77,7 +84,12 @@ func workerIntegration(t *testing.T, delta int) *workerRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := workerfixture.New(t, 6, delta)
+	var f workerfixture.Fixture
+	if frozen != nil {
+		f = *frozen
+	} else {
+		f = workerfixture.New(t, 6, delta)
+	}
 	execution, err := NewOwnerID()
 	if err != nil {
 		t.Fatal(err)
@@ -126,7 +138,7 @@ func workerIntegration(t *testing.T, delta int) *workerRig {
 	}
 	_ = migration.Close(ctx)
 	consumer := "p07-" + execution
-	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: "polling", StartOffsets: map[string]int64{}}
+	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, StartOffsets: map[string]int64{}}
 	for i := int32(0); i < 16; i++ {
 		v := ends[kafkainput.Topic][i]
 		if v.Err != nil {
@@ -153,8 +165,11 @@ func waitWorker(t *testing.T, timeout time.Duration, condition func() bool) {
 }
 
 func (r *workerRig) start(t *testing.T) (*Runner, context.CancelFunc, <-chan error) {
+	return r.startOutput(t, nil)
+}
+func (r *workerRig) startOutput(t *testing.T, output *eventusecase.Dispatcher) (*Runner, context.CancelFunc, <-chan error) {
 	t.Helper()
-	runner, err := New(Config{Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil))}, r.store)
+	runner, err := New(Config{Bundle: r.fixture.Bundle, Options: r.fixture.Options, Broker: r.broker, ConsumerGroup: r.group, LeaseTTL: 3 * time.Second, Logger: slog.New(slog.NewJSONHandler(io.Discard, nil)), Output: output}, r.store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +244,7 @@ func (r *workerRig) sendTick(t *testing.T, tick int) {
 	}
 }
 
-func (r *workerRig) assertEvents(t *testing.T) {
+func (r *workerRig) expectedEvents(t *testing.T) map[string]group.RBI2Event {
 	t.Helper()
 	want := map[string]group.RBI2Event{}
 	for g := 1; g <= 16; g++ {
@@ -282,6 +297,11 @@ func (r *workerRig) assertEvents(t *testing.T) {
 			t.Fatalf("final mathematical state differs from continuous oracle for %s: %v", opts.GroupID, err)
 		}
 	}
+	return want
+}
+func (r *workerRig) assertEvents(t *testing.T) {
+	t.Helper()
+	want := r.expectedEvents(t)
 	got := map[string]group.RBI2Event{}
 	for g := 1; g <= 16; g++ {
 		outputs, err := r.store.Pending(context.Background(), fmt.Sprintf("a%02d", g))

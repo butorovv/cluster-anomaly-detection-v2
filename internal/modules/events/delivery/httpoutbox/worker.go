@@ -1,0 +1,54 @@
+package httpoutbox
+
+import (
+	"encoding/json"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
+	"net/http"
+	"strconv"
+)
+
+func Handler(dispatcher *usecase.Dispatcher) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
+	mux.HandleFunc("GET /v1/outbox", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		if dispatcher.Mode != "polling" || q.Get("execution_id") != dispatcher.ExecutionID {
+			http.Error(w, "execution/mode mismatch", 400)
+			return
+		}
+		owner, ok := dispatcher.Owner(q.Get("group_id"))
+		if !ok {
+			http.Error(w, "group not currently assigned", 409)
+			return
+		}
+		revision, err := strconv.ParseInt(q.Get("revision"), 10, 64)
+		if err != nil || revision < 0 {
+			http.Error(w, "invalid revision", 400)
+			return
+		}
+		ordinal, err := strconv.Atoi(q.Get("ordinal"))
+		if err != nil || ordinal < 0 {
+			http.Error(w, "invalid ordinal", 400)
+			return
+		}
+		limit, err := strconv.Atoi(q.Get("limit"))
+		if err != nil || limit < 1 || limit > 128 {
+			http.Error(w, "invalid page size", 400)
+			return
+		}
+		cursor := domain.Cursor{Revision: revision, Ordinal: ordinal}
+		if err := dispatcher.Store.AckCursor(r.Context(), owner, cursor); err != nil {
+			http.Error(w, "owner/progress unavailable", 409)
+			return
+		}
+		items, err := dispatcher.Store.Page(r.Context(), owner, cursor, limit, false)
+		if err != nil {
+			http.Error(w, "owner/outbox unavailable", 409)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(domain.Page{ExecutionID: owner.ExecutionID, GroupID: owner.GroupID, OwnerID: owner.OwnerID, Epoch: owner.Epoch, Items: items})
+	})
+	return mux
+}

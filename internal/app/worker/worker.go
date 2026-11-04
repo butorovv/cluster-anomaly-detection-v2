@@ -16,6 +16,8 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	events "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	delivery "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -30,6 +32,7 @@ type Config struct {
 	OwnerID       string
 	LeaseTTL      time.Duration
 	Logger        *slog.Logger
+	Output        *delivery.Dispatcher
 }
 
 type assignedPartition struct {
@@ -59,6 +62,9 @@ func NewOwnerID() (string, error) {
 func New(cfg Config, store *repo.Store) (*Runner, error) {
 	if store == nil || store.DB == nil || cfg.ConsumerGroup == "" || cfg.Options.Groups != 16 || len(cfg.Broker.Seeds) == 0 || (cfg.Broker.Topic != "" && cfg.Broker.Topic != kafkainput.Topic) {
 		return nil, fmt.Errorf("Worker requires registered store, Kafka source and 16-group bundle")
+	}
+	if cfg.Output != nil && (cfg.Output.ExecutionID != cfg.Options.Binding.ExecutionID || cfg.Output.Mode != store.Registration.OutputTransport) {
+		return nil, fmt.Errorf("dispatcher differs from registered execution transport")
 	}
 	if cfg.LeaseTTL == 0 {
 		cfg.LeaseTTL = repo.DefaultLease
@@ -120,6 +126,9 @@ func (r *Runner) revokeHook(ctx context.Context, ids []kafkainput.Identity) erro
 		delete(r.assigned, id.Partition)
 		state := r.parts[id.Partition]
 		delete(r.parts, id.Partition) // discard partial/uncommitted RAM before release
+		if state != nil && r.cfg.Output != nil {
+			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
+		}
 		if state != nil && state.lease.Epoch > 0 {
 			if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
 				result = errors.Join(result, err)
@@ -195,6 +204,11 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 	if r.closed || r.assigned[id.Partition] != id {
 		return kafkainput.Position{}, fmt.Errorf("assignment disappeared during restore")
 	}
+	if r.cfg.Output != nil {
+		if err := r.cfg.Output.Track(ctx, events.Owner{ExecutionID: r.cfg.Options.Binding.ExecutionID, GroupID: lease.Group, OwnerID: lease.Owner, Epoch: lease.Epoch}); err != nil {
+			return kafkainput.Position{}, err
+		}
+	}
 	state.core, state.loading = processor, false
 	r.cfg.Logger.InfoContext(ctx, "partition restored", "partition", id.Partition, "group", id.GroupID, "epoch", lease.Epoch, "next_offset", next, "recovered", saved != nil)
 	return kafkainput.Position{Identity: id, NextOffset: next}, nil
@@ -257,6 +271,9 @@ func (r *Runner) close() error {
 	var result error
 	for partition, state := range r.parts {
 		delete(r.parts, partition)
+		if r.cfg.Output != nil {
+			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
+		}
 		delete(r.assigned, partition)
 		if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
 			result = errors.Join(result, err)
@@ -279,6 +296,19 @@ func (r *Runner) Run(ctx context.Context) (retErr error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	defer func() { retErr = errors.Join(retErr, r.close()) }()
+	outputStopped := make(chan struct{})
+	outputFailure := make(chan error, 1)
+	if r.cfg.Output != nil {
+		go func() {
+			defer close(outputStopped)
+			if err := r.cfg.Output.Run(ctx); err != nil {
+				outputFailure <- err
+				cancel()
+			}
+		}()
+	} else {
+		close(outputStopped)
+	}
 	heartbeat := make(chan error, 1)
 	stopped := make(chan struct{})
 	go func() {
@@ -302,6 +332,12 @@ func (r *Runner) Run(ctx context.Context) (retErr error) {
 	retErr = kafkainput.ConsumeGroup(ctx, cfg, r.handle)
 	cancel()
 	<-stopped
+	<-outputStopped
+	select {
+	case err := <-outputFailure:
+		retErr = errors.Join(retErr, err)
+	default:
+	}
 	select {
 	case err := <-heartbeat:
 		retErr = errors.Join(retErr, err)

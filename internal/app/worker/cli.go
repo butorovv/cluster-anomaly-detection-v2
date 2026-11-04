@@ -37,6 +37,10 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	register := flags.Bool("register-execution", false, "admin-only explicit run/execution registration, then exit")
 	offsets := flags.String("start-offsets", "", "registration-only JSON object with explicit offsets 0..15")
 	output := flags.String("output-transport", "polling", "reserved SQL experiment metadata; no dispatcher is started")
+	listen := flags.String("listen", "127.0.0.1:0", "Worker HTTP listen address")
+	advertise := flags.String("advertise-url", "", "reachable Worker URL; inferred only for loopback")
+	masterURL := flags.String("master-url", "http://127.0.0.1:8080", "Master URL for http_push")
+	createResults := flags.Bool("create-results-topic", false, "explicitly initialize/validate group.results")
 	level := flags.String("log-level", "info", "info or debug (offsets only, no telemetry payload)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -123,10 +127,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	runner, err := New(Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r})
-	if err != nil {
-		return err
-	}
-	log.InfoContext(ctx, "Worker starting", "execution", *execution, "run_id", snap.Identity.RunID, "owner", runner.cfg.OwnerID, "consumer_group", *consumer)
-	return runner.Run(ctx)
+	return RunWithOutput(ctx, Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
 }
