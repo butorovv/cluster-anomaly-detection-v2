@@ -20,6 +20,25 @@ type Broker struct {
 	Topic string
 }
 
+// DescribeSource binds registration to both Kafka cluster and topic incarnation.
+// It never creates topics or silently accepts a different partition/policy setup.
+func DescribeSource(ctx context.Context, broker Broker) (clusterID, topicID string, err error) {
+	cl, err := kgo.NewClient(broker.options()...)
+	if err != nil {
+		return "", "", err
+	}
+	defer cl.Close()
+	metadata, err := kadm.NewClient(cl).BrokerMetadata(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	if metadata.Cluster == "" {
+		return "", "", fmt.Errorf("Kafka cluster ID required")
+	}
+	topicID, err = CheckTopic(ctx, cl, broker.topic())
+	return metadata.Cluster, topicID, err
+}
+
 func (b Broker) topic() string {
 	if b.Topic == "" {
 		return Topic
