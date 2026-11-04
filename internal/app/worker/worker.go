@@ -253,6 +253,11 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 		}
 	}
 	state.core, state.loading, state.nextOffset = processor, false, next
+	// A retained assignment can restore from SQL after a session interruption.
+	// Its uncommitted math/assembler tail was discarded; discard its operational
+	// clocks too, so replay is not counted twice or attributed to a later tick.
+	state.tickStarted, state.tickSource = time.Time{}, time.Time{}
+	state.batchTimings = nil
 	r.cfg.Metrics.Observe("restore", time.Since(restoreStart))
 	r.cfg.Logger.InfoContext(ctx, "partition restored", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", id.Partition, "group", id.GroupID, "epoch", lease.Epoch, "next_offset", next, "recovered", saved != nil)
 	return kafkainput.Position{Identity: id, NextOffset: next}, nil
