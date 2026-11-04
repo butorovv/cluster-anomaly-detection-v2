@@ -11,7 +11,7 @@
   "runs": [
     {
       "name": "repeat-1-http_push",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "http_push",
@@ -21,7 +21,7 @@
     },
     {
       "name": "repeat-1-polling",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "polling",
@@ -31,7 +31,7 @@
     },
     {
       "name": "repeat-1-kafka",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "kafka",
@@ -41,7 +41,7 @@
     },
     {
       "name": "repeat-2-kafka",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "kafka",
@@ -51,7 +51,7 @@
     },
     {
       "name": "repeat-2-polling",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "polling",
@@ -61,7 +61,7 @@
     },
     {
       "name": "repeat-2-http_push",
-      "workers": 4,
+      "workers": 1,
       "groups": 16,
       "delta": 0,
       "mode": "http_push",
