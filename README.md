@@ -961,9 +961,11 @@ pwsh -File deploy/demo.ps1 -EnvironmentFile deploy/.env -Workers 4 -Output exper
 
 Скрипт не удаляет volumes и оставляет проект для осмотра. Для остановки достаточно
 `docker compose ... stop`; не применять prune или down -v к пользовательским данным.
-В текущей среде Docker engine недоступен: `compose config` и Linux cross-build
-проверены, container smoke/demo — `NOT_RUN` с причиной в
-`experiments/artifacts/compose-demo-not-run/status.json`.
+Первоначальная попытка Docker была NOT_RUN (историческая запись сохранена).
+После запуска engine выполнен реальный Compose smoke с 4 Worker во всех трёх
+режимах: 960 ticks и 12 terminal events на окно 08:00–08:10, одинаковые payload
+hashes, kill/rebalance/Restore и сохранённые EventID. Итоги:
+`experiments/artifacts/compose-demo/summary.json` и `results.json`.
 
 Материалы для РПЗ: разделы README описывают immutable scientific contract,
 архитектуру, границы транзакции/fencing, три транспорта и методику измерений;
@@ -974,3 +976,64 @@ R/B/I2 показывают статистическую групповую ан
 Для Kafka delivered outbox означает broker ACK; отставание Master после этого
 видно в E2E/intake, а не в Worker backlog. Для Push/Polling backlog заканчивается
 после durable Master ACK. Сопоставлять backlog без этой разницы нельзя.
+
+
+### Фактическая приёмка P08–P12
+
+P10 matrix **26/26 PASS**, отдельный первый D2 PASS, два полных mid-event crash D2
+при cadence 3/6 PASS. Измерительная матрица **11/11 PASS**, каждый запуск также
+прошёл независимый pinned V1 comparator. Итого 40 успешных полных распределённых
+D2 запусков. Первый failing 16-Worker lock case сохранён отдельно; причина
+устранена и покрыта deterministic concurrency regression.
+
+δ0 контроль: 46 080 ticks / 1 284 positive / 750 parents / 473 new / 285 RBSubspans /
+277 RB-supported parents. Сравнивались все поля, IDs и canonical stream hashes.
+Provenance: `golden-manifest.json`, `v1-generated-golden.json`,
+`p03-independent-acceptance.json` в `experiments/artifacts`.
+
+Таблицы: `experiments/artifacts/final-summary/parity.csv` и `measurements.csv`;
+графики scaling/resources/transport-latency/recovery находятся рядом. Original
+run JSON и resource samples — в `p11-measured/`.
+
+| Worker (cadence=3, Push) | group ticks/s | speedup относительно 1 |
+|---|---:|---:|
+| 1 | 178.48 | 1.00 |
+| 2 | 257.57 | 1.44 |
+| 4 | 266.60 | 1.49 |
+| 8 | 251.56 | 1.41 |
+| 16 | 251.33 | 1.41 |
+
+| Режим, 4 Worker/cadence=3 | ticks/s | transport p95 | E2E p95 |
+|---|---:|---:|---:|
+| HTTP Push | 266.60 | 1.608 ms | 133.417 s |
+| Polling 10 ms | 211.35 | 442.103 ms | 175.107 s |
+| Polling 100 ms | 217.21 | 472.679 ms | 170.823 s |
+| Polling 500 ms | 196.11 | 528.640 ms | 194.994 s |
+| Kafka | 171.21 | 184.105 s | 224.591 s |
+
+Kafka transport interval включает broker queue до последовательного Master
+intake. Высокое значение отражает backlog burst replay, а не TCP RTT. Polling
+включает очередь элементов page. Push обслуживает параллельные HTTP requests,
+Kafka intake здесь последователен; бизнес-логика и SQL транзакция на сообщение
+общие, concurrency adapters различается. Это измерение реализованной системы,
+не доказательство оптимальности транспорта. Docker engine включён пользователем
+во время последнего Kafka-замера; контейнерные работы начались после него.
+Этот background-load фактор и один запуск на configuration исключают строгие
+статистические выводы.
+
+Реальные отказы: Worker kill, partial tick/batch replay, COMMIT rollback/lost ACK,
+pending outbox + Master restart, lease loss/stale epoch, rebalance, SHA/version/
+frozen binding corruption, retention gap, PostgreSQL TCP outage и Kafka disconnect
+(8 реальных sockets). Worker race suite PASS 214.028 s; отдельный Kafka network
+race PASS 9.820 s. Machine-readable сводка — `experiments/artifacts/validation.json`.
+
+Compose проверен на Docker 28.4.0/WSL2 Linux. `RUN_START`/`RUN_END` позволяют короткий
+smoke; defaults — полное D2. Image собирает только bootstrap service, остальные
+приложения используют тот же image. `CAD_IMAGE` задаёт отдельный test tag.
+Пользовательские volumes не удалялись. Проект оставлен для осмотра; параметры без
+паролей — `compose-demo/summary.json`.
+
+Перед защитой: полная университетская РПЗ (вне этого задания), warmup/replications
+на спокойном стенде и отдельная межхостовая сеть. Single-host таблицы и ограничения
+clock/network следует сохранить в выводах. Статистическая аномальность не
+устанавливает аппаратную причину; физическая диагностика здесь не заявляется.

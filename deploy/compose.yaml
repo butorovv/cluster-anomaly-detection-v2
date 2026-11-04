@@ -10,13 +10,12 @@ x-environment: &runtime
   DELTA_SECONDS: ${DELTA_SECONDS:-0}
   CHECKPOINT_INTERVAL_TICKS: ${CHECKPOINT_INTERVAL_TICKS:-1}
   POLL_INTERVAL_MS: ${POLL_INTERVAL_MS:-100}
+  RUN_START: ${RUN_START:-2022-01-18T08:00:00Z}
+  RUN_END: ${RUN_END:-2022-01-18T16:00:00Z}
   REPLAY_SPEED: ${REPLAY_SPEED:-100}
   MEASURE: ${MEASURE:-false}
 x-app: &app
-  image: cad-system:local
-  build:
-    context: ..
-    dockerfile: deploy/Dockerfile
+  image: ${CAD_IMAGE:-cad-system:local}
   networks: [cad]
   volumes:
     - type: bind
@@ -72,6 +71,9 @@ services:
       start_period: 20s
   bootstrap:
     <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
     command: [bootstrap]
     environment:
       <<: *runtime

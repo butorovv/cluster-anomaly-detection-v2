@@ -67,6 +67,16 @@ def main():
         axes[1].set(xlabel='Worker processes', ylabel='Speedup'); axes[1].legend()
         for ax in axes: ax.grid(alpha=.3)
         fig.tight_layout(); fig.savefig(args.output / 'scaling.png', dpi=180); plt.close(fig)
+    if scaling:
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+        for field, label in (('worker_cpu_seconds', 'Workers sum'), ('master_cpu_seconds', 'Master')):
+            axes[0].plot([r['workers'] for r in scaling], [r[field] for r in scaling], 'o-', label=label)
+        for field, label in (('worker_peak_rss_bytes', 'Workers aggregate sampled peak'), ('master_peak_rss_bytes', 'Master sampled peak')):
+            axes[1].plot([r['workers'] for r in scaling], [r[field]/(1024**2) for r in scaling], 'o-', label=label)
+        axes[0].set(xlabel='Worker processes', ylabel='Cumulative process CPU seconds', title='Runtime CPU (includes startup)')
+        axes[1].set(xlabel='Worker processes', ylabel='MiB RSS', title='Observed memory / 1 second sampling')
+        for ax in axes: ax.grid(alpha=.3); ax.legend(fontsize=8)
+        fig.tight_layout(); fig.savefig(args.output / 'resources.png', dpi=180); plt.close(fig)
     transports = [r for r in measured if r['groups'] == 16 and r['delta'] == 0 and r['workers'] == 4 and r['cadence'] == 3]
     if transports:
         labels = [r['mode'] + (f" {r['poll_ms']}ms" if r['mode'] == 'polling' else '') for r in transports]
@@ -76,12 +86,13 @@ def main():
             for offset, q in ((-.22, 'p50_seconds'), (0, 'p95_seconds'), (.22, 'p99_seconds')):
                 ax.bar([i+offset for i in x], [r[f'{component}_{q}'] for r in transports], width=.22, label=q[:3])
             ax.set_xticks(x, labels, rotation=20, ha='right'); ax.set(ylabel='Seconds', title=title); ax.legend()
+            if component == 'send_to_master_receive': ax.set_yscale('log')
         fig.tight_layout(); fig.savefig(args.output / 'transport-latency.png', dpi=180); plt.close(fig)
-    recoveries = [r for r in runs if r['status']=='PASS' and r.get('fault', {}).get('kind')=='kill_worker']
+    recoveries = [r for r in runs if r['status']=='PASS' and r.get('fault', {}).get('kind')=='kill_worker' and r['configuration']['name'].startswith('crash-')]
     if recoveries:
         fig, ax = plt.subplots(figsize=(7,4))
         ax.bar([r['configuration']['name'] for r in recoveries], [r['fault']['time_to_resumed_checkpoint_seconds'] for r in recoveries])
-        ax.set(ylabel='Seconds', title='Fault injection → first resumed checkpoint');ax.tick_params(axis='x',rotation=25)
+        ax.set(ylabel='Seconds', title='Kill → resumed checkpoint (cadence 3/6)');ax.tick_params(axis='x',rotation=25)
         fig.tight_layout();fig.savefig(args.output/'recovery.png',dpi=180);plt.close(fig)
 
 if __name__ == '__main__':

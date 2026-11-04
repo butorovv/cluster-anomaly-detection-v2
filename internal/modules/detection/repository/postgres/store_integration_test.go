@@ -138,7 +138,7 @@ func TestStoreCheckpointOutboxRecoveryAndLeaseFencing(t *testing.T) {
 	_, s, f := testDB(t)
 	ctx := context.Background()
 	owner := "00000000-0000-4000-8000-000000000072"
-	lease, saved, err := s.Acquire(ctx, "a01", owner, time.Second)
+	lease, saved, err := s.Acquire(ctx, "a01", owner, 10*time.Second)
 	if err != nil || saved != nil {
 		t.Fatalf("acquire: %#v %v", saved, err)
 	}
@@ -185,6 +185,9 @@ func TestStoreCheckpointOutboxRecoveryAndLeaseFencing(t *testing.T) {
 		if e.MessageID == "" || strings.Contains(string(payload), "group_results") {
 			t.Fatalf("bad terminal event: %#v", e)
 		}
+	}
+	if err := s.Renew(ctx, lease, time.Second); err != nil {
+		t.Fatal(err)
 	}
 	time.Sleep(1100 * time.Millisecond)
 	newLease, _, err := s.Acquire(ctx, "a01", "00000000-0000-4000-8000-000000000073", time.Second)

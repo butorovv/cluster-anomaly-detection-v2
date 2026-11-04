@@ -138,7 +138,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 	mode := env("OUTPUT_TRANSPORT", "http_push")
-	args := []string{"--register-execution", "--assets", assets, "--profile-sha256", os.Getenv("PROFILE_SHA256"), "--input-sha256", os.Getenv("INPUT_SHA256"), "--execution-id", execution, "--consumer-group", "cad-input-" + execution, "--kafka-brokers", strings.Join(seeds, ","), "--start-offsets", string(encoded), "--groups", env("GROUPS_COUNT", "16"), "--delta", env("DELTA_SECONDS", "0"), "--checkpoint-interval-ticks", env("CHECKPOINT_INTERVAL_TICKS", "1"), "--output-transport", mode}
+	args := []string{"--register-execution", "--assets", assets, "--profile-sha256", os.Getenv("PROFILE_SHA256"), "--input-sha256", os.Getenv("INPUT_SHA256"), "--execution-id", execution, "--consumer-group", "cad-input-" + execution, "--kafka-brokers", strings.Join(seeds, ","), "--start-offsets", string(encoded), "--start", env("RUN_START", "2022-01-18T08:00:00Z"), "--end", env("RUN_END", "2022-01-18T16:00:00Z"), "--groups", env("GROUPS_COUNT", "16"), "--delta", env("DELTA_SECONDS", "0"), "--checkpoint-interval-ticks", env("CHECKPOINT_INTERVAL_TICKS", "1"), "--output-transport", mode}
 	if err := worker.RunCLI(ctx, args, os.Stderr); err != nil {
 		return err
 	}

@@ -1,0 +1,177 @@
+{
+  "go_vet": {
+    "command": "go vet ./...",
+    "status": "PASS"
+  },
+  "worker_race": {
+    "real_kafka": true,
+    "seconds": 214.028,
+    "real_postgres": true,
+    "command": "go test -race ./internal/app/worker -count=1 -v -timeout 12m",
+    "log": ".cache/final-worker-race.log",
+    "status": "PASS"
+  },
+  "go_test_all": {
+    "command": "go test ./... -count=1 -timeout 12m",
+    "packages": [
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/db",
+        "seconds": 31.844
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/deploy/bootstrap",
+        "seconds": 1.892
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/acceptance",
+        "seconds": 2.261
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/app/experiment",
+        "seconds": 1.066
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/app/offline",
+        "seconds": 5.469
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/app/replayer",
+        "seconds": 4.246
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker",
+        "seconds": 1.76
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/analysis",
+        "seconds": 2.33
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group",
+        "seconds": 9.15
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/local",
+        "seconds": 1.084
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres",
+        "seconds": 52.376
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase",
+        "seconds": 4.543
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport",
+        "seconds": 1.344
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain",
+        "seconds": 0.869
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres",
+        "seconds": 46.56
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/archive/postgres",
+        "seconds": 49.256
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec",
+        "seconds": 2.603
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput",
+        "seconds": 1.347
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/ndjson",
+        "seconds": 2.438
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain",
+        "seconds": 2.127
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/usecase",
+        "seconds": 2.818
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain",
+        "seconds": 2.358
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability",
+        "seconds": 2.461
+      },
+      {
+        "status": "PASS",
+        "package": "github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/parquet",
+        "seconds": 1.328
+      }
+    ],
+    "status": "PASS",
+    "real_postgres_enabled": true
+  },
+  "schema_version": 1,
+  "compose": {
+    "config": "PASS",
+    "runtime_smoke": "PASS",
+    "docker_engine": "28.4.0",
+    "platform": "WSL2 Linux",
+    "workers": 4,
+    "modes": 3,
+    "group_ticks_per_mode": 960,
+    "terminal_events_per_mode": 12,
+    "event_id_preserved": true,
+    "cross_mode_all_diagnostic_hashes_equal": true,
+    "record": "experiments/artifacts/compose-demo/summary.json"
+  },
+  "native_bootstrap": {
+    "restricted_login_roles": true,
+    "seconds": 3.046,
+    "race": true,
+    "docker_required": false,
+    "direct_master_outbox_access": "DENIED",
+    "fresh_repeat": true,
+    "status": "PASS"
+  },
+  "kafka_network_race": {
+    "status": "PASS",
+    "seconds": 9.82,
+    "closed_real_sockets": 8,
+    "partial_tail_and_continuous_oracle": true
+  },
+  "final_current_source": {
+    "diff_check": "PASS",
+    "go_test_all": "PASS",
+    "go_vet": "PASS",
+    "kafka_disconnect_race": "PASS",
+    "compose_three_modes": "PASS"
+  }
+}

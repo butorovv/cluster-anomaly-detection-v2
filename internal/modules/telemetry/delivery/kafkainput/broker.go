@@ -5,6 +5,7 @@ package kafkainput
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -18,6 +19,9 @@ type Broker struct {
 	Seeds []string
 	// Topic defaults to telemetry.raw. Tests use isolated topics with the same contract.
 	Topic string
+	// DialContext optionally routes real transport connections (e.g. isolated outage tests).
+	// It cannot override group, assignment, offsets or commit policy.
+	DialContext func(context.Context, string, string) (net.Conn, error)
 }
 
 // DescribeSource binds registration to both Kafka cluster and topic incarnation.
@@ -58,7 +62,11 @@ func (b Broker) topic() string {
 func (b Broker) options() []kgo.Opt {
 	// This PoC explicitly uses PLAINTEXT; an EOF during broker restart is not
 	// evidence of a TLS mismatch. Retries remain bounded by caller/deadlines.
-	return []kgo.Opt{kgo.SeedBrokers(b.Seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.AlwaysRetryEOF()}
+	opts := []kgo.Opt{kgo.SeedBrokers(b.Seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.AlwaysRetryEOF()}
+	if b.DialContext != nil {
+		opts = append(opts, kgo.Dialer(b.DialContext))
+	}
+	return opts
 }
 
 // CheckTopic checks metadata without creating or expanding a topic. A changed
