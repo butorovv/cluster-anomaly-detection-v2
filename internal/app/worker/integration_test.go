@@ -420,6 +420,16 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 	if err := json.Unmarshal(durable.Snapshot, &saved); err != nil || saved.Journal.Open == nil {
 		t.Fatal("open event absent at crash", err)
 	}
+	heldTemporalWitness := false
+	for _, occurrence := range saved.Journal.Clock.States {
+		if !occurrence.Positive.IsZero() && occurrence.Positive.Before(saved.Journal.Last) && saved.Journal.Last.Sub(occurrence.Positive) <= 30*time.Second {
+			heldTemporalWitness = true
+		}
+	}
+	if saved.DeltaSeconds != 30 || !heldTemporalWitness {
+		t.Fatal("crash must occur with active historical delta30 witness, not merely a delta30 configuration")
+	}
+	t.Logf("crash_delta30_historical_memory=true durable_next_offset=%d open_event_id=%s", durable.NextOffset, saved.Journal.Open.ID)
 	expectedEventID := saved.Journal.Open.ID
 	if err := cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
