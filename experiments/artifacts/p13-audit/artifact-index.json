@@ -73,8 +73,8 @@
     },
     {
       "path": "experiments/artifacts/p13-audit/kr-matrix.json",
-      "bytes": 16803,
-      "sha256": "7cf609af78e1520d49ad8f52ba350cb82dd8a04460b0377f515231573e15f02c"
+      "bytes": 17243,
+      "sha256": "54672a2e5da1365a26cdc876609ae6c642a6e075195f0cdc72aec57415220fb5"
     },
     {
       "path": "experiments/artifacts/p13-audit/latency-decomposition.json",
@@ -175,6 +175,11 @@
       "path": "experiments/artifacts/p13-repeated/repeat-2-polling.json",
       "bytes": 7906,
       "sha256": "406457b990eede1d4deecd2cad45a93b3034194f0f8f5530b02e3ba33e5f98ab"
+    },
+    {
+      "path": "experiments/artifacts/p13-audit/git-blob-verification.json",
+      "bytes": 541,
+      "sha256": "aac60df155a698326d74134bd7b6df4954c5bf38786fd8eaca2e3e6b791a9f4b"
     }
   ]
 }

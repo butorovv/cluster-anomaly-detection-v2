@@ -137,7 +137,7 @@
         "ConsumeGroup assignment hooks",
         "Runner assigned/load/revoke"
       ],
-      "test_or_experiment": "1/2/4/8/16 saved initial assignments; live 1→2→1 rebalance tests",
+      "test_or_experiment": "1/2/4/8/16 saved initial assignments; live 1в†’2в†’1 rebalance tests",
       "observed_result": "Kafka dynamic group assignment, no static Worker mapping",
       "evidence": [
         {
@@ -298,7 +298,9 @@
         },
         {
           "path": "experiments/artifacts/compose-demo/summary.json",
-          "sha256": "e87918b8c91372d0bcc462ab7643827bfc19b210a8f89660a15ea87e0c54f452"
+          "sha256": "f9167e2c6ee5876f777796fccd010c0073ae5938e8613abe5745c0f6e48523ea",
+          "observed_working_copy_sha256": "e87918b8c91372d0bcc462ab7643827bfc19b210a8f89660a15ea87e0c54f452",
+          "sha_scope": "committed Git blob (LF); original Windows working-copy SHA retained separately"
         },
         {
           "path": "experiments/artifacts/p13-repeated/matrix.json",
@@ -392,7 +394,9 @@
         },
         {
           "path": "experiments/artifacts/compose-demo/summary.json",
-          "sha256": "e87918b8c91372d0bcc462ab7643827bfc19b210a8f89660a15ea87e0c54f452"
+          "sha256": "f9167e2c6ee5876f777796fccd010c0073ae5938e8613abe5745c0f6e48523ea",
+          "observed_working_copy_sha256": "e87918b8c91372d0bcc462ab7643827bfc19b210a8f89660a15ea87e0c54f452",
+          "sha_scope": "committed Git blob (LF); original Windows working-copy SHA retained separately"
         }
       ],
       "limitations": [

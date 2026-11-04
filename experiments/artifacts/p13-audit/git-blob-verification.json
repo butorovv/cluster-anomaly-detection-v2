@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "method": "all indexed file lengths/SHA-256 and all KR evidence SHA-256 verified against staged Git blobs; line-ending normalization is explicit",
+  "legacy_evidence_line_endings": {
+    "experiments/artifacts/compose-demo/summary.json": {
+      "working_copy_sha256": "e87918b8c91372d0bcc462ab7643827bfc19b210a8f89660a15ea87e0c54f452",
+      "git_blob_sha256": "f9167e2c6ee5876f777796fccd010c0073ae5938e8613abe5745c0f6e48523ea"
+    }
+  },
+  "scientific_or_measurement_values_changed": false
+}
