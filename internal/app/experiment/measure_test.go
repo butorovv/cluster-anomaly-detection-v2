@@ -72,3 +72,14 @@ func TestSamplerIncludesNonzeroPartitionLag(t *testing.T) {
 		t.Fatalf("lost input Kafka lag: got %v want 42", got)
 	}
 }
+
+func TestReanalysisCannotUpgradeLegacyLag(t *testing.T) {
+	for _, original := range []*Measurements{nil, {KafkaLagMax: 0}} {
+		if got := reanalysisLagStatus(original); got != "NOT_VERIFIED_LEGACY_SAMPLER" {
+			t.Fatal("legacy missing gauges silently certified", got)
+		}
+	}
+	if got := reanalysisLagStatus(&Measurements{KafkaLagStatus: "MEASURED_PARTITION_HIGH_WATERMARK_1HZ", KafkaLagMax: 42}); got != "MEASURED_PARTITION_HIGH_WATERMARK_1HZ" {
+		t.Fatal("modern quality metadata lost", got)
+	}
+}

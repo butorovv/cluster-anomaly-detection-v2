@@ -436,6 +436,9 @@ func analyzeExisting(path string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Legacy samples already contain the broken aggregate, not the original
+	// partition gauges. Reanalysis cannot manufacture the missing measurements.
+	measured.KafkaLagStatus = reanalysisLagStatus(result.Measurements)
 	analysis := struct {
 		SourceSHA256 string       `json:"source_result_sha256"`
 		Source       string       `json:"source_result"`
@@ -450,4 +453,11 @@ func analyzeExisting(path string, out io.Writer) error {
 	}
 	fmt.Fprintln(out, output)
 	return nil
+}
+
+func reanalysisLagStatus(original *Measurements) string {
+	if original == nil || original.KafkaLagStatus == "" {
+		return "NOT_VERIFIED_LEGACY_SAMPLER"
+	}
+	return original.KafkaLagStatus
 }
