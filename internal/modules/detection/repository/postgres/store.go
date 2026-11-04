@@ -10,6 +10,7 @@ import (
 
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
+	events "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -73,7 +74,7 @@ func (s *Store) Acquire(ctx context.Context, groupID, owner string, ttl time.Dur
 	}
 	if saved == nil {
 		var count int
-		if err = tx.QueryRow(ctx, `SELECT count(*) FROM cad_v2.outbox_messages WHERE execution_id=$1::uuid AND group_id=$2`, s.Registration.Binding.ExecutionID, groupID).Scan(&count); err != nil {
+		if err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM cad_v2.outbox_messages WHERE execution_id=$1::uuid AND group_id=$2) + (SELECT count(*) FROM cad_v2.worker_tick_fragments WHERE execution_id=$1::uuid AND group_id=$2)`, s.Registration.Binding.ExecutionID, groupID).Scan(&count); err != nil {
 			return lease, nil, err
 		}
 		if count != 0 {
@@ -112,6 +113,20 @@ func (s *Store) Save(ctx context.Context, l Lease, transition core.Transition) (
 	if err != nil {
 		return 0, err
 	}
+	fragments := []events.Envelope{}
+	if s.Registration.Diagnostics {
+		results := transition.Results
+		if len(results) == 0 {
+			results = []group.GroupProcessorResult{transition.Result}
+		}
+		for _, result := range results {
+			fragment, err := events.TickFragment(s.Registration.Binding.ExecutionID, s.Registration.Identity, result)
+			if err != nil {
+				return 0, err
+			}
+			fragments = append(fragments, fragment)
+		}
+	}
 	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return 0, err
@@ -121,6 +136,15 @@ func (s *Store) Save(ctx context.Context, l Lease, transition core.Transition) (
 	err = tx.QueryRow(ctx, `SELECT cad_v2.commit_checkpoint($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,'json-utf8',$9::bytea,$10::cad_v2.sha256_hex,$11,$12::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision-1, c.NextOffset, c.LastTick, group.MathSnapshotSchemaVersion, c.Snapshot, c.SHA256, c.Finalized, payload).Scan(&revision)
 	if err != nil {
 		return 0, err
+	}
+	for i, fragment := range fragments {
+		bytes, err := json.Marshal(fragment)
+		if err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(ctx, `SELECT cad_v2.stage_tick_fragment($1::uuid,$2,$3::uuid,$4,$5,$6,$7::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision, len(outputs)+i+1, bytes); err != nil {
+			return 0, err
+		}
 	}
 	if err = tx.Commit(ctx); err == nil {
 		return revision, nil
@@ -144,6 +168,16 @@ func (s *Store) Save(ctx context.Context, l Lease, transition core.Transition) (
 		var saved core.EventEnvelope
 		if json.Unmarshal(got, &saved) != nil || hashJSON(saved) != hashJSON(output) {
 			return 0, fmt.Errorf("checkpoint outbox reconciliation mismatch")
+		}
+	}
+	for _, fragment := range fragments {
+		bytes, err := json.Marshal(fragment)
+		if err != nil {
+			return 0, err
+		}
+		var exact bool
+		if err := s.DB.QueryRow(recovery, `SELECT envelope=$3::jsonb FROM cad_v2.worker_tick_fragments WHERE execution_id=$1::uuid AND message_id=$2`, s.Registration.Binding.ExecutionID, fragment.MessageID, bytes).Scan(&exact); err != nil || !exact {
+			return 0, fmt.Errorf("checkpoint fragment reconciliation failed: %v", err)
 		}
 	}
 	return durable.Revision, nil

@@ -748,3 +748,70 @@ $env:P07_TEST_KAFKA_ISOLATED = '1'
 $env:P07_WORKER_INTEGRATION = '1'
 go test -race ./internal/app/worker -run '^TestWorkerThreeTransportParityAndRestart$' -count=1 -v -timeout 5m
 ```
+
+## P10: durable outside join и независимый golden
+
+Обычная регистрация Worker включает `--diagnostics=true`. Этот флаг — immutable
+execution metadata; старый terminal-only execution требует `--diagnostics=false`.
+`--groups 4|8|16` задаёт научный universe и сохраняет физические 16 input partitions.
+Невыбранные группы валидируются адаптером, но не создают математическое состояние.
+Назначение выбранных групп по-прежнему выполняет Kafka Consumer Group.
+
+V7 добавляет отдельные `worker_tick_fragments`, `master_tick_fragments` и маркер
+завершённого join. Snapshot, authoritative input offset, terminal events и локальные
+fragments фиксируются **одной** Worker-транзакцией. Fragment использует явно
+отличимый envelope schema 2/kind `tick_fragment`; он не является финальным
+`group_result` и сохраняет `outside_groups=null`. Все три транспорта переносят
+одинаковые durable messages и используют один Master usecase.
+
+Master сериализует короткий join по execution/timestamp, читает только 4/8/16
+fragments одного timestamp и вызывает существующий `group.AnnotateOutside` на
+копиях Raw. Заполняются Raw и Evidence.Raw; Temporal, scientific IDs и terminal
+parents остаются исходными. Финальные schema 1 `group_result` и join marker
+записываются в той же транзакции, что последний fragment. Повтор/перестановка и
+restart безопасны; незавершённый timestamp остаётся durable и не выдаётся как
+готовый результат. Полный D2 в памяти Master не хранится.
+
+`GET /v1/results?execution_id=UUID&after_tick=RFC3339&after_group=a01&limit=100`
+возвращает bounded pages финальных Raw/Temporal/Evidence. `GET /v1/summary` с
+`execution_id` агрегирует принятые поля; Master не пересчитывает голоса.
+`complete` в summary означает наличие всех group ticks; при демонстрации также
+дождаться finalized checkpoints и опустевшего outbox для доставки Flush events.
+
+Независимый источник: V1 pin
+`c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc`. Текущий HEAD произвольного V1 не
+используется. В `_worknotes/nir-final-kernel-selection` найдены сохранённые
+baseline/research artifacts; provenance и SHA записаны в
+`experiments/artifacts/golden-manifest.json`. P03 real acceptance подтвердила
+40 scientific declarations, все δ и независимые исследовательские δ0 значения
+46 080 / 1 284 / 750 / 473 / 285 / 277.
+
+Свежие эталоны из отдельного чистого LF checkout pinned V1 для 4/8/16 × δ0/10/30/60
+зарегистрированы в `experiments/artifacts/v1-generated-golden.json`. Большие
+NDJSON остаются вне Git; manifest содержит исходные пути, команды, pin, SHA и
+параметры. Воспроизведение создаёт **новую** директорию и не изменяет V1:
+
+```powershell
+pwsh -File experiments/generate-golden.ps1 -V1Repository $env:V1_REPOSITORY -Assets $env:ASSETS_ROOT -Output .cache/golden-new -Manifest .cache/golden-new-manifest.json
+$env:SYSTEM_TEST_DATABASE_URL = 'postgres://TEST_ADMIN@127.0.0.1:PGPORT/postgres?sslmode=disable'
+$env:SYSTEM_KAFKA_ISOLATED = '1'
+$env:P07_TEST_KAFKA_BROKERS = '127.0.0.1:KAFKAPORT'
+$env:V1_GOLDEN_ROOT = (Resolve-Path .cache/golden-new).Path
+go run ./experiments/runner --config experiments/configs/p10-first-d2.json
+```
+
+В config также задать путь `golden_manifest` к новому manifest и новый `output`.
+Runner собирает реальные процессы Replayer/Worker/Master, создаёт отдельную
+случайную PostgreSQL database и Consumer Group, фиксирует input topic identity и
+start offsets, запускает полный D2 и сравнивает каждое поле Raw, Temporal,
+Evidence, parents, VoteSegments, RBSubspans и IDs с pinned V1. Comparator не
+вызывает detector. Счётчики и canonical stream SHA сохраняются в JSON.
+В конце удаляется только созданная этим запуском database; input topic и
+пользовательские volumes не удаляются. Стенд должен быть изолирован от других
+replays, поскольку input topic фиксирован контрактом.
+
+Первые полные D2 результаты находятся в `experiments/artifacts/p10-first-d2/` и
+`experiments/artifacts/p10-full-matrix/`. `elapsed_seconds` включает setup,
+проверку reference, replay, drain и comparator; это **не** отдельная latency
+обработки или транспорта. Для научного сравнения производительности использовать
+специальную методику P11 с processing timestamps, а не исторический event_time.

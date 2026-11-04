@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func Handler(master usecase.Master, log *slog.Logger) http.Handler {
@@ -59,6 +60,53 @@ func Handler(master usecase.Master, log *slog.Logger) http.Handler {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(events)
+	})
+	mux.HandleFunc("GET /v1/results", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		execution := q.Get("execution_id")
+		if !domain.ValidExecution(execution) {
+			http.Error(w, "execution UUID required", 400)
+			return
+		}
+		limit := 64
+		if q.Get("limit") != "" {
+			n, err := strconv.Atoi(q.Get("limit"))
+			if err != nil || n < 1 || n > 128 {
+				http.Error(w, "limit must be 1..128", 400)
+				return
+			}
+			limit = n
+		}
+		cursor := domain.ResultCursor{GroupID: q.Get("after_group")}
+		if q.Get("after_tick") != "" {
+			at, err := time.Parse(time.RFC3339Nano, q.Get("after_tick"))
+			if err != nil {
+				http.Error(w, "invalid after_tick", 400)
+				return
+			}
+			cursor.Tick = at.UTC()
+		}
+		page, err := master.Store.Results(r.Context(), execution, cursor, limit)
+		if err != nil {
+			http.Error(w, "results unavailable", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(page)
+	})
+	mux.HandleFunc("GET /v1/summary", func(w http.ResponseWriter, r *http.Request) {
+		execution := r.URL.Query().Get("execution_id")
+		if !domain.ValidExecution(execution) {
+			http.Error(w, "execution UUID required", 400)
+			return
+		}
+		summary, err := master.Store.Summary(r.Context(), execution)
+		if err != nil {
+			http.Error(w, "summary unavailable", 503)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(summary)
 	})
 	return mux
 }

@@ -12,6 +12,8 @@ type Store interface {
 	Identity(context.Context, string) (group.RBI2Identity, error)
 	Accept(context.Context, domain.Envelope) (bool, error)
 	Events(context.Context, string, string, string, int) ([]json.RawMessage, error)
+	Results(context.Context, string, domain.ResultCursor, int) (domain.ResultPage, error)
+	Summary(context.Context, string) (domain.Summary, error)
 }
 type Master struct{ Store Store }
 type Receipt struct {

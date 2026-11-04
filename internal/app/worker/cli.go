@@ -28,10 +28,13 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	profile := flags.String("profile-sha256", "", "trusted frozen profile SHA256")
 	source := flags.String("input-sha256", "", "prepared input SHA256 binding")
 	execution := flags.String("execution-id", "", "registered execution UUID")
+	ownerID := flags.String("owner-id", "", "unique process owner UUID (random by default)")
 	consumer := flags.String("consumer-group", "", "shared Kafka consumer group")
 	brokers := flags.String("kafka-brokers", "localhost:9092", "comma-separated Kafka seeds")
 	start := flags.String("start", analysis.NIRWindows()[1].Start.Format(time.RFC3339), "inclusive UTC run start")
 	end := flags.String("end", analysis.NIRWindows()[1].End.Format(time.RFC3339), "exclusive UTC run end")
+	diagnostics := flags.Bool("diagnostics", true, "durable local fragments for complete outside join; immutable execution contract")
+	groups := flags.Int("groups", 16, "scientific group universe 4/8/16")
 	delta := flags.Int("delta", 0, "frozen TTL: 0, 10, 30, 60")
 	lease := flags.Duration("lease-ttl", repo.DefaultLease, "SQL lease TTL (3..15s)")
 	register := flags.Bool("register-execution", false, "admin-only explicit run/execution registration, then exit")
@@ -76,7 +79,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	opts := group.GroupProcessorOptions{GroupID: "a01", Groups: 16, Window: w, DeltaSeconds: *delta, Binding: domain.InputBinding{ExecutionID: *execution, InputSHA256: *source, ProfileSHA256: *profile}}
+	opts := group.GroupProcessorOptions{GroupID: "a01", Groups: *groups, Window: w, DeltaSeconds: *delta, Binding: domain.InputBinding{ExecutionID: *execution, InputSHA256: *source, ProfileSHA256: *profile}}
 	p, err := group.NewGroupProcessor(bundle, opts)
 	if err != nil {
 		return err
@@ -109,7 +112,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("PostgreSQL pool unavailable")
 	}
 	defer pool.Close()
-	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output}
+	r := repo.Registration{Identity: snap.Identity, Binding: opts.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: *consumer, OutputTransport: *output, Diagnostics: *diagnostics}
 	if *register {
 		if err := json.Unmarshal([]byte(*offsets), &r.StartOffsets); err != nil {
 			return fmt.Errorf("16 explicit registration start offsets required")
@@ -127,5 +130,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return RunWithOutput(ctx, Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
+	return RunWithOutput(ctx, Config{Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
 }

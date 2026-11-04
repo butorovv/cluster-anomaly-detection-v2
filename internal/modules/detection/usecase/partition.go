@@ -27,7 +27,8 @@ type Checkpoint struct {
 
 type Transition struct {
 	Checkpoint Checkpoint
-	Result     group.GroupProcessorResult // local only; never a final Master group_result
+	Result     group.GroupProcessorResult   // local only; never a final Master group_result
+	Results    []group.GroupProcessorResult // completed ticks staged in this durable transition
 }
 
 type Partition struct {
@@ -142,7 +143,7 @@ func (p *Partition) Accept(offset int64, message domain.InputMessage) (*Transiti
 	if err != nil {
 		return nil, p.Fail(err)
 	}
-	p.pending = &Transition{Checkpoint: Checkpoint{Revision: p.revision + 1, NextOffset: p.readNext, LastTick: tick.Timestamp, Finalized: final, Snapshot: bytes, SHA256: SnapshotHash(bytes)}, Result: result}
+	p.pending = &Transition{Checkpoint: Checkpoint{Revision: p.revision + 1, NextOffset: p.readNext, LastTick: tick.Timestamp, Finalized: final, Snapshot: bytes, SHA256: SnapshotHash(bytes)}, Result: result, Results: []group.GroupProcessorResult{result}}
 	return p.pending, nil
 }
 

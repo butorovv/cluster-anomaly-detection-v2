@@ -41,7 +41,7 @@ func (s OutboxStore) Page(ctx context.Context, o domain.Owner, c domain.Cursor, 
 	return result, rows.Err()
 }
 func (s OutboxStore) Ack(ctx context.Context, o domain.Owner, id string) error {
-	_, err := s.DB.Exec(ctx, `SELECT cad_v2.ack_outbox($1::uuid,$2,$3::uuid,$4,$5)`, o.ExecutionID, o.GroupID, o.OwnerID, o.Epoch, id)
+	_, err := s.DB.Exec(ctx, `SELECT cad_v2.ack_delivery($1::uuid,$2,$3::uuid,$4,$5)`, o.ExecutionID, o.GroupID, o.OwnerID, o.Epoch, id)
 	return err
 }
 func (s OutboxStore) AckCursor(ctx context.Context, o domain.Owner, c domain.Cursor) error {
@@ -62,6 +62,9 @@ func (s MasterStore) PollCursor(ctx context.Context, execution, groupID string) 
 	return c, err
 }
 func (s MasterStore) acceptTx(ctx context.Context, tx pgx.Tx, e domain.Envelope) (bool, error) {
+	if e.Kind == "tick_fragment" {
+		return s.acceptFragmentTx(ctx, tx, e)
+	}
 	b, err := json.Marshal(e)
 	if err != nil {
 		return false, err

@@ -60,8 +60,8 @@ func NewOwnerID() (string, error) {
 }
 
 func New(cfg Config, store *repo.Store) (*Runner, error) {
-	if store == nil || store.DB == nil || cfg.ConsumerGroup == "" || cfg.Options.Groups != 16 || len(cfg.Broker.Seeds) == 0 || (cfg.Broker.Topic != "" && cfg.Broker.Topic != kafkainput.Topic) {
-		return nil, fmt.Errorf("Worker requires registered store, Kafka source and 16-group bundle")
+	if store == nil || store.DB == nil || cfg.ConsumerGroup == "" || (cfg.Options.Groups != 4 && cfg.Options.Groups != 8 && cfg.Options.Groups != 16) || len(cfg.Broker.Seeds) == 0 || (cfg.Broker.Topic != "" && cfg.Broker.Topic != kafkainput.Topic) {
+		return nil, fmt.Errorf("Worker requires registered store, Kafka source and 4/8/16-group bundle")
 	}
 	if cfg.Output != nil && (cfg.Output.ExecutionID != cfg.Options.Binding.ExecutionID || cfg.Output.Mode != store.Registration.OutputTransport) {
 		return nil, fmt.Errorf("dispatcher differs from registered execution transport")
@@ -140,6 +140,9 @@ func (r *Runner) revokeHook(ctx context.Context, ids []kafkainput.Identity) erro
 }
 
 func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.Position, error) {
+	if int(id.Partition) >= r.cfg.Options.Groups {
+		return kafkainput.Position{Identity: id, NextOffset: r.store.Registration.StartOffsets[strconv.Itoa(int(id.Partition))]}, nil
+	}
 	r.mu.Lock()
 	active, ok := r.assigned[id.Partition]
 	if r.closed || !ok || active != id {
@@ -215,6 +218,9 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 }
 
 func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.InputMessage) error {
+	if int(record.Partition) >= r.cfg.Options.Groups {
+		return nil
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	state := r.parts[record.Partition]

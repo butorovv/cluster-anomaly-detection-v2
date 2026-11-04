@@ -27,3 +27,4 @@
 .vscode/
 .DS_Store
 Thumbs.db
+/experiments/artifacts/**/bin/

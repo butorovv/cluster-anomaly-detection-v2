@@ -120,13 +120,13 @@ func Decode(b []byte) (Envelope, error) {
 	return e, Header(e)
 }
 func Header(e Envelope) error {
-	if e.SchemaVersion != 1 || !ValidExecution(e.ExecutionID) || !shaPattern.MatchString(e.RunID) || !shaPattern.MatchString(e.ConfigID) || len(e.MessageID) < 1 || len(e.MessageID) > 256 || e.Revision < 1 || !telemetry.OnGrid(e.EventTime) {
+	if (e.SchemaVersion != 1 && e.SchemaVersion != 2) || !ValidExecution(e.ExecutionID) || !shaPattern.MatchString(e.RunID) || !shaPattern.MatchString(e.ConfigID) || len(e.MessageID) < 1 || len(e.MessageID) > 256 || e.Revision < 1 || !telemetry.OnGrid(e.EventTime) {
 		return fmt.Errorf("invalid result identity/version/position")
 	}
 	if len(e.Payload) < 2 || e.Payload[0] != '{' {
 		return fmt.Errorf("result payload object required")
 	}
-	if e.Kind != "rbi2_event" && e.Kind != "group_result" {
+	if (e.SchemaVersion == 2 && e.Kind != "tick_fragment") || (e.SchemaVersion == 1 && e.Kind != "rbi2_event" && e.Kind != "group_result") {
 		return fmt.Errorf("unsupported result kind")
 	}
 	return nil
@@ -145,18 +145,8 @@ func Validate(e Envelope, id group.RBI2Identity) error {
 	if !groupOK || e.RunID != id.RunID || e.ConfigID != id.ConfigID || e.EventTime.Before(id.Window.Start) || e.EventTime.After(id.Window.End) {
 		return fmt.Errorf("result outside registered scientific execution")
 	}
-	if e.Kind == "group_result" {
-		var p GroupResult
-		if err := StrictJSON(e.Payload, &p); err != nil {
-			return err
-		}
-		if !e.Terminal || e.Revision != 1 || e.EventID != "" || !e.EventTime.Before(id.Window.End) || p.Raw.Group != e.GroupID || !p.Raw.Timestamp.Equal(e.EventTime) || p.Temporal.Group != e.GroupID || !p.Temporal.Timestamp.Equal(e.EventTime) || p.Temporal.DeltaSeconds != id.DeltaSeconds || p.Raw.IF.OutsideGroups == nil {
-			return fmt.Errorf("final complete diagnostic group_result required")
-		}
-		if p.Evidence != nil && (p.Evidence.RunID != e.RunID || p.Evidence.Raw.IF.OutsideGroups == nil || p.Evidence.Raw.Group != e.GroupID || !p.Evidence.Raw.Timestamp.Equal(e.EventTime)) {
-			return fmt.Errorf("incompatible evidence binding")
-		}
-		return nil
+	if e.Kind == "group_result" || e.Kind == "tick_fragment" {
+		return validateTick(e, id, e.Kind == "tick_fragment")
 	}
 	var p group.RBI2Event
 	if err := StrictJSON(e.Payload, &p); err != nil {

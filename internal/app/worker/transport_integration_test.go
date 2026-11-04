@@ -225,7 +225,8 @@ func restrictedMaster(t *testing.T, r *workerRig) repo.MasterStore {
 	ctx := context.Background()
 	role := "p09_master_" + strings.ReplaceAll(r.fixture.Options.Binding.ExecutionID, "-", "")
 	quoted := pgx.Identifier{role}.Sanitize()
-	sql := `CREATE ROLE ` + quoted + ` NOLOGIN; GRANT USAGE ON SCHEMA cad_v2 TO ` + quoted + `; GRANT SELECT ON cad_v2.runs,cad_v2.executions,cad_v2.execution_partitions,cad_v2.master_inbox,cad_v2.master_events,cad_v2.master_results,cad_v2.worker_endpoints,cad_v2.partition_ownership,cad_v2.master_poll_cursors,cad_v2.result_topic_bindings,cad_v2.result_consumer_offsets TO ` + quoted + `; GRANT EXECUTE ON FUNCTION cad_v2.accept_result(uuid,jsonb),cad_v2.advance_poll_cursor(uuid,text,bigint,integer),cad_v2.bind_result_source(uuid,text,text,text,jsonb),cad_v2.advance_result_offset(uuid,text,integer,bigint,bigint) TO ` + quoted
+	sql := `CREATE ROLE ` + quoted + ` NOLOGIN; GRANT USAGE ON SCHEMA cad_v2 TO ` + quoted + `; GRANT SELECT ON cad_v2.runs,cad_v2.executions,cad_v2.execution_partitions,cad_v2.master_inbox,cad_v2.master_events,cad_v2.master_results,cad_v2.worker_endpoints,cad_v2.partition_ownership,cad_v2.master_poll_cursors,cad_v2.result_topic_bindings,cad_v2.result_consumer_offsets,cad_v2.master_tick_fragments,cad_v2.master_tick_joins TO ` + quoted + `; GRANT EXECUTE ON FUNCTION cad_v2.accept_result(uuid,jsonb),cad_v2.advance_poll_cursor(uuid,text,bigint,integer),cad_v2.bind_result_source(uuid,text,text,text,jsonb),cad_v2.advance_result_offset(uuid,text,integer,bigint,bigint),cad_v2.accept_tick_fragment(uuid,jsonb) TO ` + quoted
+	sql += "; GRANT INSERT ON cad_v2.master_tick_joins TO " + quoted
 	if _, err := r.pool.Exec(ctx, sql); err != nil {
 		t.Fatal(err)
 	}

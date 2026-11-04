@@ -1,0 +1,12 @@
+{
+ "schema_version":1,
+ "test":"TestWorkerThreeTransportParityAndRestart",
+ "command":"go test -race ./internal/app/worker -run ^TestWorkerThreeTransportParityAndRestart$ -count=1 -v -timeout 5m",
+ "status":"PASS", "elapsed_seconds":23.422,
+ "dataset":"shared synthetic frozen fixture, 16 groups, 6 ticks, delta30",
+ "modes":[{"mode":"polling","terminal_events":32,"seconds":8.10},{"mode":"http_push","terminal_events":32,"seconds":6.88},{"mode":"kafka","terminal_events":32,"seconds":7.19}],
+ "canonical_payload_hashes_equal":true,
+ "master_sql_outbox_select":"DENIED",
+ "faults":["lost HTTP ACK after durable commit","Master/results consumer restart","1 to 2 to 1 Worker rebalance"],
+ "scientific_d2_golden":"NOT_RUN_BY_THIS_TEST"
+}

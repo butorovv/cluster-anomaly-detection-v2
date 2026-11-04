@@ -49,7 +49,7 @@ func workerIntegration(t *testing.T, delta int) *workerRig {
 func workerIntegrationMode(t *testing.T, delta int, mode string) *workerRig {
 	return workerIntegrationFixture(t, delta, mode, nil)
 }
-func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture) *workerRig {
+func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *workerfixture.Fixture, diagnostics ...bool) *workerRig {
 	t.Helper()
 	if os.Getenv("P07_WORKER_INTEGRATION") != "1" {
 		t.Skip("opt-in P07_WORKER_INTEGRATION=1 requires isolated real Kafka/PostgreSQL")
@@ -138,7 +138,7 @@ func workerIntegrationFixture(t *testing.T, delta int, mode string, frozen *work
 	}
 	_ = migration.Close(ctx)
 	consumer := "p07-" + execution
-	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, StartOffsets: map[string]int64{}}
+	registration := repo.Registration{Identity: snap.Identity, Binding: f.Options.Binding, ClusterID: cluster, TopicID: topic, ConsumerGroup: consumer, OutputTransport: mode, Diagnostics: len(diagnostics) > 0 && diagnostics[0], StartOffsets: map[string]int64{}}
 	for i := int32(0); i < 16; i++ {
 		v := ends[kafkainput.Topic][i]
 		if v.Err != nil {
@@ -205,7 +205,7 @@ func (r *workerRig) waitRevision(t *testing.T, revision int64) {
 	waitWorker(t, 40*time.Second, func() bool {
 		var count int
 		err := r.pool.QueryRow(context.Background(), "SELECT count(*) FROM cad_v2.group_checkpoints WHERE checkpoint_revision=$1", revision).Scan(&count)
-		return err == nil && count == 16
+		return err == nil && count == r.fixture.Options.Groups
 	})
 }
 
@@ -247,7 +247,7 @@ func (r *workerRig) sendTick(t *testing.T, tick int) {
 func (r *workerRig) expectedEvents(t *testing.T) map[string]group.RBI2Event {
 	t.Helper()
 	want := map[string]group.RBI2Event{}
-	for g := 1; g <= 16; g++ {
+	for g := 1; g <= r.fixture.Options.Groups; g++ {
 		opts := r.fixture.Options
 		opts.GroupID = fmt.Sprintf("a%02d", g)
 		p, err := group.NewGroupProcessor(r.fixture.Bundle, opts)
@@ -303,7 +303,7 @@ func (r *workerRig) assertEvents(t *testing.T) {
 	t.Helper()
 	want := r.expectedEvents(t)
 	got := map[string]group.RBI2Event{}
-	for g := 1; g <= 16; g++ {
+	for g := 1; g <= r.fixture.Options.Groups; g++ {
 		outputs, err := r.store.Pending(context.Background(), fmt.Sprintf("a%02d", g))
 		if err != nil {
 			t.Fatal(err)
@@ -376,7 +376,7 @@ func TestWorkerKafkaProcessCrashAndPartialReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	options := rig.fixture.Options
-	cmd := exec.Command(binary, "--assets", rig.fixture.Root, "--profile-sha256", options.Binding.ProfileSHA256, "--input-sha256", options.Binding.InputSHA256, "--execution-id", options.Binding.ExecutionID, "--consumer-group", rig.group, "--kafka-brokers", strings.Join(rig.broker.Seeds, ","), "--start", options.Window.Start.Format(time.RFC3339), "--end", options.Window.End.Format(time.RFC3339), "--delta", "30", "--lease-ttl", "3s", "--log-level", "debug")
+	cmd := exec.Command(binary, "--assets", rig.fixture.Root, "--profile-sha256", options.Binding.ProfileSHA256, "--input-sha256", options.Binding.InputSHA256, "--execution-id", options.Binding.ExecutionID, "--consumer-group", rig.group, "--kafka-brokers", strings.Join(rig.broker.Seeds, ","), "--start", options.Window.Start.Format(time.RFC3339), "--end", options.Window.End.Format(time.RFC3339), "--delta", "30", "--lease-ttl", "3s", "--log-level", "debug", "--diagnostics=false")
 	cmd.Env = append(os.Environ(), "WORKER_DATABASE_URL="+rig.dsn)
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
