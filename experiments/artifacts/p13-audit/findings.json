@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "findings": [
+    {
+      "id": "A11",
+      "severity": "MEDIUM_REPRODUCIBILITY",
+      "status": "FIXED",
+      "problem": "Windows-derived report/CSV CRLF would be normalized by Git after artifact hashes were recorded",
+      "fix": "Explicit LF writers, normalize only audit-produced files, verify SHA against staged Git blobs before publication."
+    },
+    {
+      "id": "A09",
+      "severity": "MEDIUM_MEASUREMENT",
+      "status": "FIXED",
+      "problem": "Retained partition Restore kept discarded RAM-tail timing buffers",
+      "fix": "Clear tick clocks and batchTimings after successful Restore. Real-SQL regression: before fix 4 traces instead of 3; after fix 3 traces, 3 fragments, next_offset=56, exact continuous mathematical snapshot. All six healthy controls had 16 initial restores only and were unaffected."
+    },
+    {
+      "id": "A10",
+      "severity": "LOW_API",
+      "status": "FIXED",
+      "problem": "GET /v1/events returned HTTP 400 on unavailable storage",
+      "fix": "Validate query separately and report unavailable storage as 503; closed-pool regression verifies 400/503 distinction."
+    },
+    {
+      "id": "A01",
+      "severity": "HIGH_EVIDENCE",
+      "status": "FIXED",
+      "problem": "Historical input lag falsely measured as zero: prefix length mismatch",
+      "fix": "HasPrefix aggregation + nonzero regression; historical CSV zeros removed, original JSON preserved with invalidity overlay; reanalysis cannot certify legacy aggregates."
+    },
+    {
+      "id": "A02",
+      "severity": "HIGH_PROVENANCE",
+      "status": "FIXED_FOR_NEW_RUNS",
+      "problem": "Resume ignored global input/golden config and build overwrote binaries",
+      "fix": "Verify actual SHA and config binding, lazy build, immutable bin/build-* with exact paths+SHA",
+      "remaining": "Legacy binary paths not recorded; some old binaries cannot be revalidated and are explicitly NOT_VERIFIED."
+    },
+    {
+      "id": "A03",
+      "severity": "MEDIUM",
+      "status": "FIXED",
+      "problem": "Timing analyzer could accept partial tick traces",
+      "fix": "Require count == independent comparison raw rows."
+    },
+    {
+      "id": "A04",
+      "severity": "MEDIUM_RESOURCE",
+      "status": "FIXED",
+      "problem": "Owned HTTP idle pools not closed; output sender leaked on input startup failure",
+      "fix": "Close owned HTTP transport; dispatcher Close once also covers startup failure; targeted socket/startup/race tests."
+    },
+    {
+      "id": "A05",
+      "severity": "MEDIUM_EXPERIMENT",
+      "status": "DOCUMENTED_AND_CONTROLLED",
+      "problem": "Historical transport concurrency differs (Push concurrent vs Kafka/Polling sequential)",
+      "fix": "Explicit combined queue semantics, rehashed real traces, two-trial one-Worker control with sequential intake; no performance optimization of scientific/checkpoint pipeline."
+    },
+    {
+      "id": "A06",
+      "severity": "MEDIUM_STATISTICAL",
+      "status": "PARTIAL",
+      "problem": "Single-trial scaling, single-host conditions, limited transport replications",
+      "fix": "Six matched control runs and observed ranges, no fabricated CI; KR16 remains PARTIAL."
+    },
+    {
+      "id": "A07",
+      "severity": "LOW_TEST_COVERAGE",
+      "status": "CLOSED",
+      "problem": "Upgrade path did not explicitly seed V5 durable progress; delta30 crash did not explicitly assert held historical witness",
+      "fix": "Real V5→V7 exact-row preservation test; real process-kill assertion of pre-crash historical positive witness."
+    },
+    {
+      "id": "A08",
+      "severity": "LOW_ENVIRONMENT",
+      "status": "RECHECKED",
+      "problem": "Two diagnostic completion timeouts under initial concurrent audit load",
+      "fix": "Preserved initial FAIL; unchanged isolated tests and full final Worker race PASS; checks not relaxed."
+    }
+  ],
+  "unresolved_functional_data_loss_or_mathematical_mismatch": []
+}

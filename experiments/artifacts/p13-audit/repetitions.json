@@ -1,0 +1,340 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "source_matrix": "experiments\\artifacts\\p13-repeated\\matrix.json",
+  "source_matrix_sha256": "6b5b2a74f522b499af6b578a9b125806a3991a13d4d7e11027295b9bf84d3583",
+  "matched_configuration": {
+    "workers": 1,
+    "groups": 16,
+    "delta": 0,
+    "cadence": 3,
+    "poll_ms": 100,
+    "replay_speed": 0
+  },
+  "source_commit": "0cb8ea6083264a3023605460e1ee1ac9e0d4d7e6",
+  "run_id": "845af471d9ec5b8a503f09bb1395486cbe1658d8cb9786d94f1d6b4e6e5688ae",
+  "config_id": "b44f95bee95d00b908b30de77d89d8ae56c2a6a8a40d9d8fc8a508413b17da87",
+  "canonical_payload_sha256": {
+    "events": "da2cc69c8c02b9e62e7aece888c78f3a08a216888a8c689b5291965c4bb1fe60",
+    "evidence": "91403d489576acc01ff7f2308d41b7881f7d3d3279cee408b049a8527280e1ad",
+    "raw": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027",
+    "temporal": "70436de2a1ff0f40e2b22f85d41ae9c12aabca2e6d3abf15fd8f1425e14582f7"
+  },
+  "trials": [
+    {
+      "scenario": "repeat-1-http_push",
+      "mode": "http_push",
+      "throughput": 148.85034063321547,
+      "transport_p95_seconds": 0.0007136,
+      "e2e_p95_seconds": 202.271304,
+      "compute_p95_seconds": 0.0005816,
+      "durability_p95_seconds": 0.0193955,
+      "worker_cpu_seconds": 115.8125,
+      "master_cpu_seconds": 116.21875,
+      "worker_peak_rss_bytes": 92790784,
+      "master_peak_rss_bytes": 81375232,
+      "sampled_input_lag_max": 279321,
+      "sampled_outbox_backlog_max": 30908,
+      "replay_seconds_including_startup": 106.1734073,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 140,
+        "Client/ClientRead": 2,
+        "IO/DataFileExtend": 2,
+        "IO/WalInitSync": 6,
+        "IO/WalWrite": 24,
+        "LWLock/BufferContent": 1,
+        "LWLock/WALWrite": 2,
+        "Lock/transactionid": 42,
+        "Timeout/VacuumDelay": 20
+      },
+      "postgres_sample_count": 313,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {}
+    },
+    {
+      "scenario": "repeat-1-polling",
+      "mode": "polling",
+      "throughput": 182.72798143844088,
+      "transport_p95_seconds": 0.3970873,
+      "e2e_p95_seconds": 139.0820572,
+      "compute_p95_seconds": 0.0005791,
+      "durability_p95_seconds": 0.0235517,
+      "worker_cpu_seconds": 103.484375,
+      "master_cpu_seconds": 132.796875,
+      "worker_peak_rss_bytes": 92106752,
+      "master_peak_rss_bytes": 24793088,
+      "sampled_input_lag_max": 345155,
+      "sampled_outbox_backlog_max": 16458,
+      "replay_seconds_including_startup": 115.7919255,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 132,
+        "Client/ClientRead": 2,
+        "IO/DataFileWrite": 1,
+        "IO/WalWrite": 18,
+        "LWLock/WALWrite": 1,
+        "Lock/transactionid": 48,
+        "Timeout/VacuumDelay": 16
+      },
+      "postgres_sample_count": 257,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {}
+    },
+    {
+      "scenario": "repeat-1-kafka",
+      "mode": "kafka",
+      "throughput": 131.2254144305692,
+      "transport_p95_seconds": 0.9253967,
+      "e2e_p95_seconds": 233.0807712,
+      "compute_p95_seconds": 0.0005705,
+      "durability_p95_seconds": 0.0245722,
+      "worker_cpu_seconds": 147.84375,
+      "master_cpu_seconds": 153.140625,
+      "worker_peak_rss_bytes": 91308032,
+      "master_peak_rss_bytes": 29392896,
+      "sampled_input_lag_max": 326250,
+      "sampled_outbox_backlog_max": 30807,
+      "replay_seconds_including_startup": 116.0135405,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 226,
+        "Client/ClientRead": 1,
+        "Client/ClientWrite": 1,
+        "IO/DataFileExtend": 1,
+        "IO/WalWrite": 37,
+        "LWLock/WALWrite": 16,
+        "Lock/transactionid": 42,
+        "Timeout/VacuumDelay": 18
+      },
+      "postgres_sample_count": 356,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {
+        "results_kafka_aux_commit": {
+          "count": 11593,
+          "mean_seconds": 0.006830874907271624,
+          "max_seconds": 0.0630007
+        },
+        "results_kafka_create_to_poll": {
+          "count": 46830,
+          "mean_seconds": 0.21438844149690378,
+          "max_seconds": 3.3439285
+        },
+        "results_kafka_identity_check": {
+          "count": 46830,
+          "mean_seconds": 0.004146818893871463,
+          "max_seconds": 0.1486321
+        },
+        "results_kafka_intake_service": {
+          "count": 46830,
+          "mean_seconds": 0.005448170770873396,
+          "max_seconds": 1.639302
+        },
+        "results_kafka_poll_to_intake": {
+          "count": 46830,
+          "mean_seconds": 0.12642902315396135,
+          "max_seconds": 2.9712871
+        },
+        "results_kafka_poll_wait": {
+          "count": 11594,
+          "mean_seconds": 0.0010893788425047424,
+          "max_seconds": 3.3287829
+        },
+        "results_kafka_publish_ack": {
+          "count": 46830,
+          "mean_seconds": 0.0015842384368994272,
+          "max_seconds": 0.0422967
+        }
+      }
+    },
+    {
+      "scenario": "repeat-2-kafka",
+      "mode": "kafka",
+      "throughput": 130.63736659685918,
+      "transport_p95_seconds": 0.7688672,
+      "e2e_p95_seconds": 232.2907555,
+      "compute_p95_seconds": 0.0005797,
+      "durability_p95_seconds": 0.0239601,
+      "worker_cpu_seconds": 151.15625,
+      "master_cpu_seconds": 157.671875,
+      "worker_peak_rss_bytes": 92401664,
+      "master_peak_rss_bytes": 29196288,
+      "sampled_input_lag_max": 328567,
+      "sampled_outbox_backlog_max": 30243,
+      "replay_seconds_including_startup": 118.8512452,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 188,
+        "Client/ClientRead": 2,
+        "IO/DataFileExtend": 1,
+        "IO/WalWrite": 32,
+        "LWLock/WALWrite": 10,
+        "Lock/transactionid": 25,
+        "Timeout/VacuumDelay": 15
+      },
+      "postgres_sample_count": 357,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {
+        "results_kafka_aux_commit": {
+          "count": 11830,
+          "mean_seconds": 0.006772583296703286,
+          "max_seconds": 0.1014069
+        },
+        "results_kafka_create_to_poll": {
+          "count": 46830,
+          "mean_seconds": 0.19328897466154157,
+          "max_seconds": 1.6114359999999999
+        },
+        "results_kafka_identity_check": {
+          "count": 46830,
+          "mean_seconds": 0.004151785923553273,
+          "max_seconds": 0.1038592
+        },
+        "results_kafka_intake_service": {
+          "count": 46830,
+          "mean_seconds": 0.005471567204783277,
+          "max_seconds": 0.1853878
+        },
+        "results_kafka_poll_to_intake": {
+          "count": 46830,
+          "mean_seconds": 0.09178307849882536,
+          "max_seconds": 1.3793538
+        },
+        "results_kafka_poll_wait": {
+          "count": 11830,
+          "mean_seconds": 0.0010048054860524065,
+          "max_seconds": 3.2920161
+        },
+        "results_kafka_publish_ack": {
+          "count": 46830,
+          "mean_seconds": 0.001653763833013018,
+          "max_seconds": 0.2546254
+        }
+      }
+    },
+    {
+      "scenario": "repeat-2-polling",
+      "mode": "polling",
+      "throughput": 172.32832195941225,
+      "transport_p95_seconds": 0.4874318,
+      "e2e_p95_seconds": 142.8949026,
+      "compute_p95_seconds": 0.0005921,
+      "durability_p95_seconds": 0.0256789,
+      "worker_cpu_seconds": 106.5,
+      "master_cpu_seconds": 132.71875,
+      "worker_peak_rss_bytes": 90902528,
+      "master_peak_rss_bytes": 25079808,
+      "sampled_input_lag_max": 342210,
+      "sampled_outbox_backlog_max": 16989,
+      "replay_seconds_including_startup": 129.2789003,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 136,
+        "Client/ClientRead": 1,
+        "IO/DataFileExtend": 6,
+        "IO/DataFileRead": 1,
+        "IO/WalWrite": 31,
+        "LWLock/WALWrite": 1,
+        "Lock/transactionid": 71,
+        "Timeout/VacuumDelay": 15
+      },
+      "postgres_sample_count": 273,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {}
+    },
+    {
+      "scenario": "repeat-2-http_push",
+      "mode": "http_push",
+      "throughput": 142.86257244097783,
+      "transport_p95_seconds": 0.0007146,
+      "e2e_p95_seconds": 208.2993647,
+      "compute_p95_seconds": 0.0005849,
+      "durability_p95_seconds": 0.0216446,
+      "worker_cpu_seconds": 119.6875,
+      "master_cpu_seconds": 116.5,
+      "worker_peak_rss_bytes": 91607040,
+      "master_peak_rss_bytes": 22892544,
+      "sampled_input_lag_max": 290700,
+      "sampled_outbox_backlog_max": 31009,
+      "replay_seconds_including_startup": 114.4823465,
+      "postgres_wait_samples": {
+        "CPU/ACTIVE": 131,
+        "Client/ClientWrite": 1,
+        "IO/DataFileExtend": 4,
+        "IO/DataFileRead": 3,
+        "IO/WalWrite": 52,
+        "LWLock/WALWrite": 5,
+        "Lock/transactionid": 33,
+        "Timeout/VacuumDelay": 15
+      },
+      "postgres_sample_count": 327,
+      "retries": 0,
+      "duplicates": 0,
+      "kafka_stages": {}
+    }
+  ],
+  "summary": {
+    "http_push": {
+      "trials": 2,
+      "throughput": {
+        "min": 142.86257244097783,
+        "mean": 145.85645653709665,
+        "max": 148.85034063321547
+      },
+      "transport_p95_seconds": {
+        "min": 0.0007136,
+        "mean": 0.0007141000000000001,
+        "max": 0.0007146
+      },
+      "e2e_p95_seconds": {
+        "min": 202.271304,
+        "mean": 205.28533435,
+        "max": 208.2993647
+      }
+    },
+    "polling": {
+      "trials": 2,
+      "throughput": {
+        "min": 172.32832195941225,
+        "mean": 177.52815169892656,
+        "max": 182.72798143844088
+      },
+      "transport_p95_seconds": {
+        "min": 0.3970873,
+        "mean": 0.44225955,
+        "max": 0.4874318
+      },
+      "e2e_p95_seconds": {
+        "min": 139.0820572,
+        "mean": 140.98847990000002,
+        "max": 142.8949026
+      }
+    },
+    "kafka": {
+      "trials": 2,
+      "throughput": {
+        "min": 130.63736659685918,
+        "mean": 130.93139051371418,
+        "max": 131.2254144305692
+      },
+      "transport_p95_seconds": {
+        "min": 0.7688672,
+        "mean": 0.84713195,
+        "max": 0.9253967
+      },
+      "e2e_p95_seconds": {
+        "min": 232.2907555,
+        "mean": 232.68576335,
+        "max": 233.0807712
+      }
+    }
+  },
+  "limitations": [
+    "Two trials, one host; no robust confidence intervals.",
+    "One brief Python historical trace audit overlapped late drain of first Push trial; builds and integration suites finished before all controls.",
+    "Burst replay speed=0 is matched, actual source arrival rates vary under load; these are saturation/queue observations, not fixed offered-rate network latency.",
+    "PostgreSQL wait samples are backend observations, not exact durations.",
+    "CreateTime-to-poll combines producer transit, broker and client prefetch.",
+    "New one-Worker results must not be pooled with historical four-Worker trials."
+  ]
+}

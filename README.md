@@ -438,7 +438,7 @@ CPU valid-core count и preprocessing provenance. Пропуск coordinate со
 или автоматической миграцией. Дизайн архивного provenance отдельно согласовать;
 immutable manifests/hashes исходных assets сохраняют научную воспроизводимость.
 
-### AnnotateOutside: проект следующего межгруппового join
+### AnnotateOutside: межгрупповой diagnostic join
 
 Код: `group.Evaluate` в `offline.go` сначала вычисляет локальные Raw всех групп,
 затем `AnnotateOutside(rows)`; `rbi2_offline.go` вызывает Journal после аннотации.
@@ -499,8 +499,9 @@ cmd/worker → internal/app/worker.Runner
 
 `detection/usecase` не импортирует Kafka/pgx. `Partition` последовательно принимает
 сообщения с точными offsets, проверяет binding/order через существующий assembler
-и возвращает `Transition` только после complete marker. Результат каждого tick
-доступен в `Transition.Result`, но Raw/Evidence не публикуются как окончательные
+и возвращает `Transition` только после complete marker. Результаты batch доступны
+в `Transition.Results`; `Transition.Result.Events` объединяет закрытые events
+batch. Raw/Evidence не публикуются Worker как окончательные
 `group_result`: outside diagnostics ещё не вычислены. Терминальные `RBI2Event`
 сохраняются целиком, с существующими научными RunID/ConfigID/EventID.
 
@@ -1037,3 +1038,177 @@ smoke; defaults — полное D2. Image собирает только bootstr
 на спокойном стенде и отдельная межхостовая сеть. Single-host таблицы и ограничения
 clock/network следует сохранить в выводах. Статистическая аномальность не
 устанавливает аппаратную причину; физическая диагностика здесь не заявляется.
+
+## P13: независимый технический аудит
+
+Аудит начат от опубликованного `de44b65850063782ff86493e8c9dede1b6a91573`.
+P08–P12 ещё не были слиты в main, поэтому изменения аудита продолжают ту же
+ветку. Frozen scientific packages, SQL V1–V5 и генеральное ТЗ не изменяются.
+Результаты аудита сохраняются в `experiments/artifacts/p13-audit/`.
+
+### Input и независимый golden
+
+`summit-D1-pilot/D1.parquet` — имя утверждённого prepared **полного дня**:
+2 488 320 records с 00:00:00 до 23:59:50 UTC. Научное окно D2 выбирается отдельно:
+`2022-01-18T08:00:00Z <= timestamp < 2022-01-18T16:00:00Z`.
+Независимый Arrow reader фактически прочитал файл с утверждённым SHA
+`cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7`
+и подтвердил 829 440 records, 46 080 group ticks, 51 840 records каждой группы,
+первую/последнюю выбранные записи 08:00:00/15:59:50. На реальном D2 нет partial,
+empty или invalid ticks; эти случаи проверяются отдельными synthetic integration
+fixtures. Имя файла не означает повторное воспроизведение training window.
+
+Повторный P03 real acceptance сравнил V2 с отдельным чистым scientific V1 pin
+для всех δ0/10/30/60 по каждому полю и каноническим байтам. Отдельно проверены
+оригинальные исследовательские δ0 значения и exact float bits входного pipeline.
+Saved audit перечитал SHA всех 12 V1 golden-наборов (4/8/16 × четыре δ), заново
+получил их canonical hashes и сопоставил с 40 сохранёнными SQL comparator PASS.
+Это проверка provenance старых SQL comparisons, не повторное чтение удалённых
+экспериментальных databases. У старых reports binary SHA есть, но исторический
+build path не сохранялся и мог быть перезаписан; его повторная проверка отдельно
+помечена `NOT_VERIFIED`, без подмены новым binary.
+
+```powershell
+# Python 3.12 / pyarrow 24.0.0 использованы при аудите входа.
+python experiments/audit_input.py --assets $env:ASSETS_ROOT --output .cache/input-audit-new.json
+go run ./experiments/runner --audit-saved experiments/artifacts --golden-root $env:V1_GOLDEN_ROOT --golden-manifest experiments/artifacts/v1-generated-golden.json --audit-output .cache/saved-audit-new.json
+python experiments/audit_measurements.py --run experiments/artifacts/p11-measured/transport-w4-c3-kafka.json --output .cache/latency-audit-new.json
+```
+
+### Исправления качества измерений и ресурсов
+
+В P11 sampler сравнивал 18-символьный prefix с 19-символьной строкой.
+Из-за этого **все исторические input Kafka lag=0 не подтверждены**. Они не
+означают отсутствие lag. P13 исправляет aggregation, проверяет nonzero gauges
+regression-тестом и добавляет `input_kafka_lag_status`. Новые CSV оставляют старое
+значение пустым с `NOT_VERIFIED_LEGACY_SAMPLER`; исходные JSON сохраняются как
+историческое свидетельство. Timing analysis также отвергает неполные traces.
+
+`--resume` теперь связывает PASS с фактическими input/profile SHA, общими
+параметрами стенда и SHA golden manifest. Проверяются reference и сохранённые
+binaries. Сборка запускается только для новых сценариев, в отдельную директорию
+`bin/build-*`, не перезаписывая старые executable. Legacy reports без такого
+binding следует проверять через `--audit-saved`, а не автоматически переигрывать.
+Saved PASS всегда описывает первоначальный execution, не запуск текущего кода.
+
+HTTP sender и Poller закрывают собственные idle connection pools при shutdown;
+отдельный socket regression подтверждает закрытие. V5→V7 upgrade проверяется
+на существующих execution/checkpoint/outbox/Master rows: все исходные строки
+сохраняются точно, migrations повторно идемпотентны, outbox доступен после upgrade.
+
+### Почему transport и E2E latency велики
+
+`latency-decomposition.json` заново связывает реальные worker/master traces.
+Для каждого tick сумма последовательных границ от свежего Kafka CreateTime до
+финального join ACK точно восстанавливает E2E; исторический Summit event_time в
+вычитаниях не участвует. Квантили отдельных компонентов складывать нельзя.
+
+В старом Kafka замере 46 830 сообщений последовательно проходили Master intake.
+Сумма intake→commit 256.424 s заняла 95.3% интервала 269.079 s; максимум 38 154
+отправленных сообщения ещё не вошли в intake. Следовательно, 184.105 s p95
+не являются broker/network RTT. Старые traces не отделяют broker/pre-fetch queue
+от очереди внутри возвращённого PollRecords batch: эти компоненты `NOT_MEASURED`.
+Новая instrumentation отдельно измеряет producer identity check, publish ACK,
+CreateTime→PollRecords return, PollRecords return→intake, intake service и
+вспомогательный Kafka commit. CreateTime→poll всё ещё включает producer transit,
+broker и franz-go prefetch; это не чистое измерение broker queue.
+
+При Push/4 Worker p95 durable ACK→send составляет 109.453 s, source→durable
+27.922 s. Очередь durable outbox объясняет большой E2E при compute <1 ms.
+Небольшое отрицательное ACK→send допустимо: outbox виден после server commit
+раньше, чем input handler получил COMMIT ACK; это сохранённое перекрытие границ.
+
+При росте Push с 4 до 16 Worker средний intake→commit вырос с 12.456 до
+56.731 ms, sampled backlog — с 34 555 до 38 308, CPU Worker — с 122.375 до
+210.906 s, throughput снизился. V7 действительно сериализует join по execution
+порядком SQL locks. Это подтверждает наличие последовательной границы и рост
+contention; точные исторические PostgreSQL lock-wait durations не измерялись.
+P13 добавляет 1 Hz `pg_stat_activity` wait-event samples: counts — наблюдения
+активных backend, а не точные секунды lock wait.
+
+Для проверки транспортов с одинаковой последовательной intake concurrency
+выполнены два trial на режим при одном Worker, 16 группах, δ0, cadence=3,
+общих моделях/payload/resources и burst replay. Используется
+`experiments/configs/p13-repeated.json`; каждый запуск проходит full-D2 comparator.
+Это отдельный контроль, его throughput нельзя смешивать со старым 4-Worker
+замером. Два trial не дают надёжного confidence interval и не заменяют повторные
+scaling эксперименты на выделенном межхостовом стенде.
+
+```powershell
+# Для чистого checkout сначала задать env из P10 и сгенерировать pinned V1 golden.
+# Сохранённые в Git PASS не являются новым запуском на новом стенде.
+$auditConfig = Get-Content experiments/configs/p13-repeated.json -Raw | ConvertFrom-Json
+$auditConfig.output = '.cache/p13-runs-new'
+$auditConfig.golden_manifest = '.cache/golden-new-manifest.json'
+$auditConfig | ConvertTo-Json -Depth 20 | Set-Content .cache/p13-config-new.json -Encoding utf8NoBOM
+go run ./experiments/runner --config .cache/p13-config-new.json
+# Только для продолжения ЭТОГО output с сохранёнными локальными binaries:
+go run ./experiments/runner --config .cache/p13-config-new.json --resume
+```
+
+Все шесть контрольных запусков дали точное full-D2 совпадение с pinned V1:
+46 080 Raw/Temporal ticks, 1 284 positive/Evidence, 750 parents, неизменные IDs,
+VoteSegments/RBSubspans и canonical hashes. Вместе с прежними сохранёнными PASS
+подтверждены 46 полных distributed запусков. Это шесть новых измерительных
+контролей, а не повторение всей прежней матрицы.
+
+| Транспорт, 1 Worker/cadence=3, n=2 | Наблюдаемый throughput, ticks/s | Transport p95 | E2E p95 |
+|---|---:|---:|---:|
+| HTTP Push | 142.86–148.85 | 0.714 ms | 202.27–208.30 s |
+| Polling 100 ms | 172.33–182.73 | 397.09–487.43 ms | 139.08–142.89 s |
+| Kafka | 130.64–131.23 | 768.87–925.40 ms | 232.29–233.08 s |
+
+JSON, точные значения каждого trial и график наблюдаемых диапазонов:
+`p13-audit/repetitions.json` и `repetitions.png`. Источники —
+`experiments/artifacts/p13-repeated/matrix.json`, individual reports и resource
+samples; большие logs/binaries остаются вне Git. Общие scientific IDs, hashes,
+binary/configuration SHA и размеры payload проверяются перед сравнением:
+
+```powershell
+python experiments/summarize_repetitions.py --matrix experiments/artifacts/p13-repeated/matrix.json --output .cache/repetitions-new.json
+```
+
+Все 11 исторических measured reports независимо пересчитаны из traces и resource
+samples: p50/p95/p99, throughput, CPU/RSS, backlog и counters совпали. Исправленный
+CSV проверен против JSON, включая speedup/efficiency; четыре исходных графика
+побайтно совпали с повторной генерацией. Доказательства:
+`p13-audit/verified-all-historical-measurements.json` и `derived-artifacts.json`.
+Воспроизведение 46 saved comparisons с 12 V1 наборами и rehash шести новых binaries
+сохранено в `p13-audit/current-saved-parity.json`.
+
+В Kafka controls средний publish ACK 1.584/1.654 ms, identity check 4.147/4.152 ms,
+CreateTime→poll 214.39/193.29 ms, poll→intake 126.43/91.78 ms, intake service
+5.448/5.472 ms. Вспомогательные Kafka commits выполнялись 11 593/11 830 раз
+со средним 6.831/6.773 ms: при фактическом batch около четырёх records их overhead
+заметен. Ограничение `PollRecords(...,128)` задаёт максимум, не гарантированный
+размер batch. SQL output progress по-прежнему фиксируется на каждое сообщение.
+Эти интервалы перекрываются; publish ACK нельзя добавлять к CreateTime→poll как
+ещё один непересекающийся этап. Оптимизация consumer/SQL delivery в P13 не вводилась.
+
+Новые sampled input lag максимумы ненулевые; PostgreSQL samples наблюдали
+`Lock/transactionid` и I/O waits. Времена ожидания отдельных SQL locks по таким
+samples точно восстановить нельзя. Первый Push control частично пересёкся с
+короткой Python-проверкой исторических traces; builds/integration suites к началу
+controls были завершены. Burst replay одинаково настроен `speed=0`, но реальная
+скорость producer меняется с нагрузкой. Сравнение latency при фиксированной
+offered rate, повторные scaling trials и межхостовая сеть остаются отдельными
+экспериментальными ограничениями. Результаты не обосновывают универсальный рейтинг
+транспортов или принципиальный предел Kafka.
+
+Аудит также исправил timing retained assignment: после восстановления из SQL
+отбрасываются timestamps и batch timings неподтверждённого RAM tail. Реальный
+SQL regression до исправления давал четыре durability traces вместо трёх;
+после него — ровно три, три fragments, `next_offset=56` и snapshot, побайтно
+равный непрерывному контролю. Шесть healthy controls имели ровно 16 initial
+restores каждый, без этого повторного restore; их timing результаты не затронуты.
+Startup error теперь закрывает output sender ровно один раз, даже если dispatcher
+ещё не начал Run. `GET /v1/events` отличает некорректный запрос (400) от
+недоступной БД (503). Для всех исправлений добавлены targeted regression/race tests.
+
+Итоговый аудит — `p13-audit/kr-matrix.json`, `findings.json`, `validation.json`,
+`integrity.json` и SHA index `artifact-index.json`. Исторические приёмочные JSON
+не переписываются; при расхождении оценки приоритет имеет P13. KR-16 остаётся
+**PARTIAL** по статистической полноте и перечисленным measurement limitations;
+KR-19 — **PARTIAL**, поскольку полная РПЗ вне задачи. Функциональные и
+математические требования подтверждены, но полное закрытие КР/готовность всей
+РПЗ к защите не объявляется. Frozen science, SQL V1–V5 и генеральное ТЗ сохранены.

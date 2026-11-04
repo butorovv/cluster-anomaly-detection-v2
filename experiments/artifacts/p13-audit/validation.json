@@ -1,0 +1,763 @@
+{
+  "schema_version": 1,
+  "checks": [
+    {
+      "id": "retained_timing_after_fix",
+      "command": "go test -race ./internal/app/worker -run ^TestRetainedRestoreDiscardsUnconfirmedTiming$ -count=1 -v",
+      "status": "PASS",
+      "log": ".cache/p13-retained-timing-after.log",
+      "log_sha256": "976c85c0e71d80d92f74c8aa232a7177cf7f4499691b66fed408be3947606312",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t2.066s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestRetainedRestoreDiscardsUnconfirmedTiming",
+          "seconds": 0.76
+        }
+      ]
+    },
+    {
+      "id": "closure_current_targeted_race",
+      "command": "go test -race ./internal/app/worker ./internal/app/experiment ./internal/modules/events/delivery/httpinput -run targeted retained/startup/metrics/API regressions -count=1 -v",
+      "status": "PASS",
+      "log": ".cache/p13-closure-race.log",
+      "log_sha256": "f92357c6fb4c9a987f49c5e16c07a7433312faad8243f97c5f500fffcb7464d8",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t2.851s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/experiment\t1.808s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/httpinput\t1.686s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestRetainedRestoreDiscardsUnconfirmedTiming",
+          "seconds": 1.03
+        },
+        {
+          "status": "PASS",
+          "test": "TestSourceFailureClosesOutputBeforeDispatcherStarts",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestSavedAuditRehashesStreamsAndRejectsChangedReports",
+          "seconds": 0.04
+        },
+        {
+          "status": "PASS",
+          "test": "TestMeasurementJoinClocksAndQuantiles",
+          "seconds": 0.02
+        },
+        {
+          "status": "PASS",
+          "test": "TestSamplerIncludesNonzeroPartitionLag",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestReanalysisCannotUpgradeLegacyLag",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestResumeBindsGlobalConfiguration",
+          "seconds": 0.03
+        },
+        {
+          "status": "PASS",
+          "test": "TestEventsDistinguishesInvalidQueryFromUnavailableDatabase",
+          "seconds": 0.0
+        }
+      ]
+    },
+    {
+      "id": "real_independent_acceptance",
+      "command": "P03_REAL_ACCEPTANCE=1 go test ./internal/acceptance -run ^TestRealAcceptance$ -count=1 -v -timeout 12m",
+      "status": "PASS",
+      "log": ".cache/p13-real-acceptance.log",
+      "log_sha256": "e4872fcf57d0a9247cf62ca06858ad1342403735b4da69bdcea0a5cf245d6541",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/acceptance\t456.493s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestRealD2AllDeltaCanonicalParity",
+          "seconds": 315.31
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealD2AllDeltaCanonicalParity/0",
+          "seconds": 51.24
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealD2AllDeltaCanonicalParity/10",
+          "seconds": 51.61
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealD2AllDeltaCanonicalParity/30",
+          "seconds": 68.36
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealD2AllDeltaCanonicalParity/60",
+          "seconds": 129.77
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealRBI2D2Parity",
+          "seconds": 68.79
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealD2InputPipeline",
+          "seconds": 41.56
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealAcceptance",
+          "seconds": 455.77
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealAcceptance/^TestRealD2AllDeltaCanonicalParity$",
+          "seconds": 320.01
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealAcceptance/^TestRealRBI2D2Parity$",
+          "seconds": 88.02
+        },
+        {
+          "status": "PASS",
+          "test": "TestRealAcceptance/^TestRealD2InputPipeline$",
+          "seconds": 47.52
+        }
+      ]
+    },
+    {
+      "id": "actual_kafka_D2_input",
+      "command": "P04_REAL_ACCEPTANCE=1 go test ./internal/app/replayer -run ^TestKafkaRealD2$ -count=1 -v -timeout 6m",
+      "status": "PASS",
+      "log": ".cache/p13-kafka-input.log",
+      "log_sha256": "0a4f61896760bc690e879903eafa69171448f20a6c49661359399bb742237b89",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/replayer\t165.723s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestKafkaRealD2",
+          "seconds": 165.44
+        }
+      ]
+    },
+    {
+      "id": "full_worker_race",
+      "command": "P07_WORKER_INTEGRATION=1 go test -race ./internal/app/worker -count=1 -v -timeout 12m",
+      "status": "PASS",
+      "log": ".cache/p13-worker-final-race.log",
+      "log_sha256": "a0cabc99dff6bc59df8cf0e61df8b073edc717e950a42b86f1484bf42832f04b",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t262.016s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestWorkerCadenceProcessCrashAndReplay",
+          "seconds": 42.78
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCadenceProcessCrashAndReplay/1",
+          "seconds": 14.92
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCadenceProcessCrashAndReplay/3",
+          "seconds": 12.83
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCadenceProcessCrashAndReplay/6",
+          "seconds": 12.86
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin",
+          "seconds": 78.71
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g4-polling",
+          "seconds": 4.04
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g4-http_push",
+          "seconds": 3.71
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g4-kafka",
+          "seconds": 4.43
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g8-polling",
+          "seconds": 6.66
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g8-http_push",
+          "seconds": 6.7
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g8-kafka",
+          "seconds": 7.93
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g16-polling",
+          "seconds": 15.44
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g16-http_push",
+          "seconds": 14.55
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerCompleteDiagnosticJoin/g16-kafka",
+          "seconds": 15.24
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaCheckpointFaultRecovery",
+          "seconds": 12.65
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaCheckpointFaultRecovery/false",
+          "seconds": 6.92
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaCheckpointFaultRecovery/true",
+          "seconds": 5.73
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaIntegrityFailClosed",
+          "seconds": 24.22
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaIntegrityFailClosed/sha",
+          "seconds": 8.6
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaIntegrityFailClosed/version",
+          "seconds": 7.96
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaIntegrityFailClosed/frozen_identity",
+          "seconds": 7.66
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaLeaseLossStopsRuntime",
+          "seconds": 6.58
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSourceMismatchAndTailLoss",
+          "seconds": 9.73
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSourceMismatchAndTailLoss/topic_identity",
+          "seconds": 7.11
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSourceMismatchAndTailLoss/retention",
+          "seconds": 2.62
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaContinuous",
+          "seconds": 6.22
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSingleAndRebalanceRecovery",
+          "seconds": 15.81
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSingleAndRebalanceRecovery/0",
+          "seconds": 7.54
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaSingleAndRebalanceRecovery/30",
+          "seconds": 8.27
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaProcessCrashAndPartialReplay",
+          "seconds": 18.67
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaNetworkDisconnectRecovery",
+          "seconds": 8.85
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerPostgresNetworkOutageRecovery",
+          "seconds": 10.32
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart",
+          "seconds": 25.78
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/polling",
+          "seconds": 8.91
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/http_push",
+          "seconds": 8.4
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/kafka",
+          "seconds": 8.47
+        }
+      ]
+    },
+    {
+      "id": "sql_race_and_roles",
+      "command": "go test -race ./internal/modules/detection/repository/postgres ./internal/modules/events/repository/postgres ./deploy/bootstrap -count=1 -v -timeout 3m",
+      "status": "PASS",
+      "log": ".cache/p13-sql-race.log",
+      "log_sha256": "b8e3f61af2eb53621acd7641cb5da0861d5fcb0ea20afd2b7858c877d5b917ee",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres\t51.685s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres\t106.737s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/deploy/bootstrap\t5.061s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK",
+          "seconds": 19.29
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c1-committedfalse",
+          "seconds": 2.05
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c1-committedtrue",
+          "seconds": 2.5
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c3-committedfalse",
+          "seconds": 2.85
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c3-committedtrue",
+          "seconds": 5.09
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c6-committedfalse",
+          "seconds": 3.85
+        },
+        {
+          "status": "PASS",
+          "test": "TestCadenceAtomicBatchAndLostCommitACK/c6-committedtrue",
+          "seconds": 2.94
+        },
+        {
+          "status": "PASS",
+          "test": "TestDiagnosticCheckpointAtomicBarrier",
+          "seconds": 0.94
+        },
+        {
+          "status": "PASS",
+          "test": "TestDiagnosticCommitOutcomeReconcilesAllOutputs",
+          "seconds": 2.27
+        },
+        {
+          "status": "PASS",
+          "test": "TestDiagnosticCommitOutcomeReconcilesAllOutputs/false",
+          "seconds": 1.14
+        },
+        {
+          "status": "PASS",
+          "test": "TestDiagnosticCommitOutcomeReconcilesAllOutputs/true",
+          "seconds": 1.13
+        },
+        {
+          "status": "PASS",
+          "test": "TestDiagnosticMissingCheckpointFailsClosed",
+          "seconds": 2.11
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreRegistrationIdentityAndTopicIncarnation",
+          "seconds": 1.38
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreCheckpointOutboxRecoveryAndLeaseFencing",
+          "seconds": 4.88
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreCommitOutcomeReconciliation",
+          "seconds": 8.19
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreCommitOutcomeReconciliation/false",
+          "seconds": 4.17
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreCommitOutcomeReconciliation/true",
+          "seconds": 4.03
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreAtomicOutboxRollbackAndSnapshotIntegrity",
+          "seconds": 3.85
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreStaleEpochRace",
+          "seconds": 3.16
+        },
+        {
+          "status": "PASS",
+          "test": "TestStoreRestrictedRuntimeAndMasterCompatibility",
+          "seconds": 4.17
+        },
+        {
+          "status": "PASS",
+          "test": "TestConcurrentTimestampJoinLockOrder",
+          "seconds": 1.9
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart",
+          "seconds": 98.34
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g4-d0",
+          "seconds": 2.54
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g4-d10",
+          "seconds": 2.9
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g4-d30",
+          "seconds": 5.25
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g4-d60",
+          "seconds": 3.67
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g8-d0",
+          "seconds": 6.03
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g8-d10",
+          "seconds": 5.77
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g8-d30",
+          "seconds": 7.36
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g8-d60",
+          "seconds": 8.67
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g16-d0",
+          "seconds": 15.21
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g16-d10",
+          "seconds": 9.58
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g16-d30",
+          "seconds": 14.49
+        },
+        {
+          "status": "PASS",
+          "test": "TestDurableJoinDuplicateReorderRestart/g16-d60",
+          "seconds": 16.85
+        },
+        {
+          "status": "PASS",
+          "test": "TestMasterIdempotencyRevisionOrderIsolation",
+          "seconds": 5.07
+        },
+        {
+          "status": "PASS",
+          "test": "TestNativeBootstrapRestrictedRolesAndRestart",
+          "seconds": 3.6
+        }
+      ]
+    },
+    {
+      "id": "V5_upgrade_and_Kafka_stage_probe",
+      "command": "go test -race ./internal/modules/events/delivery/resulttransport ./db -run TestKafkaConsumerBatchQueueMeasurements|TestV5UpgradePreservesDurableExecution -count=1 -v",
+      "status": "PASS",
+      "log": ".cache/p13-targeted-timing-upgrade.log",
+      "log_sha256": "e702d3860b978707d65f179eb6188abe048eb91cc5577587264705427be94078",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport\t2.022s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/db\t2.742s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestKafkaConsumerBatchQueueMeasurements",
+          "seconds": 0.6
+        },
+        {
+          "status": "PASS",
+          "test": "TestV5UpgradePreservesDurableExecution",
+          "seconds": 0.42
+        }
+      ]
+    },
+    {
+      "id": "active_delta30_crash",
+      "command": "go test -race ./internal/app/worker -run ^TestWorkerKafkaProcessCrashAndPartialReplay$ -count=1 -v -timeout 2m",
+      "status": "PASS",
+      "log": ".cache/p13-active-memory-crash.log",
+      "log_sha256": "2a7540152f51edff0fcd6a27b947691a20c7ff46f3bb076c12d01061ce4245a7",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t18.989s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaProcessCrashAndPartialReplay",
+          "seconds": 17.62
+        }
+      ]
+    },
+    {
+      "id": "current_source_regression",
+      "command": "go test ./... -count=1",
+      "status": "PASS",
+      "log": ".cache/p13-go-test-closure.log",
+      "log_sha256": "c2fc40b646a23f237c015ad45a473ffc549665be83a03f181d0c8bf0e420c955",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/db\t19.258s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/deploy/bootstrap\t2.031s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/acceptance\t1.345s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/experiment\t1.478s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/offline\t4.100s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/replayer\t2.492s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t3.511s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/analysis\t1.630s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group\t6.442s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/local\t0.693s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres\t31.662s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase\t3.228s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/httpinput\t1.150s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport\t1.177s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain\t0.549s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres\t28.122s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/archive/postgres\t28.416s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/inputcodec\t1.679s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput\t0.754s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/ndjson\t1.422s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain\t1.188s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/usecase\t1.255s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain\t1.090s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability\t0.998s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/platform/parquet\t0.921s"
+      ],
+      "cases": []
+    },
+    {
+      "id": "transport_cleanup_recovery_race",
+      "command": "go test -race ./internal/app/worker ./internal/app/experiment ./internal/modules/events/delivery/resulttransport -run targeted startup/transport/recovery/metrics suite -count=1 -v",
+      "status": "PASS",
+      "log": ".cache/p13-final-targeted-race.log",
+      "log_sha256": "abab402449eb28379782f2eb18d9a9d267211ca0b7cf70a5dc313762ecf97854",
+      "package_results": [
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t48.118s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/experiment\t2.202s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport\t3.004s",
+        "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/httpinput\t2.076s"
+      ],
+      "cases": [
+        {
+          "status": "PASS",
+          "test": "TestWorkerKafkaLeaseLossStopsRuntime",
+          "seconds": 7.89
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerPostgresNetworkOutageRecovery",
+          "seconds": 10.49
+        },
+        {
+          "status": "PASS",
+          "test": "TestSourceFailureClosesOutputBeforeDispatcherStarts",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart",
+          "seconds": 27.37
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/polling",
+          "seconds": 10.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/http_push",
+          "seconds": 8.69
+        },
+        {
+          "status": "PASS",
+          "test": "TestWorkerThreeTransportParityAndRestart/kafka",
+          "seconds": 8.68
+        },
+        {
+          "status": "PASS",
+          "test": "TestSavedAuditRehashesStreamsAndRejectsChangedReports",
+          "seconds": 0.05
+        },
+        {
+          "status": "PASS",
+          "test": "TestMeasurementJoinClocksAndQuantiles",
+          "seconds": 0.02
+        },
+        {
+          "status": "PASS",
+          "test": "TestSamplerIncludesNonzeroPartitionLag",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestReanalysisCannotUpgradeLegacyLag",
+          "seconds": 0.0
+        },
+        {
+          "status": "PASS",
+          "test": "TestResumeBindsGlobalConfiguration",
+          "seconds": 0.03
+        },
+        {
+          "status": "PASS",
+          "test": "TestHTTPSenderCloseReleasesIdleConnection",
+          "seconds": 0.01
+        },
+        {
+          "status": "PASS",
+          "test": "TestKafkaConsumerBatchQueueMeasurements",
+          "seconds": 0.75
+        },
+        {
+          "status": "PASS",
+          "test": "TestEventsDistinguishesInvalidQueryFromUnavailableDatabase",
+          "seconds": 0.0
+        }
+      ]
+    }
+  ],
+  "go_vet": {
+    "status": "PASS",
+    "command": "go vet ./...",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "additional_current_docker_runtime_smoke": {
+    "status": "NOT_RUN",
+    "reason": "Docker engine stopped after November 4 completed experiments; no need to repeat successful P12 three-mode smoke. P13 clean source image build passed November 4."
+  },
+  "retained_timing_regression_before_fix": {
+    "status": "EXPECTED_FAIL",
+    "log_sha256": "9ea03d2c9eabe83f1da6de6d9425547a473fc4e377610d80ae8219737e03c16a",
+    "observed": "4 durability traces instead of 3; continuous mathematical snapshot already matched"
+  },
+  "clean_docker_build": {
+    "status": "PASS",
+    "source_commit": "91f0f5f",
+    "log_sha256": "d97d92bea8178a3e1933e47cf20ab5b68f7fea3760b184b4d194a01f65fd0176",
+    "image": "cad-p13-audit:91f0f5f"
+  },
+  "initial_concurrent_suite": {
+    "status": "FAIL",
+    "log_sha256": "9e426f10e843bed79eb1ca4679e641fbf6787261083f6339096483897ddf735f",
+    "finding": "Two 35s diagnostic completion timeouts while independent D2 suite/builds were active. No math mismatch. Unchanged isolated recheck PASS and full native PG race suite PASS; timing/load origin not profiled precisely."
+  },
+  "isolated_diagnostic_recheck": {
+    "id": "g16_push_kafka",
+    "command": "go test -race ./internal/app/worker -run ^TestWorkerCompleteDiagnosticJoin$/g16-(http_push|kafka)$ -count=1 -v",
+    "status": "PASS",
+    "log": ".cache/p13-diagnostic-recheck.log",
+    "log_sha256": "609e54f7bada09a0dcee11b2379beda793c6539430272c8de52fc850b6437ae0",
+    "package_results": [
+      "ok  \tgithub.com/butorovv/cluster-anomaly-detection-v2/internal/app/worker\t33.831s"
+    ],
+    "cases": [
+      {
+        "status": "PASS",
+        "test": "TestWorkerCompleteDiagnosticJoin",
+        "seconds": 32.49
+      },
+      {
+        "status": "PASS",
+        "test": "TestWorkerCompleteDiagnosticJoin/g16-http_push",
+        "seconds": 16.27
+      },
+      {
+        "status": "PASS",
+        "test": "TestWorkerCompleteDiagnosticJoin/g16-kafka",
+        "seconds": 16.22
+      }
+    ]
+  }
+}

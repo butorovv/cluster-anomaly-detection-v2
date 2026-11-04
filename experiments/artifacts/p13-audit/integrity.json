@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "PASS",
+  "audit_base_commit": "de44b65850063782ff86493e8c9dede1b6a91573",
+  "source_head_at_control_build": "0cb8ea6083264a3023605460e1ee1ac9e0d4d7e6",
+  "current_code_head": "61f59e55151e2d7e934f3bef097d6e3a11e6785d",
+  "frozen_science_diff": [],
+  "sql_V1_V5_diff": [],
+  "spec_blob": "c24f2ba26267b0090fad268308ff06a41764ca8f",
+  "markdown": [
+    "README.md",
+    "docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md"
+  ],
+  "user_volumes_deleted": false,
+  "v1_pin": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc",
+  "v1_clean": true
+}
