@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/butorovv/cluster-anomaly-detection-v2/db"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	checkpoints "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
@@ -12,6 +13,8 @@ import (
 	telemetry "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/postgrestest"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/workerfixture"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"testing"
 	"time"
 )
@@ -41,7 +44,41 @@ func TestConcurrentTimestampJoinLockOrder(t *testing.T) {
 	if err := checkpoints.Register(ctx, pool, r); err != nil {
 		t.Fatal(err)
 	}
-	service := usecase.Master{Store: repo.MasterStore{DB: pool}}
+	workerRole, masterRole := fmt.Sprintf("p10w_%d", time.Now().UnixNano()), fmt.Sprintf("p10m_%d", time.Now().UnixNano())
+	if _, err := pool.Exec(ctx, "CREATE ROLE "+pgx.Identifier{workerRole}.Sanitize()+" NOLOGIN; CREATE ROLE "+pgx.Identifier{masterRole}.Sanitize()+" NOLOGIN"); err != nil {
+		t.Fatal(err)
+	}
+	connection, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.GrantRuntime(ctx, connection.Conn(), workerRole, masterRole)
+	connection.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := pool.Config()
+	cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+		_, err := c.Exec(ctx, "SET ROLE "+pgx.Identifier{masterRole}.Sanitize())
+		return err
+	}
+	restricted, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		restricted.Close()
+		for _, role := range []string{workerRole, masterRole} {
+			quoted := pgx.Identifier{role}.Sanitize()
+			if _, err := pool.Exec(context.Background(), "DROP OWNED BY "+quoted+";DROP ROLE "+quoted); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	if _, err := restricted.Exec(ctx, `SELECT 1 FROM cad_v2.execution_partitions FOR UPDATE`); err == nil {
+		t.Fatal("Master unexpectedly has direct UPDATE privileges")
+	}
+	service := usecase.Master{Store: repo.MasterStore{DB: restricted}}
 	finals := [][]byte{}
 	for g := 1; g <= 4; g++ {
 		options := f.Options

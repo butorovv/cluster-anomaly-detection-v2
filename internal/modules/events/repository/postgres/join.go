@@ -10,14 +10,6 @@ import (
 )
 
 func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.Envelope) (bool, error) {
-	// V5.accept_result takes execution_partitions FOR UPDATE. A fragment INSERT
-	// acquires a foreign-key KEY SHARE lock first. Two timestamp joins can otherwise
-	// both hold KEY SHARE on the final group and deadlock while upgrading to UPDATE.
-	// Lock the complete physical universe in canonical order BEFORE inserting any
-	// fragment. V1-V5 stay unchanged; Worker ownership rows are not locked here.
-	if _, err := tx.Exec(ctx, `SELECT group_id FROM cad_v2.execution_partitions WHERE execution_id=$1::uuid ORDER BY group_id FOR UPDATE`, e.ExecutionID); err != nil {
-		return false, err
-	}
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return false, err

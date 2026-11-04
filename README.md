@@ -823,3 +823,7 @@ INSERT. Это необходимо из-за существующего `V5.acc
 исправления и прошёл под `-race` после него. Ownership rows этим Master-барьером
 не блокируются. Первоначальный FAIL и результаты исправления сохраняются в
 `experiments/artifacts/p10-join-lock-regression.json`; V1–V5 не изменены.
+Порядок блокировок помещён внутрь V7 `accept_tick_fragment SECURITY DEFINER`;
+Master не получает прямой UPDATE на execution metadata. Тот же concurrent тест
+прошёл под ограниченной runtime-ролью, у которой прямой `SELECT ... FOR UPDATE`
+отклоняется. `db.GrantRuntime` применяет тот же grants.sql из Go bootstrap/tests.

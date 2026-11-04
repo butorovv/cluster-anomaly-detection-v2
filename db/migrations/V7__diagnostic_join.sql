@@ -46,6 +46,10 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path=pg_catalog,cad_v2 AS $$
 DECLARE old cad_v2.master_tick_fragments;
 BEGIN
  PERFORM cad_v2.validate_tick_fragment(x,m);
+ -- V5 accepts each final group under FOR UPDATE. Acquire the entire canonical
+ -- row order BEFORE FK KEY SHARE from INSERT, avoiding cross-timestamp upgrade
+ -- cycles. Keep this inside SECURITY DEFINER: Master needs no table UPDATE grant.
+ PERFORM 1 FROM cad_v2.execution_partitions WHERE execution_id=x ORDER BY group_id FOR UPDATE;
  -- One short transaction joins at most 16 groups; no full D2 RAM accumulation.
  PERFORM pg_advisory_xact_lock(hashtextextended(x::text || '/tick/' || (m->>'event_time'),0));
  SELECT * INTO old FROM cad_v2.master_tick_fragments WHERE execution_id=x AND group_id=m->>'group_id' AND event_time=(m->>'event_time')::timestamptz;
