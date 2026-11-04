@@ -96,12 +96,19 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	flags.SetOutput(stderr)
 	resume := flags.Bool("resume", false, "reuse saved PASS runs with identical configuration; retry unfinished/failed runs")
 	analyze := flags.String("analyze-existing", "", "recompute measurements from saved logs/samples without replay")
+	audit := flags.String("audit-saved", "", "rehash saved comparisons against independently pinned V1 outputs without replay")
+	auditGolden := flags.String("golden-root", "", "independent golden root for audit")
+	auditManifest := flags.String("golden-manifest", "", "independent golden manifest for audit")
+	auditOutput := flags.String("audit-output", "", "new machine-readable audit output")
 	path := flags.String("config", "", "JSON experiment configuration")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if *analyze != "" {
 		return analyzeExisting(*analyze, stdout)
+	}
+	if *audit != "" {
+		return AuditSaved(*audit, *auditGolden, *auditManifest, *auditOutput)
 	}
 	if *path == "" || flags.NArg() != 0 {
 		return fmt.Errorf("--config required")
@@ -318,6 +325,9 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	defer func() { report.BinaryPaths = binaries }()
 	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
+	if commit, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output(); err == nil {
+		report.Environment["source_commit"] = strings.TrimSpace(string(commit))
+	}
 	defer func() { report.Finished = time.Now().UTC(); report.ElapsedSeconds = time.Since(start).Seconds() }()
 	if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") || spec.Workers < 1 || spec.Workers > 16 || (spec.Groups != 4 && spec.Groups != 8 && spec.Groups != 16) || (spec.Delta != 0 && spec.Delta != 10 && spec.Delta != 30 && spec.Delta != 60) || (spec.Cadence != 1 && spec.Cadence != 3 && spec.Cadence != 6) || (spec.Mode != "polling" && spec.Mode != "http_push" && spec.Mode != "kafka") {
 		return report, fmt.Errorf("invalid run configuration")
@@ -471,6 +481,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		return report, err
 	}
 	sampler := newSampler()
+	sampler.database = pool
 	if cfg.Measure {
 		defer sampler.Stop()
 	}
