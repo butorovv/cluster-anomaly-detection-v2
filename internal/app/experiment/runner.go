@@ -61,6 +61,7 @@ type Config struct {
 	Runs           []RunSpec `json:"runs"`
 }
 type Result struct {
+	Provenance     string            `json:"configuration_sha256,omitempty"`
 	SchemaVersion  int               `json:"schema_version"`
 	Status         string            `json:"status"`
 	Spec           RunSpec           `json:"configuration"`
@@ -75,6 +76,7 @@ type Result struct {
 	Assignment     map[string]string `json:"initial_assignment"`
 	NextOffsets    map[string]int64  `json:"next_offsets"`
 	BinarySHA256   map[string]string `json:"binary_sha256"`
+	BinaryPaths    map[string]string `json:"binary_paths,omitempty"`
 	Environment    map[string]any    `json:"environment"`
 	LogDirectory   string            `json:"log_directory,omitempty"`
 	Fault          map[string]any    `json:"fault,omitempty"`
@@ -126,10 +128,11 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
 		return fmt.Errorf("new artifact output directory required: %w", err)
 	}
-	binaries, hashes, err := build(ctx, cfg.Output)
+	provenance, err := configurationHash(cfg)
 	if err != nil {
 		return err
 	}
+	var binaries, hashes map[string]string
 	results := []Result{}
 	for _, spec := range cfg.Runs {
 		if *resume {
@@ -153,6 +156,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 					}
 				}
 				if previous.Status == "PASS" && previous.Comparison.Status == "PASS" {
+					if err := reusable(previous, cfg, provenance); err != nil {
+						return fmt.Errorf("cannot resume %s: %w", spec.Name, err)
+					}
 					if cfg.Measure && (previous.Measurements == nil || previous.Measurements.Status != "PASS") {
 						return fmt.Errorf("saved PASS lacks requested measurements: use a new output directory for %s", spec.Name)
 					}
@@ -165,9 +171,16 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 				return err
 			}
 		}
+		if binaries == nil {
+			binaries, hashes, err = build(ctx, cfg.Output)
+			if err != nil {
+				return err
+			}
+		}
 		fmt.Fprintf(stdout, "RUN %s workers=%d groups=%d delta=%d mode=%s cadence=%d\n", spec.Name, spec.Workers, spec.Groups, spec.Delta, spec.Mode, spec.Cadence)
 		bounded, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
 		result, err := runOne(bounded, cfg, spec, binaries, hashes)
+		result.Provenance = provenance
 		cancel()
 		if err != nil {
 			result.Status = "FAIL"
@@ -193,8 +206,13 @@ func build(ctx context.Context, out string) (map[string]string, map[string]strin
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	binDir := filepath.Join(out, "bin")
-	if err := os.MkdirAll(binDir, 0700); err != nil {
+	binRoot := filepath.Join(out, "bin")
+	if err := os.MkdirAll(binRoot, 0700); err != nil {
+		return nil, nil, err
+	}
+	// Never overwrite a binary used by an earlier saved experiment.
+	binDir, err := os.MkdirTemp(binRoot, "build-")
+	if err != nil {
 		return nil, nil, err
 	}
 	for _, name := range []string{"worker", "master", "replayer"} {
@@ -297,6 +315,7 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 	}
 }
 func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[string]string) (report Result, retErr error) {
+	defer func() { report.BinaryPaths = binaries }()
 	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
 	defer func() { report.Finished = time.Now().UTC(); report.ElapsedSeconds = time.Since(start).Seconds() }()
@@ -711,7 +730,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		if err := saveJSON(filepath.Join(logDir, "metrics-samples.json"), sampler.Samples()); err != nil {
 			return report, err
 		}
-		measured, err := measureLogs(logDir, report.RunID, spec.Groups, sampler)
+		measured, err := measureLogs(logDir, report.RunID, spec.Groups, sampler, comparison.Raw)
 		report.Measurements = &measured
 		if err != nil {
 			return report, fmt.Errorf("measurement: %w", err)
