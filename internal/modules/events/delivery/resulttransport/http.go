@@ -32,9 +32,9 @@ func NewHTTP(endpoint string, timeout time.Duration, metrics ...*observability.R
 	}
 	u.Path = strings.TrimRight(u.Path, "/") + "/v1/results"
 	u.RawPath = ""
-	client := &http.Client{Timeout: timeout}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client := &http.Client{Timeout: timeout, Transport: transport}
 	if len(metrics) > 0 && metrics[0] != nil {
-		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.DialContext = observability.CountDial(transport.DialContext, metrics[0], "results_http")
 		client.Transport = transport
 	}
@@ -86,4 +86,4 @@ func (s *HTTPSender) Send(ctx context.Context, raw []byte, groupID string) error
 	return nil
 }
 
-func (s *HTTPSender) Close() error { return nil }
+func (s *HTTPSender) Close() error { s.client.CloseIdleConnections(); return nil }

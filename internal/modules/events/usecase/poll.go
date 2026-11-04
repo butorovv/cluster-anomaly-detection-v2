@@ -36,6 +36,7 @@ func (p Poller) Run(ctx context.Context) error {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.DialContext = observability.CountDial(transport.DialContext, p.Master.Metrics, "results_http")
 		p.Client = &http.Client{Timeout: 2 * time.Second, Transport: transport}
+		defer p.Client.CloseIdleConnections()
 	}
 	if p.Logger == nil {
 		p.Logger = slog.Default()
