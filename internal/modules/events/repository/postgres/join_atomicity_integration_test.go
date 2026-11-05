@@ -65,17 +65,30 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	service := usecase.Master{Store: repo.MasterStore{DB: pool}}
+	sqlStore := repo.MasterStore{DB: pool}
+	service := usecase.Master{Store: sqlStore}
 	for _, raw := range fragments[:3] {
 		if receipt, err := service.Accept(ctx, raw); err != nil || !receipt.Accepted {
 			t.Fatal("partial fragment not accepted", receipt, err)
 		}
 	}
+	// Exercise the SQL side of Kafka intake without a broker: the last fragment,
+	// all finals, join marker and result offset must share the same transaction.
+	if err := sqlStore.BindResults(ctx, r.Binding.ExecutionID, "p14-atomic", "p14-results", "p14-master", r.StartOffsets); err != nil {
+		t.Fatal(err)
+	}
+	var last domain.Envelope
+	if err := json.Unmarshal(fragments[3], &last); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `CREATE FUNCTION cad_v2.p14_fail_second_final() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.group_id='a02' THEN RAISE EXCEPTION 'injected final insert failure'; END IF; RETURN NEW; END $$; CREATE TRIGGER p14_fail_second_final BEFORE INSERT ON cad_v2.master_results FOR EACH ROW EXECUTE FUNCTION cad_v2.p14_fail_second_final()`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := service.Accept(ctx, fragments[3]); err == nil {
+	if _, err := sqlStore.AcceptKafka(ctx, r.Binding.ExecutionID, "p14-results", 0, 0, &last); err == nil {
 		t.Fatal("last fragment unexpectedly survived final materialization failure")
+	}
+	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 0 {
+		t.Fatal("failed join advanced durable result offset", offset, err)
 	}
 	var fragmentsCount, finals, joins int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM cad_v2.master_tick_fragments WHERE execution_id=$1::uuid`, r.Binding.ExecutionID).Scan(&fragmentsCount); err != nil || fragmentsCount != 3 {
@@ -90,8 +103,11 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TRIGGER p14_fail_second_final ON cad_v2.master_results; DROP FUNCTION cad_v2.p14_fail_second_final()`); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := service.Accept(ctx, fragments[3]); err != nil || !receipt.Accepted {
-		t.Fatal("retry of rolled back fragment failed", receipt, err)
+	if accepted, err := sqlStore.AcceptKafka(ctx, r.Binding.ExecutionID, "p14-results", 0, 0, &last); err != nil || !accepted {
+		t.Fatal("retry of rolled back fragment failed", accepted, err)
+	}
+	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 1 {
+		t.Fatal("successful join did not commit result offset", offset, err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM cad_v2.master_results WHERE execution_id=$1::uuid`, r.Binding.ExecutionID).Scan(&finals); err != nil || finals != 4 {
 		t.Fatal("retry did not materialize all final groups", finals, err)
@@ -116,8 +132,11 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	if receipt, err := service.Accept(ctx, fragments[3]); err != nil || receipt.Accepted {
-		t.Fatal("duplicate last fragment was not idempotent", receipt, err)
+	if accepted, err := sqlStore.AcceptKafka(ctx, r.Binding.ExecutionID, "p14-results", 0, 1, &last); err != nil || accepted {
+		t.Fatal("duplicate last fragment was not idempotent", accepted, err)
+	}
+	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 2 {
+		t.Fatal("duplicate delivery did not advance result offset exactly once", offset, err)
 	}
 	var idsAfter []string
 	rows, err = pool.Query(ctx, `SELECT message_id FROM cad_v2.master_results WHERE execution_id=$1::uuid ORDER BY group_id`, r.Binding.ExecutionID)
