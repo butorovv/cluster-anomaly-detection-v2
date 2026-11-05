@@ -40,6 +40,21 @@ class ResultsBackupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 backup.safe_path(name)
 
+    def test_scoped_results_without_legacy_manifests_roundtrip(self):
+        repo = self.root/'repo'
+        results = repo/'experiments/artifacts/p14'
+        results.mkdir(parents=True)
+        (results/'profile.bin').write_bytes(b'profile\x00\xff')
+        entries = backup.inventory_results(repo, [Path('experiments/artifacts/p14')])
+        manifest = backup.create(self.root/'p14-archive', entries, 'p14-test')
+        restored = self.root/'p14-restored'
+        backup.restore(manifest, restored)
+        self.assertEqual((restored/'repo/experiments/artifacts/p14/profile.bin').read_bytes(), b'profile\x00\xff')
+        with self.assertRaisesRegex(ValueError, 'overlapping'):
+            backup.inventory_results(repo, [results, results])
+        with self.assertRaisesRegex(ValueError, 'results root'):
+            backup.inventory_results(repo, [repo])
+
 
 if __name__ == '__main__':
     unittest.main()
