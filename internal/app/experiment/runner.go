@@ -702,13 +702,17 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			return report, fmt.Errorf("unsupported fault configuration")
 		}
 	}
-	select {
-	case <-ctx.Done():
-		return report, ctx.Err()
-	case <-replayer.done:
-		if replayer.err != nil {
-			return report, replayer.err
+	// Stop replay promptly if a Worker or Master has already failed. Continuing
+	// a full D2 publish after a fatal runtime error cannot produce a valid trial.
+	if err := wait(ctx, func() (bool, error) {
+		select {
+		case <-replayer.done:
+			return true, replayer.err
+		default:
+			return false, nil
 		}
+	}, active); err != nil {
+		return report, err
 	}
 	report.ReplaySeconds = time.Since(replayStart).Seconds()
 	if err := wait(ctx, func() (bool, error) {
