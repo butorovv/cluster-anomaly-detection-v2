@@ -1359,8 +1359,10 @@ $env:P07_TEST_KAFKA_BROKERS = '127.0.0.1:KAFKAPORT'
 $env:ASSETS_ROOT = '/path/to/immutable/assets'
 $env:V1_GOLDEN_ROOT = '/path/to/independent-golden'
 $env:V1_GOLDEN_MANIFEST = '/path/to/v1-generated-golden.json'
+# Конфигурации отдельных P14-прогонов и Python-анализаторы хранятся локально/в
+# архиве исходников P14; в Git остаётся обвязка runner и архивирования.
 # Profiling отдельно от окончательных throughput trials; output должен быть новым.
-go run ./experiments/runner --config experiments/configs/p14-a-profile.json
+go run ./experiments/runner --config /path/to/local/p14-profile.json
 # Все pprof endpoints выключены по умолчанию; CAD_PPROF=1 включает их только для
 # loopback clients. Runner задаёт это явно лишь в profile=true experiment.
 python experiments/archive_results.py verify --manifest /path/to/p14-archive/manifest.json
