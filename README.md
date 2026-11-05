@@ -1384,4 +1384,53 @@ competing writers и key mutation/delete; V3 ownership fencing и блокиро
 writer exclusion на V8, rollback/retry, fresh/V5/V7 upgrade, snapshot/outbox/fragment
 preservation, duplicate/reorder, concurrent timestamps, targeted race и vet.
 Read-only Inspector review не выявил actionable findings; это не заменяет runtime
-проверки. V8 — revised candidate; full-D2 повторы и итоговая приёмка ещё впереди.
+проверки. V8 остаётся кандидатом, приёмка не завершена.
+
+### P14-D: границы текущей серии и стенд
+
+D1 (`e125d73`) — только readiness check и сокращение повторного чтения/JSON decode.
+D2 (`b2af3fe`, SQL V8) — отдельное изменение locking. Измерения совмещённого кода
+обозначаются **D1+D2**; их эффект нельзя приписывать одному из этих изменений.
+
+Ниже все попытки основной текущей native-Windows серии при одинаковых параметрах:
+4 Worker, 16 групп, полный Summit D2, Kafka results, cadence=3, δ=0, burst replay=0.
+Profiling, дополнительные SQL observers, предварительные проверки среды и отдельный
+Linux pilot в эту таблицу throughput не входят; их исходные отчёты/логи сохраняются.
+
+| Вариант | Попытки | PASS / FAIL | ticks/s успешных попыток | Independent golden | Решение |
+|---|---:|---:|---|---|---|
+| P13 baseline (`c9a81e6`) | 3 | 3 / 0 | 123.382; 132.759; 151.619 | PASS ×3 | Reference, n=3 |
+| D1 (`e125d73`) | 3 | 2 / 1 | 159.324; 163.256 | PASS ×2; NOT_REACHED ×1 | REJECTED для самостоятельного применения |
+| D1+D2 (`c30d2b3`) | 2 | 1 / 1 | 166.559 | PASS ×1; NOT_REACHED ×1 | INCONCLUSIVE, не принят |
+
+В обоих неуспешных кандидатных запусках Worker завершился после SQL lock_timeout;
+rebalance последовал за отказом. Третья запланированная попытка D1+D2 не запускалась
+и не считается попыткой. NOT_REACHED означает остановку до comparator, а не
+обнаруженное расхождение математики. Ускорение успешных попыток само по себе не
+является основанием для приёмки менее устойчивого варианта.
+
+Отдельный diagnostic run D1+D2 с наблюдением SQL прошёл full golden, но не входит
+в чистое сравнение. В нём наблюдалась цепочка: INSERT в stage_tick_fragment ждёт
+relation extension lock; владелец занят IO/DataFileExtend; другие операции ожидают
+ownership row этой транзакции. PostgreSQL записал ожидание extension 1380.673 ms,
+связанные transaction waits — до 1577 ms. Это отдельный механизм от FK KEY SHARE;
+первопричина дисковой задержки и причины каждого предыдущего отказа ещё не доказаны.
+Нельзя объяснять все отказы только ошибкой FK locking или только свойствами диска.
+До приёмки V8 требуется закончить детерминированную проверку relation extension
+и разбор оставшихся отказов; timeouts и durable/fencing contract не ослабляются.
+
+Основа следующих benchmark — существующие P12 `deploy/compose.yaml`,
+`deploy/Dockerfile` и bootstrap. Они уже развёртывают Worker, Master, Kafka и
+PostgreSQL. Допустим отдельный override для одинаковых CPU/RAM limits, наблюдения
+и изолированных данных; новая архитектура развёртывания или отдельный проект
+переноса Windows → Linux не требуются. `deploy/demo.ps1` остаётся проверкой
+Compose/recovery; performance harness дополнительно обеспечивает измерения и
+независимый full golden. P12 demo сам по себе не является full golden benchmark.
+
+Baseline P13, D1 и D1+D2 сравниваются внутри одного такого стенда с одинаковыми
+assets/model SHA, ресурсами, GOMAXPROCS, transport, cadence, δ и replay intensity.
+Предыдущий Linux pilot сохраняется как неуспешная диагностическая попытка и не
+сравнивается с native-Windows throughput для доказательства оптимизации. Нужны
+точные source SHA, applied migrations, image digests и настройки PostgreSQL/Kafka.
+До решения по D/V8 новые оптимизации producer, Master concurrency и Dispatcher
+не начинаются. Существующие P13 baseline и архивы остаются неизменными.
