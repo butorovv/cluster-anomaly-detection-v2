@@ -384,7 +384,9 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if err != nil {
 		return report, err
 	}
-	_, err = db.Apply(ctx, connection.Conn(), db.Files)
+	appliedMigrations, err := db.Apply(ctx, connection.Conn(), db.Files)
+	report.Environment["schema_migrations_applied"] = appliedMigrations
+	report.Environment["postgres_server_host"] = u.Host
 	connection.Release()
 	if err != nil {
 		return report, err
@@ -400,6 +402,11 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			}
 		}()
 	}
+	var serverVersion string
+	if err := pool.QueryRow(ctx, "SHOW server_version").Scan(&serverVersion); err != nil {
+		return report, err
+	}
+	report.Environment["postgres_server_version"] = serverVersion
 	var maxConnections, buffers, fsync, synchronous string
 	if err := pool.QueryRow(ctx, "SHOW max_connections").Scan(&maxConnections); err != nil {
 		return report, err
