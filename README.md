@@ -1390,6 +1390,8 @@ Read-only Inspector review не выявил actionable findings; это не з
 
 ### P14-D: границы текущей серии и стенд
 
+Историческое состояние перед P14-1; итог SQL-части зафиксирован ниже.
+
 D1 (`e125d73`) — только readiness check и сокращение повторного чтения/JSON decode.
 D2 (`b2af3fe`, SQL V8) — отдельное изменение locking. Измерения совмещённого кода
 обозначаются **D1+D2**; их эффект нельзя приписывать одному из этих изменений.
@@ -1436,3 +1438,117 @@ assets/model SHA, ресурсами, GOMAXPROCS, transport, cadence, δ и repl
 точные source SHA, applied migrations, image digests и настройки PostgreSQL/Kafka.
 До решения по D/V8 новые оптимизации producer, Master concurrency и Dispatcher
 не начинаются. Существующие P13 baseline и архивы остаются неизменными.
+
+### P14-1: решение по PostgreSQL D1/V8 (05.11.2026)
+
+**D1 отдельно — REJECT (нестабильность); D1+V8 — INCONCLUSIVE. ACCEPT нет.**
+SQL-часть P14 закрыта с этим решением; V8 остаётся исследовательским кандидатом
+в ветке P14. Проверки не дают основания переносить его в production/main.
+Новых полных D2 attempts в P14-1 нет: прежние отказы уже исключают ACCEPT,
+а перед испытаниями свободно около 3 GiB RAM из 16 GiB, Docker engine остановлен.
+Настройки ОС, ресурсы чужих процессов, volumes, durability и timeouts runtime
+не менялись. Существующий P12 Compose сохранён без изменений.
+
+| Вариант / точный source | PASS / FAIL | ticks/s успешных attempts | Полное время attempts, s | Решение |
+|---|---|---|---|---|
+| P13 `c9a81e637c18c628c708c59a1816708bce6e0847`, V1–V7 | 3 / 0 | 123.382; 132.759; 151.619 | 400.539; 368.223; 327.040 | REFERENCE |
+| D1 `e125d73af724b56516a228b9c31c535c432d516d`, V1–V7 | 2 / 1 | 159.324; 163.256 | 307.756; 303.165; **121.639 FAIL** | REJECT standalone |
+| D1+V8 `c30d2b315f7c3f6a7ab6eb5ebca551c51ef49437`, V1–V8 | 1 / 1 | 166.559 | 296.387; **84.904 FAIL** | INCONCLUSIVE |
+
+У baseline median 132.759 ticks/s, sample SD 14.381. Успешные D1 дают около +21.5%
+к этой медиане, единственный успешный D1+V8 — около +25.5%; это descriptive values,
+не доказательство устойчивого выигрыша. У combined нет достаточных независимых
+успешных повторов; число failures и разброс запрещают заключение об ACCEPT.
+NOT_REACHED ×2 означает отсутствие comparator после отказа, не golden mismatch.
+Отдельно сохранены profile FAIL, два setup/pilot FAIL, прерванный native FAIL,
+Linux pilot FAIL и lockdiag PASS; они не объединены с этой matched series.
+
+Разбор блокировок:
+
+- Worker начинает READ COMMITTED tx, берёт ownership `FOR UPDATE`, пишет
+  checkpoint/outbox и `stage_tick_fragment`; FK INSERT требует `KEY SHARE`
+  на `execution_partitions`. V7 Master держит на этих строках `FOR UPDATE`
+  от intake до завершения join/COMMIT. Их конфликт воспроизведён настоящим
+  Worker Save: `55P03`, полный rollback, успешный retry после освобождения.
+- V8 использует `FOR NO KEY UPDATE` для identity guards в обоих accept API.
+  Он совместим с FK `KEY SHARE`, но исключает другого Master writer.
+  Canonical all-group order, tick guard, event locks и ownership fencing
+  сохранены. Одна Master tx содержит последний fragment, все final rows,
+  join marker и SQL result offset; тест подтверждает общий rollback/commit.
+- В lockdiag 13:05:02.889 MSK: `ack_delivery` PID 34588 → ownership transaction
+  PID 33732 → `extend` → PID 25672 / `IO:DataFileExtend`. Native PG log измерил
+  extension wait 1380.673 ms, transaction waits до 1577.308 ms. Это цепь ожиданий;
+  замкнутый deadlock cycle не доказан. Отдельно наблюдались WAL/COMMIT waits.
+- D1 FAIL 12:26:30 MSK: `commit_checkpoint` INSERT и последующие ownership waits.
+  D1+V8 FAIL 12:53:47 MSK: `stage_tick_fragment` INSERT и ownership waits.
+  У этих attempts нет полного blocker graph: конкретный locktype/root blocker
+  нельзя достоверно восстановить. Цепь из успешного lockdiag не переносится
+  автоматически на каждый FAIL. Причина физической I/O-задержки не установлена.
+
+Совместимость lock modes следует из [PostgreSQL 17 locking](https://www.postgresql.org/docs/17/explicit-locking.html).
+`extend` — отдельный объект блокировки в [pg_locks](https://www.postgresql.org/docs/17/view-pg-locks.html);
+I/O и WAL wait events различаются в [monitoring statistics](https://www.postgresql.org/docs/17/monitoring-stats.html).
+Windows, антивирус, драйвер или конкретный диск причиной не объявляются.
+
+Targeted SQL tests на PostgreSQL 17.5 прошли: fresh/V5/V7 upgrade, V8 rollback/retry,
+повторная миграция, сохранение durable state, миграция с открытыми Worker/Master tx,
+FK reader/writer exclusion, concurrent last fragment, duplicate/reorder, rollback
+final join, Master reconnect/retry после отброшенного ответа, lost Worker COMMIT ACK,
+stale ownership, snapshot/offset/outbox/fragment identity. Матрица SQL join покрывает
+4/8/16 групп × δ0/10/30/60 × полные/неполные/пустые ticks.
+Открытая V7 tx сохраняет старый UPDATE lock после установки V8 до своего завершения;
+для online upgrade требуется учитывать такие старые транзакции.
+
+`TestObserveRelationExtension` — отдельная opt-in observation, 4 SQL writers,
+не более ~64 MiB payload и 20 s в удаляемой test DB. В P14-1 получен настоящий
+ungranted `extend` lock на TOAST relation (159 samples, 0.91 s test body).
+Это не переносимый способ детерминированно вызвать секундный DataFileExtend stall.
+Отсутствие witness в другом запуске выводится как NOT_OBSERVED. Advisory/table lock
+не подменяет extension lock; cancellation/recovery от конкретной физической
+I/O-паузы остаётся непроверенным. Логические блокировки/rollback/retry проверены
+детерминированно; наблюдательный тест не заменяет их.
+
+Full `go test -count=1 ./...` и `go vet ./...` прошли; targeted race repositories
+прошли. Kafka/process-fault и full-D2 opt-in suites пропущены в этой сессии.
+Повторный `--audit-saved` проверил все 12 pinned V1 reference sets (4/8/16 × δ),
+шесть успешных SQL comparisons и сохранённые V2 binaries. Совпадают Raw, Temporal,
+Evidence, VoteSegments, RBSubspans, EventID, parents, Summary и scientific identity;
+MessageID проверяется SQL integration tests. Это rehash исторических comparisons,
+не новый distributed replay. Источники V1 сверены с pin с учётом checkout EOL;
+старый V1 generator executable сейчас отсутствует, повторный binary rehash невозможен.
+
+Latency/CPU/RSS/backlog/wait samples всех успешных attempts сохранены в архиве;
+у failures sampler не сформировал окончательные aggregates, значение NOT_AVAILABLE.
+Чистая серия не измеряла отдельно SQL join, JSON decode и клиентский BEGIN/COMMIT.
+Старый профиль — отдельный неполный FAIL с observer overhead; серверный
+`pg_stat_statements` COMMIT timing не равен durable client latency. Для ACCEPT
+остаются нужны стабильные comparable full runs и отдельные сопоставимые measurements;
+добавлять полный replay без гипотезы и ограниченного бюджета attempts не требуется.
+
+Новые файлы — только regression/observation tests; production и миграции не менялись.
+Новый внешний архив: `experiment-archives/cluster-anomaly-detection-v2/`
+`p14-performance-20261105/p14-1-close/` (рядом с checkout, вне Git).
+В нём REPORT.txt, HANDOFF.txt, команды, hashes, all-attempt ledger и test logs;
+`manifest.json`/`SHA256SUMS` задают точный HEAD и контрольные суммы.
+Все members должны проходить verify и восстановление в новую директорию.
+Старые три P14 archives повторно проверены и сохранены неизменными.
+
+Воспроизведение targeted checks (URL должен указывать на отдельный тестовый PG,
+роль должна уметь создавать временные databases; localhost требует сетевых прав):
+
+```powershell
+. .cache/p14-env.ps1
+$env:TEST_DATABASE_URL = $env:SYSTEM_TEST_DATABASE_URL
+go test -count=1 -v ./db ./internal/modules/events/repository/postgres ./internal/modules/detection/repository/postgres
+go test -race -count=1 ./internal/modules/events/repository/postgres ./internal/modules/detection/repository/postgres
+go vet ./...
+$env:P14_OBSERVE_RELATION_EXTENSION = '1'
+go test -count=1 -v ./internal/modules/detection/repository/postgres -run TestObserveRelationExtension
+Remove-Item Env:P14_OBSERVE_RELATION_EXTENSION
+# Saved reports находятся в архиве; это аудит, без Kafka replay:
+go run ./experiments/runner --audit-saved .cache/p14-1/saved-runs --golden-root $env:V1_GOLDEN_ROOT --golden-manifest $env:V1_GOLDEN_MANIFEST --audit-output .cache/p14-1/new-golden-audit.json
+```
+
+Следующая часть — Kafka producer и Worker Dispatcher, отдельная постановка.
+В этой сессии они не оптимизировались; дальнейший эксперимент обязан указывать,
+использует ли он P13 reference или непринятый D1+V8 candidate.
