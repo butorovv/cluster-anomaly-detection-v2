@@ -16,6 +16,7 @@ import (
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -106,6 +107,10 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("invalid WORKER_DATABASE_URL")
 	}
 	poolConfig.MaxConns = 8
+	metrics := observability.New()
+	if observability.ProfilingEnabled() {
+		poolConfig.ConnConfig.Tracer = observability.QueryTracer{Metrics: metrics}
+	}
 	poolConfig.ConnConfig.RuntimeParams["statement_timeout"] = "5000"
 	poolConfig.ConnConfig.RuntimeParams["lock_timeout"] = "2000"
 	poolConfig.ConnConfig.RuntimeParams["idle_in_transaction_session_timeout"] = "10000"
@@ -132,5 +137,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return RunWithOutput(ctx, Config{Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
+	return RunWithOutput(ctx, Config{Metrics: metrics, Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
 }

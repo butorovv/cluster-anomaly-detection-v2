@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/jackc/pgx/v5"
 )
 
 func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.Envelope) (bool, error) {
+	defer observability.Stage(s.Stages, "join_total")()
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return false, err
@@ -35,6 +37,7 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	}
 	envelopes := []domain.Envelope{}
 	payloads := []domain.GroupResult{}
+	decodeDone := observability.Stage(s.Stages, "join_fetch_and_json_decode")
 	for rows.Next() {
 		var b []byte
 		if err := rows.Scan(&b); err != nil {
@@ -55,6 +58,7 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 		payloads = append(payloads, payload)
 	}
 	rows.Close()
+	decodeDone()
 	if err := rows.Err(); err != nil {
 		return false, err
 	}
@@ -73,7 +77,10 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	}
 	// The sole cross-group scientific operation. It annotates copies of Raw only;
 	// every already accepted Temporal, Evidence ID and terminal event is preserved.
+	annotateDone := observability.Stage(s.Stages, "join_annotate_outside")
 	group.AnnotateOutside(rawRows)
+	annotateDone()
+	finalDone := observability.Stage(s.Stages, "join_final_envelopes_and_sql")
 	for i, fragment := range envelopes {
 		payload := payloads[i]
 		payload.Raw = rawRows[i]
@@ -95,5 +102,6 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	if _, err := tx.Exec(ctx, `INSERT INTO cad_v2.master_tick_joins(execution_id,event_time) VALUES($1::uuid,$2)`, e.ExecutionID, e.EventTime); err != nil {
 		return false, err
 	}
+	finalDone()
 	return true, nil
 }

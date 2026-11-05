@@ -48,6 +48,7 @@ type RunSpec struct {
 	Fault       string  `json:"fault,omitempty"`
 }
 type Config struct {
+	Profile        bool      `json:"profile,omitempty"`
 	Measure        bool      `json:"measure"`
 	SchemaVersion  int       `json:"schema_version"`
 	Assets         string    `json:"assets"`
@@ -128,6 +129,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	cfg.Output = os.ExpandEnv(cfg.Output)
 	if cfg.SchemaVersion != 1 || len(cfg.Runs) == 0 || cfg.Assets == "" || cfg.Brokers == "" || cfg.GoldenRoot == "" || cfg.GoldenManifest == "" || cfg.Output == "" || os.Getenv("SYSTEM_TEST_DATABASE_URL") == "" || os.Getenv("SYSTEM_KAFKA_ISOLATED") != "1" {
 		return fmt.Errorf("explicit configuration, SYSTEM_TEST_DATABASE_URL and SYSTEM_KAFKA_ISOLATED=1 required")
+	}
+	if cfg.Profile && !cfg.Measure {
+		return fmt.Errorf("profile requires measure=true; final throughput runs must disable profile")
 	}
 	if cfg.TimeoutSeconds < 1 {
 		cfg.TimeoutSeconds = 900
@@ -385,6 +389,17 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if err != nil {
 		return report, err
 	}
+	if cfg.Profile {
+		if _, err := pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_stat_statements"); err != nil {
+			return report, err
+		}
+		report.Environment["profiling_enabled"] = true
+		defer func() {
+			if err := saveSQLProfile(context.Background(), pool, filepath.Join(logDir, "sql-profile.json")); err != nil {
+				retErr = errors.Join(retErr, err)
+			}
+		}()
+	}
 	var maxConnections, buffers, fsync, synchronous string
 	if err := pool.QueryRow(ctx, "SHOW max_connections").Scan(&maxConnections); err != nil {
 		return report, err
@@ -493,7 +508,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if cfg.Measure {
 		masterArgs = append(masterArgs, "--measure=true")
 	}
-	master, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2"})
+	master, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 	if err != nil {
 		return report, err
 	}
@@ -520,7 +535,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		if cfg.Measure {
 			args = append(args, "--measure=true")
 		}
-		p, err := startProcess(ctx, binaries["worker"], filepath.Join(logDir, fmt.Sprintf("worker-%02d.log", index)), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1"})
+		p, err := startProcess(ctx, binaries["worker"], filepath.Join(logDir, fmt.Sprintf("worker-%02d.log", index)), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 		if err == nil {
 			p.owner, p.endpoint = owner, endpoint
 			if cfg.Measure {
@@ -568,6 +583,18 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	replayArgs := []string{"--input", filepath.Join(cfg.Assets, "data/prepared/summit-D1-pilot/D1.parquet"), "--speed", strconv.FormatFloat(spec.ReplaySpeed, 'g', -1, 64), "--start", window.Start.Format(time.RFC3339), "--end", window.End.Format(time.RFC3339), "--completion-mode", "full-grid", "--wire-format", "v1", "--execution-id", execution, "--input-sha256", cfg.InputSHA, "--profile-sha256", cfg.ProfileSHA, "--output", "kafka", "--kafka-brokers", cfg.Brokers}
 	if cfg.Measure {
 		sampler.Start(ctx)
+	}
+	if cfg.Profile {
+		profileCtx, profileCancel := context.WithCancel(ctx)
+		profileDone := make(chan error, 1)
+		go func() { profileDone <- collectProfiles(profileCtx, sampler, logDir) }()
+		defer func() {
+			profileCancel()
+			err := <-profileDone
+			if err != nil && !errors.Is(err, context.Canceled) {
+				retErr = errors.Join(retErr, err)
+			}
+		}()
 	}
 	replayStart := time.Now()
 	replayer, err := startProcess(ctx, binaries["replayer"], filepath.Join(logDir, "replayer.log"), replayArgs, []string{"GOMAXPROCS=1"})
@@ -665,7 +692,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 				return report, err
 			}
 			master.stop()
-			replacement, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master-restart.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2"})
+			replacement, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master-restart.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 			if err != nil {
 				return report, err
 			}

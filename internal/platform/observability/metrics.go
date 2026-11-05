@@ -117,12 +117,12 @@ func (r *Registry) Snapshot() Data {
 	return d
 }
 func (r *Registry) Handler(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+	return profileHandler(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
 		if q.Method == "GET" && q.URL.Path == "/metrics" {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(r.Snapshot())
 			return
 		}
 		next.ServeHTTP(w, q)
-	})
+	}))
 }

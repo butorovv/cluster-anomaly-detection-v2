@@ -54,6 +54,9 @@ func configurationHash(cfg Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if cfg.Profile {
+		b = append(b, []byte(";profile=true")...)
+	}
 	return domain.Hash(b), nil
 }
 
