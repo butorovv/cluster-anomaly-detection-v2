@@ -1368,3 +1368,20 @@ python experiments/archive_results.py restore --manifest /path/to/p14-archive/ma
 # Новый bounded-scope backup не требует копировать старые P13 results/golden.
 python experiments/archive_results.py create --repo . --results-root experiments/artifacts --archive-dir /path/outside/repo/new-p14-backup
 ```
+P14-D readiness-only (`e125d73`) **не принят как самостоятельный вариант**:
+из трёх попыток две прошли parity (159.324/163.256 ticks/s), третья остановилась
+по Worker SQL lock_timeout. Baseline n=3: 123.382/132.759/151.619 ticks/s;
+медиана 132.759, sample stdev 14.381. Отказ не скрывается исключением из выборки.
+Новый логический дефект readiness count не доказан: исходный profiling также
+обнаружил V7 FK coupling. Требуется устранить сам конфликт и повторить сравнение.
+
+Новая V8 (`b2af3fe`) сохраняет глобальный canonical guard Master и меняет
+только identity-row locks `execution_partitions` на FK-compatible
+`FOR NO KEY UPDATE`, включая final projection. Этот mode по-прежнему исключает
+competing writers и key mutation/delete; V3 ownership fencing и блокировки
+`master_events` остаются прежними. Основа — [матрица PostgreSQL 17 row locks](https://www.postgresql.org/docs/17/explicit-locking.html#LOCKING-ROWS).
+Старые SQL V1–V7 не переписывались. Проверены red FK test на V7, green FK-reader /
+writer exclusion на V8, rollback/retry, fresh/V5/V7 upgrade, snapshot/outbox/fragment
+preservation, duplicate/reorder, concurrent timestamps, targeted race и vet.
+Read-only Inspector review не выявил actionable findings; это не заменяет runtime
+проверки. V8 — revised candidate; full-D2 повторы и итоговая приёмка ещё впереди.
