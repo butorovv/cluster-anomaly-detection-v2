@@ -1294,3 +1294,77 @@ python experiments/archive_results.py create --repo . --archive-dir C:/experimen
 у новых запусков обновить provenance перед созданием архива. Все источники
 остаются на месте. Архивирование/восстановление не удаляет данные и не затрагивает
 PostgreSQL databases или Docker volumes.
+
+## P14: исследование производительности (в работе)
+
+Ветка P14 создана от актуального `main`
+`c9a81e637c18c628c708c59a1816708bce6e0847`: PR #12 слит, P13-CLEAN включён.
+Локальный `main` не изменялся. Scientific V1 pin остаётся
+`c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc`; исходные Summit assets проверены.
+Go 1.27.2, Windows 11 10.0.26200, i7-12650H (10 cores/16 threads),
+16 782 188 544 байт RAM, NVMe SSD; PostgreSQL 17.5 на Windows,
+Kafka 4.1.2 в отдельном Docker/WSL2 стенде. Worker GOMAXPROCS=1,
+Master=2, SQL fsync/synchronous_commit/full_page_writes включены.
+
+P14-A **PRELIMINARY**: один новый full-D2 baseline Kafka/4 Worker/cadence=3/δ0,
+без Go profiling, прошёл independent pinned V1 comparator: 46 080 Raw/Temporal,
+1 284 Evidence, 750 parents, canonical hashes и все научные поля совпали.
+Throughput pipeline — 123.382 ticks/s; setup и comparator в него не входят.
+Это новый стенд: значения не объединяются с историческим P11 scaling (n=1)
+и P13 controls (n=2) в одну оценку ускорения.
+
+| Измерение нового baseline | Значение |
+|---|---:|
+| Compute p95 | 1.191 ms |
+| Computed→durable confirmation p95 | 209.355 ms |
+| Send→Master intake p95 (включает очередь) | 173.094 s |
+| Intake→commit p95 | 29.412 ms |
+| E2E до final join p95 | 200.132 s |
+| Intake service / intake span | 361.161 / 373.298 s (96.75%) |
+| Максимум send-before-intake queue | 32 384 messages |
+| Durable ACK→send p95 | 17.078 s |
+
+Независимый пересчёт boundaries дал нулевую ошибку телескопического разложения E2E.
+Отрицательное signed ACK→send сохраняется при видимости outbox до client COMMIT ACK.
+Quantiles стадий не складываются; SQL histograms, application stages и вложенные
+pg_stat_statements перекрываются. Wait-event samples — наблюдения, не секунды.
+
+Отдельный profiling run собрал CPU/heap/allocs/goroutine/mutex/block для Master
+и четырёх Worker. Он остановился по lock_timeout и **не считается** успешным
+benchmark/parity run. Последний полный снимок: 6 700 fragments, 55 028 строк
+повторно прочитанных payloads, fetch/decode 11.128 s; AnnotateOutside — 307 вызовов,
+1.765 ms суммарно. В первом allocation snapshot acceptFragmentTx включал 52.60%
+alloc_space. SQL показал конфликты V7 FOR UPDATE с FK KEY SHARE Worker fragments.
+Ослабление durability/fencing/timeouts не применялось.
+H1/H2/H4 пока PARTIALLY_CONFIRMED, H3/H5/H6 — INCONCLUSIVE; causal improvements,
+повторы и окончательные выводы ещё не получены. P14-D исследует readiness count
+до чтения payloads при прежнем порядке блокировок и прежней атомарной транзакции.
+
+Архив P14-A (старые P13 архивы не изменены):
+`C:/study/NIR_KP_6_SEM/NIR_KR_7_SEM/experiment-archives/cluster-anomaly-detection-v2/p14-performance-20261105/p14-a-6b50489/`.
+ZIP SHA-256: `ad6e4d9675ec21cb7e84e486aa026e7d1829a67c560b8c182b03620fc56e1f4b`.
+Проверены все 169 файлов (685 392 058 исходных байт) и restore в новый каталог.
+Архив содержит среду, original/failed runs, три профильных окна каждого процесса,
+SQL statistics/plans, timing audit и machine-readable P14-A findings.
+Legacy runner из source-only git archive обнаруживал HEAD родительского checkout;
+`*.verified-source.json` исправляет только metadata в новом derived файле после
+сверки каждого source byte с повторным `git archive c9a81e6`. Original JSON,
+бинарные SHA, измерения и parity не переписываются.
+
+```powershell
+# Указать собственные isolated services, immutable assets и независимый V1 golden.
+$env:SYSTEM_TEST_DATABASE_URL = 'postgres://TEST_ADMIN@127.0.0.1:PGPORT/postgres?sslmode=disable'
+$env:SYSTEM_KAFKA_ISOLATED = '1'
+$env:P07_TEST_KAFKA_BROKERS = '127.0.0.1:KAFKAPORT'
+$env:ASSETS_ROOT = '/path/to/immutable/assets'
+$env:V1_GOLDEN_ROOT = '/path/to/independent-golden'
+$env:V1_GOLDEN_MANIFEST = '/path/to/v1-generated-golden.json'
+# Profiling отдельно от окончательных throughput trials; output должен быть новым.
+go run ./experiments/runner --config experiments/configs/p14-a-profile.json
+# Все pprof endpoints выключены по умолчанию; CAD_PPROF=1 включает их только для
+# loopback clients. Runner задаёт это явно лишь в profile=true experiment.
+python experiments/archive_results.py verify --manifest /path/to/p14-archive/manifest.json
+python experiments/archive_results.py restore --manifest /path/to/p14-archive/manifest.json --destination .cache/new-p14-restore
+# Новый bounded-scope backup не требует копировать старые P13 results/golden.
+python experiments/archive_results.py create --repo . --results-root experiments/artifacts --archive-dir /path/outside/repo/new-p14-backup
+```
