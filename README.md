@@ -1552,3 +1552,98 @@ go run ./experiments/runner --audit-saved .cache/p14-1/saved-runs --golden-root 
 Следующая часть — Kafka producer и Worker Dispatcher, отдельная постановка.
 В этой сессии они не оптимизировались; дальнейший эксперимент обязан указывать,
 использует ли он P13 reference или непринятый D1+V8 candidate.
+
+### P14-1B: факторная проверка D1/V8 — ограничение ресурсов (05.11.2026)
+
+P14-2 отложен. Новый full-system throughput не измерялся: перед запуском доступны
+3.56 GiB RAM и 21.51 GiB диска; Docker engine/WSL Docker остановлены. Поднимать
+контейнерную D2-нагрузку при таком запасе не стали. Глобальные настройки ОС/WSL,
+чужие процессы и существующие volumes не менялись. Это **NOT_RUN_RESOURCE_GATE**,
+а не успешная benchmark-приёмка. Полные D2 и Compose pilots не запускались.
+
+Подготовлены четыре immutable source snapshots с общим observation/build harness.
+Это факторный P13 runtime, а не сравнение разных исторических HEAD с разной обвязкой.
+Их synthetic Git commits имеют общий parent `c9a81e6`; Git refs находятся под
+`refs/p14-1b/p14-1b-20261105/`, исходники и incremental bundle — во внешнем архиве.
+
+| Вариант | Точный source commit | Миграции | Новые native SQL checks | Новые full D2 |
+|---|---|---|---|---|
+| P13 + общий harness | `14e6ecd4caf40f848ae97920e4c77891deabf7a8` | V1–V7 | PASS | NOT_RUN |
+| P13 + D1 + общий harness | `aa32dd75b82ad3d38b05ba729bd167e5c9c0c628` | V1–V7 | PASS | NOT_RUN |
+| P13 + V8 + общий harness | `c676f96f41fccaf1a94e6f8b110741fd43e930bd` | V1–V8 | PASS | NOT_RUN |
+| P13 + D1 + V8 + общий harness | `2118f0f901f9ea269cdce4ee292250182a377fb3` | V1–V8 | PASS | NOT_RUN |
+
+`experiments/sqlbench/prepare.py` проверяет все source bytes, Git trees и tar SHA.
+Различия факторных пар строго ограничены `join.go` (D1) и исходной V8 SQL;
+scientific kernel/IDs, V1–V7, fencing, checkpoint/outbox и Kafka/Dispatcher не меняются.
+D1 — проверенный patch из `e125d73`, V8 — исходные bytes из `b2af3fe`.
+Общие opt-in hooks взяты из `7220d7b`, measurement/comparator harness из `a23567b`.
+Общие benchmark-only поправки задают честный source SHA, сохраняют applied migration
+checksums и samples при FAIL, поддерживают pilot из 60 ticks и отдельный SQL observer.
+Короткий pilot имеет verdict **PILOT_STRUCTURAL_ONLY**, никогда full golden PASS.
+
+На ноутбуке выполнены последовательно по 25 PASS test/subtest events на вариант:
+SQL transactions/fencing, duplicate/reorder/restart-state join matrix, concurrent join,
+lost Worker COMMIT ACK и stale epoch. Все четыре варианта компилируются под Windows
+и Linux/amd64; Linux binaries только cross-compiled, не запускались. Девять Python
+contract tests прошли; Compose config проверен без daemon. Это не проверка живого
+Linux Compose и не доказательство эффективности SQL-оптимизаций.
+
+`experiments/sqlbench/run.py` использует **существующий** P12 Compose с минимальным
+`compose.override.yaml`. Запускаются прежние PostgreSQL/Kafka; прежний bootstrap
+service используется как harness container, внутри которого работают четыре
+Worker-процесса, Master и Replayer. Apps делят quota 6 CPU / 4 GiB, PostgreSQL
+и Kafka имеют по 2 CPU / 2 GiB; swap ограничен, fsync/synchronous_commit включены.
+Параметры заданы по [Compose service limits](https://docs.docker.com/reference/compose-file/services/);
+серверные timings интерпретируются по [pg_stat_statements](https://www.postgresql.org/docs/17/pgstatstatements.html).
+Топология и ресурсы одинаковы для всех вариантов. Это отдельный resource context,
+его throughput нельзя сопоставлять с прежней native-Windows серией как эффект D1/V8.
+
+Для отдельного Linux-стенда подготовлен ограниченный порядок: targeted checks всех
+вариантов → 4 pilots (60 ticks × 16 групп, четыре Worker) → три перемешанных блока
+по четыре full-D2 attempts, seed=141. Бюджет — **12 full attempts**, без replacements.
+Первый FAIL сохраняется и останавливает серию для разбора; неподнятые attempts не
+выдаются за успешные. Перед началом и каждым attempt проверяются ресурсы. Gates:
+MemAvailable ≥12 GiB, free disk ≥80 GiB на output и Docker filesystem, ≥12 logical CPU,
+load1 ≤25%, отсутствие занятого swap и подтверждённые Docker memory/swap limits.
+Рекомендуется отдельный стенд с 32 GiB RAM, 16 logical CPU и ≥128 GiB свободного места.
+Пороги — консервативный бюджет этой серии, не результат измерения её потребления.
+
+Clean runs (`profile=false`, SQL timings off) записывают throughput, processing E2E,
+Master intake→commit, CPU/RSS Worker/Master, backlog и 1Hz SQL active wait samples.
+Опция `--diagnostics` добавляет **отдельные четыре** full-D2 diagnostic attempts после
+clean серии: SQL round trips BEGIN/COMMIT, join stages, fetch+JSON decode и серверный
+pg_stat_statements. Диагностические throughput не объединяются с clean samples;
+query execution COMMIT не подменяет client durable COMMIT latency. Wait samples не
+являются полными wait durations; fetch+decode не выдаётся за изолированное JSON CPU.
+Каждый full PASS требует независимый pinned V1 comparator, 46 080 Raw и проверки
+реально применённых SQL checksums, source SHA, durability и container/OOM evidence.
+Все FAIL/interrupt сохраняются в all-attempt ledger; raw samples не теряются при отказе.
+
+Решения после доступных проверок: D1 standalone — **REJECT** по исторической
+нестабильности; V8 отдельно — **INCONCLUSIVE**; D1+V8 — **INCONCLUSIVE**.
+Новое факторное performance-сравнение ещё не выполнено, ACCEPT отсутствует.
+Ограничения P14-1 (неустановленные первоначальные blockers старых lock_timeout,
+недетерминированная длительная I/O-пауза, отсутствующий historical V1 executable)
+сохраняются. Golden не пересоздавался; математика и durable guarantees не ослаблялись.
+
+Linux reproduction после восстановления внешнего P14-1B архива и переноса immutable
+assets/golden (новые output directories обязательны; никакого автоматического запуска):
+
+```sh
+# package содержит variants.json, четыре tar и incremental variants.bundle.
+python3 experiments/sqlbench/prepare.py --from-package /data/package/source-package --output /data/p14-1b-sources
+python3 experiments/sqlbench/run.py --sources /data/p14-1b-sources --output /data/p14-1b-plan --assets /data/assets --golden /data/golden --manifest /data/v1-generated-golden.json
+# Только на подходящем выделенном Linux-стенде; новый resource preflight обязателен:
+python3 experiments/sqlbench/run.py --sources /data/p14-1b-sources --output /data/p14-1b-series --assets /data/assets --golden /data/golden --manifest /data/v1-generated-golden.json --project cad-p14-1b-series-unique --run --diagnostics
+```
+
+Historical Windows manifest сохраняется и переносится только по locations для Linux;
+scientific pin и file SHA не меняются. Image IDs, effective limits, ledger и результаты
+сохраняются для проверки; credentials удалены из inspect evidence. Используется новый
+Compose project, существующие project/volumes не переиспользуются и не удаляются.
+После испытаний выполняется stop, containers/volumes сохраняются для диагностики.
+Новые reusable benchmark scripts не восстанавливают ранее исключённые JSON/Python
+анализаторы. Внешний архив P14-1B находится рядом с checkout в
+`experiment-archives/cluster-anomaly-detection-v2/p14-performance-20261105/p14-1b-close/`;
+его manifest/SHA256SUMS определяют точный development HEAD и все SHA артефактов.
