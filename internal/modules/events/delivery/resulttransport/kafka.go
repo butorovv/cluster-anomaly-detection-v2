@@ -29,10 +29,15 @@ type KafkaSender struct {
 }
 
 func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*observability.Registry) (*KafkaSender, error) {
+	return newKafka(ctx, seeds, create, nil, metrics...)
+}
+
+func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt, metrics ...*observability.Registry) (*KafkaSender, error) {
 	if len(seeds) == 0 {
 		return nil, fmt.Errorf("Kafka seeds required")
 	}
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks()))
+	opts := []kgo.Opt{kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks())}
+	cl, err := kgo.NewClient(append(opts, extra...)...)
 	if err != nil {
 		return nil, err
 	}
