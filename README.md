@@ -1647,3 +1647,168 @@ Compose project, существующие project/volumes не переиспо�
 анализаторы. Внешний архив P14-1B находится рядом с checkout в
 `experiment-archives/cluster-anomaly-detection-v2/p14-performance-20261105/p14-1b-close/`;
 его manifest/SHA256SUMS определяют точный development HEAD и все SHA артефактов.
+
+
+### P14-1C: измеренный local SQL, full-system acceptance pending (06.11.2026)
+
+На существующем native PostgreSQL 17.5 (отдельный `.cache/p14-postgres/data`,
+127.0.0.1:55415) выполнены **36/36 PASS** измерительных attempts: по три блока
+clean/diagnostic/locks для каждого из четырёх неизменённых P14-1B snapshots из
+таблицы выше. Новый opt-in test `TestSQLMicroMeasurements` добавлен к существующим
+Go integration tests; запуск через Go test overlay не меняет bytes snapshots и
+не создаёт новые source variants. Production SQL/Go и frozen mathematics не менялись.
+Ни Docker/Kafka, ни процессы Master/Worker, ни full D2 не запускались.
+
+Стенд: i7-12650H, 10 cores/16 logical CPU, 16 GB physical RAM; Windows 11;
+Go GOMAXPROCS=2, GOMEMLIMIT=256MiB (soft Go limit, не общий OS memory cap).
+PostgreSQL shared_buffers=128MB, work_mem=4MB, max_connections=100,
+read committed, fsync/full_page_writes/synchronous_commit=on,
+wal_sync_method=open_datasync; pool MaxConns=4, normal lock_timeout=2000ms,
+statement_timeout=5000ms. CPU affinity/частоты не фиксировались, host не изолирован.
+Миграции и SHA реально применённой ledger записаны в каждом результате:
+V1–V7 для P13/D1, V1–V8 для V8/комбинации. Старые миграции не редактировались.
+
+Clean: 64 различных timestamps × 16 групп, восемь warm timestamps вне таймера,
+три повтора с новыми disposable databases. Порядок блоков:
+P13,D1,V8,D1+V8; D1+V8,V8,D1,P13; V8,P13,D1+V8,D1.
+Вход — выбранные Raw/Temporal/Evidence pinned Summit `g16-d0` golden
+(его provenance указывает Summit D1.parquet, не новый D2 replay).
+Cross-group annotation снята только при подготовке локальных fragments;
+реальный production MasterStore.Accept и accept_tick_fragment восстанавливают её.
+После измерения canonical final payload и MessageID сравниваются с выбранным
+исходным golden. Все четыре input SHA и final digest совпали между вариантами.
+Это проверка выбранных payload/IDs, **не independent full-pipeline golden parity**.
+Fixture generation, file scanning, migrations и контрольный digest вне таймера.
+
+Чистые latency (ms; nearest-rank quantiles; median — обычная выборочная медиана):
+
+| Вариант | Fragment n | mean | median | p50 | p95 | p99 | Final fragment n | mean | median | p50 | p95 | p99 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| P13 | 3072 | 3.242 | 2.043 | 2.042 | 15.696 | 22.878 | 192 | 19.149 | 17.630 | 17.598 | 29.630 | 47.033 |
+| D1 | 3072 | 2.069 | 1.020 | 1.020 | 14.983 | 20.377 | 192 | 17.634 | 17.075 | 17.062 | 22.732 | 25.493 |
+| V8 | 3072 | 2.891 | 1.874 | 1.874 | 15.109 | 18.431 | 192 | 16.979 | 16.169 | 16.142 | 21.960 | 35.496 |
+| D1+V8 | 3072 | 1.879 | 0.906 | 0.906 | 14.808 | 17.879 | 192 | 16.203 | 15.812 | 15.806 | 19.889 | 22.856 |
+
+Fragment включает все 16 arrivals, поэтому p95 попадает в тяжёлый final fragment.
+Final fragment — полная latency последней Accept-транзакции (BEGIN, join, COMMIT),
+не изолированное время PostgreSQL executor. Nonfinal p95: 3.472/1.723/3.030/1.295ms.
+
+| Метрика | P13 | D1 | V8 | D1+V8 |
+|---|---:|---:|---:|---:|
+| Clean fragment transactions/s | 308.36 | 483.38 (+56.8%) | 345.81 (+12.1%) | 531.84 (+72.5%) |
+| Transactions/s по блокам | 256.9;333.6;352.2 | 417.5;502.7;548.9 | 320.0;359.5;361.2 | 513.8;543.9;538.9 |
+| Go allocated MB / timestamp (decimal) | 7.343 | 2.846 (-61.3%) | 7.345 | 2.845 (-61.3%) |
+| Go allocations / timestamp | 44064 | 25606 (-41.9%) | 44065 | 25606 (-41.9%) |
+| Go process CPU ms / timestamp | 23.112 | 11.637 (-49.7%) | 21.647 | 9.277 (-59.9%) |
+| Diagnostic SQL queries / timestamp | 97 | 82 (-15.5%) | 97 | 82 (-15.5%) |
+| Payload SELECTs / timestamp | 16 | 1 (-93.8%) | 16 | 1 (-93.8%) |
+| Payload rows read / timestamp | 136 | 16 (-88.2%) | 136 | 16 (-88.2%) |
+| Direct join JSON decodes / timestamp | 288 | 48 (-83.3%) | 288 | 48 (-83.3%) |
+| Diagnostic direct JSON decode ms / timestamp | 11.652 | 1.343 | 11.013 | 1.290 |
+| Diagnostic COMMIT p95 ms | 0.639 | 0.505 | 0.643 | 0.507 |
+| Diagnostic final transaction body p95 ms | 18.615 | 18.859 | 16.837 | 17.514 |
+| Diagnostic accept_tick_fragment RPC p95 ms | 0.840 | 0.873 | 0.843 | 0.939 |
+| Controlled FK wait p95 ms (sampled lower–upper) | 141.743–144.042 | 137.441–140.775 | not observed | not observed |
+| Controlled Worker Save p95 ms | 161.765 | 160.619 | 26.099 | 24.610 |
+| Observed lock waits / scenarios | 48/48 | 48/48 | 0/48 | 0/48 |
+| Timeout failures / successful retries (3 probes) | 3/3 | 3/3 | 0/0 | 0/0 |
+| Measurement attempts PASS / unexpected FAIL | 9/0 | 9/0 | 9/0 | 9/0 |
+
+Diagnostic measurements — отдельные три × 32 timestamps, с QueryTracer и
+counting/timing delegate вместо ровно трёх прямых json.Unmarshal в join.go.
+Counts включают identity decode; payload decodes: 272 → 32. Вложенные decodes
+в domain.Validate не считаются. Query count — warmed client SQL invocations,
+включая BEGIN/COMMIT; не число PL/pgSQL внутренних statements или wire packets.
+RPC timings включают client/server/network, не чистый server CPU. Body исключает
+BEGIN/COMMIT, но включает Go join/JSON. Decode time — сумма измеренных прямых
+вызовов, без SQL fetch. Clean latency/CPU/allocations не объединены с diagnostic.
+
+Concurrency: три × 16 overlap scenarios на вариант. Настоящая Master final
+транзакция приостановлена после первого accept_result на 100ms; одновременно
+настоящий Worker Store.Save сохраняет следующий timestamp. После освобождения
+Master ещё завершает SQL и COMMIT, поэтому FK wait может превышать 100ms.
+Это реальная открытая транзакция, без подмены advisory/table lock и без имитации I/O.
+Первые 15 samples каждого повтора используют timeout=2000ms; последний — явный
+60ms probe. Все 6 ожидаемых SQLSTATE 55P03 у P13/D1 сохранены как **отказы SQL
+транзакций**, с rollback и успешным retry; они не неожиданные test failures.
+Нормальные wait p95/Worker p95 рассчитаны по 45 samples, без timeout probes.
+V8: отсутствие sampled wait не означает нулевое теоретическое ожидание любой SQL.
+
+Также по 48 completing joins на вариант выполнены пакетами по четыре конкурентные
+транзакции: throughput по повторам P13 15.85/15.42/16.77, D1 17.13/16.55/16.81,
+V8 16.76/16.11/16.89, D1+V8 15.71/16.43/16.41 final joins/s. Значимого ускорения
+competing Master joins не показано: общий canonical exclusion намеренно сохранён.
+В каждом overlap проверены duplicate, checkpoint SHA/offsets, rollback/retry,
+stale ownership rejection, итоговая cardinality и final payload/MessageID digest.
+Конкурентная fixture синтетическая, создана существующим реальным GroupProcessor;
+её результаты не смешиваются с Summit latency workload.
+
+V8 доказательно устраняет конкретный конфликт identity FOR UPDATE с Worker FK
+KEY SHARE в accept_tick_fragment и accept_result; FOR NO KEY UPDATE сохраняет
+Master writer exclusion. Ownership fencing по-прежнему FOR UPDATE. Это не
+объясняет автоматически все прежние D2 lock_timeout: их initial blockers остаются
+неустановленными. Real relation-extension wait наблюдался ранее; длительный
+DataFileExtend/I/O stall в этой сессии не воспроизводился. Причина не приписывается
+Windows/драйверу/антивирусу/диску. Durability и isolation не ослаблялись.
+
+В 158 resource samples: available RAM 1135–1887MiB, commit 17.18–17.87GB из
+33.56GB, test RSS до 117.6MB, сумма PG RSS до 273.8MB (shared pages могут считаться
+повторно), диск ≥20.77GB свободно. CPU до 65%, aggregate disk до 159.3MB/s,
+queue до 6. Три samples paging 9908/15281/5092 pages/s приходятся на clean block3
+P13; ни они, ни более медленный block1 не исключены. Pagefile уже был занят
+(655MiB при hardware snapshot). Нет признака исчерпания RAM/commit, но host noise,
+кеши и paging ограничивают интерпретацию throughput. Пороги остановки:
+available<600MiB или commit>90%; gate перед попыткой 800MiB/85%. Ни один не сработал.
+
+D1 повторяет преимущество в каждом парном блоке (относительно P13 +62.5/+50.7/+55.9%
+transactions/s); снижение reads/allocations доказано механически и измерено.
+У V8 uncontended throughput difference уменьшается от +24.5% до +2.6% между
+блоками: отдельное ускорение обычного join **INCONCLUSIVE**. Проверенный эффект
+V8 — устранение FK wait и отказа checkpoint в конкретном overlap.
+У комбинации сохраняются оба механизма; дополнительный throughput выигрыш над
+D1 не воспроизводится во всех блоках (последний −1.8%). Нет доказательства
+аддитивного прироста скорости; есть смысл продолжить full-system проверку комбинации.
+
+Локальные статусы: **LOCAL_SQL_PERFORMANCE_VERIFIED** (D1 reads/allocations/latency;
+V8 controlled FK contention; комбинация сохраняет оба эффекта),
+**FULL_SYSTEM_ACCEPTANCE_PENDING** для всех кандидатов. Исторические системные
+решения сохраняются: D1 standalone **REJECT**, V8 **INCONCLUSIVE**, D1+V8
+**INCONCLUSIVE**. Никакого системного ACCEPT или полной P14 regression PASS.
+
+Исторические полные D2 остаются отдельно: P13 3PASS/0FAIL (123.382/132.759/151.619),
+D1 2PASS/1FAIL (159.324/163.256), D1+V8 1PASS/1FAIL (166.559). Успешные полные
+запуски ранее прошли independent pinned V1 parity; два lock_timeout failures
+не достигли comparator (NOT_REACHED, не golden mismatch). Эти числа не объединяются
+с SQL transactions/s. Kafka integration, full D2, full fault-regression и новая
+full-pipeline golden parity в P14-1C **NOT_RUN**. Старый V1 executable отсутствует:
+source pin и golden SHA сохранены, historical binary provenance восстановить нельзя.
+
+Raw samples, все p50/p95/p99/mean/median/n, Go overlays, resource ledger, commands,
+source/golden SHA и targeted test logs находятся во внешнем P14-1C архиве рядом
+с прежними архивами: `experiment-archives/cluster-anomaly-detection-v2/`
+`p14-performance-20261106/p14-1c-close/`. Manifest/SHA256SUMS — источник SHA.
+Предыдущие шесть archive ZIP+manifest проверены и не менялись. Полный D2,
+Kafka Producer/Dispatcher, PR и merge остаются за пределами этой сессии.
+
+
+Новые existing targeted suites: **34 PASS test/subtest events × 4 snapshots**
+(по три package PASS), включая SQL suites/fencing/crash, full/partial ticks при
+4/8/16 группах и δ=0/10/30/60, duplicate/reorder/restart-state, concurrent joins,
+atomic checkpoint/outbox/offset rollback, lost COMMIT ACK и stale epoch race.
+Отдельно текущая ветка: **19 PASS events** по fresh/upgrade/V5/V7→V8,
+transactional migration rollback/retry, FK KEY SHARE, checkpoint/final join,
+concurrent last duplicate/read budget и join rollback/offset/IDs.
+Целевая `-race` проверка: **9 PASS events**, два package PASS.
+Это **TARGETED_CORRECTNESS_VERIFIED** в перечисленном SQL scope;
+Kafka и полная fault/system regression не запускались.
+Обычный запуск нового opt-in test без переменной режима даёт SKIP;
+package go vet прошёл. Субагенты не запускались. Orchestrator Sol/high —
+configured по project config; runtime model/effort metadata не подтверждены.
+
+
+Scope научной проверки: первые 72 ticks (64 measured + 8 warm) и первые 40
+для diagnostic из одной g16-d0 серии; полные EventID/Parent events/Summary,
+VoteSegments/RBSubspans всего D2 новым microbenchmark не пересчитывались.
+Существующие group-result payload поля и scientific identity проверены в выбранном
+scope; source hashes защищают отсутствие изменений kernel. Это не заменяет
+независимый comparator полного scientific pipeline.
