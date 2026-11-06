@@ -131,11 +131,30 @@ type microFixture struct {
 	expectedHash string
 }
 
+type microFixtureTB struct {
+	testing.TB
+	root string
+}
+
+func (t microFixtureTB) TempDir() string { return t.root }
+
 func newMicroFixture(t *testing.T, ticks int) microFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := postgrestest.New(t)
-	f := workerfixture.New(t, ticks, 0)
+	// Source.Path participates in the existing fixture's frozen provenance.
+	// A fixed test-only location keeps factorial input bytes and IDs identical.
+	var fixtureTB testing.TB = t
+	if root := os.Getenv("P14_SQL_MICRO_FIXTURE_ROOT"); root != "" {
+		if !filepath.IsAbs(root) {
+			t.Fatal("fixture root must be absolute")
+		}
+		if err := os.MkdirAll(root, 0700); err != nil {
+			t.Fatal(err)
+		}
+		fixtureTB = microFixtureTB{TB: t, root: root}
+	}
+	f := workerfixture.New(fixtureTB, ticks, 0)
 	first, err := group.NewGroupProcessor(f.Bundle, f.Options)
 	if err != nil {
 		t.Fatal(err)
@@ -186,7 +205,37 @@ func newMicroFixture(t *testing.T, ticks int) microFixture {
 			hash.Write(b)
 		}
 	}
-	return microFixture{pool: pool, f: f, r: r, envelopes: items, inputHash: hex.EncodeToString(hash.Sum(nil))}
+	// The last two prepared ticks serve only the stale-ownership probe.
+	return microFixture{pool: pool, f: f, r: r, envelopes: items, inputHash: hex.EncodeToString(hash.Sum(nil)), expectedHash: microExpectedPrefix(t, items[:ticks-2], r.Identity.RunID)}
+}
+
+func microExpectedPrefix(t *testing.T, items [][]domain.Envelope, runID string) string {
+	t.Helper()
+	h := sha256.New()
+	for _, tick := range items {
+		payloads := make([]domain.GroupResult, len(tick))
+		raw := make([]group.Raw, len(tick))
+		for i, e := range tick {
+			if err := json.Unmarshal(e.Payload, &payloads[i]); err != nil {
+				t.Fatal(err)
+			}
+			raw[i] = payloads[i].Raw
+		}
+		group.AnnotateOutside(raw)
+		for i, e := range tick {
+			payloads[i].Raw = raw[i]
+			if payloads[i].Evidence != nil {
+				payloads[i].Evidence.Raw = raw[i]
+			}
+			b, err := json.Marshal(payloads[i])
+			if err != nil {
+				t.Fatal(err)
+			}
+			h.Write([]byte(domain.MessageID(runID, e.GroupID, "group_result", e.EventTime.UTC().Format(time.RFC3339), 1)))
+			h.Write(b)
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 func realMicroFixture(t *testing.T, ticks int) microFixture {
 	t.Helper()
@@ -678,7 +727,7 @@ func microLocks(t *testing.T, n int) {
 		t.Fatal("stale write changed revision", saved, err)
 	}
 	digest := microDigest(t, f, 2*n)
-	microSave(t, map[string]any{"mode": "locks", "samples": samples, "expected_timeout_count": expectedTimeouts, "unexpected_errors": unexpected, "settings": microSettings(t, p), "source_commit": os.Getenv("P14_SQL_MICRO_SOURCE"), "competing_final_join_seconds": concurrent, "competing_final_transactions_per_second": float64(n) / concurrentElapsed, "stale_ownership_rejected": true, "final_scientific_and_messageid_digest": digest, "notes": "100ms actual final-join hold; last sample has explicit 60ms lock_timeout probe; sampled pg_locks waitstart lower/upper bounds, not DataFileExtend simulation"})
+	microSave(t, map[string]any{"mode": "locks", "input_hash": f.inputHash, "samples": samples, "expected_timeout_count": expectedTimeouts, "unexpected_errors": unexpected, "settings": microSettings(t, p), "source_commit": os.Getenv("P14_SQL_MICRO_SOURCE"), "competing_final_join_seconds": concurrent, "competing_final_transactions_per_second": float64(n) / concurrentElapsed, "stale_ownership_rejected": true, "final_scientific_and_messageid_digest": digest, "notes": "100ms actual final-join hold; last sample has explicit 60ms lock_timeout probe; sampled pg_locks waitstart lower/upper bounds, not DataFileExtend simulation"})
 	if len(unexpected) > 0 {
 		t.Fatal(unexpected)
 	}
