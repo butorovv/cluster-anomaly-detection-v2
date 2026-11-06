@@ -1652,7 +1652,7 @@ Compose project, существующие project/volumes не переиспо�
 ### P14-1C: измеренный local SQL, full-system acceptance pending (06.11.2026)
 
 На существующем native PostgreSQL 17.5 (отдельный `.cache/p14-postgres/data`,
-127.0.0.1:55415) выполнены **36/36 PASS** измерительных attempts: по три блока
+127.0.0.1:55415) выполнены **36/36 PASS** финальных сопоставимых измерительных attempts: по три блока
 clean/diagnostic/locks для каждого из четырёх неизменённых P14-1B snapshots из
 таблицы выше. Новый opt-in test `TestSQLMicroMeasurements` добавлен к существующим
 Go integration tests; запуск через Go test overlay не меняет bytes snapshots и
@@ -1708,8 +1708,8 @@ Final fragment — полная latency последней Accept-транзак
 | Diagnostic COMMIT p95 ms | 0.639 | 0.505 | 0.643 | 0.507 |
 | Diagnostic final transaction body p95 ms | 18.615 | 18.859 | 16.837 | 17.514 |
 | Diagnostic accept_tick_fragment RPC p95 ms | 0.840 | 0.873 | 0.843 | 0.939 |
-| Controlled FK wait p95 ms (sampled lower–upper) | 141.743–144.042 | 137.441–140.775 | not observed | not observed |
-| Controlled Worker Save p95 ms | 161.765 | 160.619 | 26.099 | 24.610 |
+| Controlled FK wait p95 ms (sampled lower–upper) | 139.509–143.875 | 136.039–141.197 | not observed | not observed |
+| Controlled Worker Save p95 ms | 160.205 | 157.390 | 25.988 | 24.643 |
 | Observed lock waits / scenarios | 48/48 | 48/48 | 0/48 | 0/48 |
 | Timeout failures / successful retries (3 probes) | 3/3 | 3/3 | 0/0 | 0/0 |
 | Measurement attempts PASS / unexpected FAIL | 9/0 | 9/0 | 9/0 | 9/0 |
@@ -1735,8 +1735,7 @@ Master ещё завершает SQL и COMMIT, поэтому FK wait може�
 V8: отсутствие sampled wait не означает нулевое теоретическое ожидание любой SQL.
 
 Также по 48 completing joins на вариант выполнены пакетами по четыре конкурентные
-транзакции: throughput по повторам P13 15.85/15.42/16.77, D1 17.13/16.55/16.81,
-V8 16.76/16.11/16.89, D1+V8 15.71/16.43/16.41 final joins/s. Значимого ускорения
+транзакции: throughput по повторам P13 16.84/16.59/16.66, D1 11.66/16.95/16.73, V8 15.64/17.11/16.94, D1+V8 16.36/15.16/16.49 final joins/s. Значимого ускорения
 competing Master joins не показано: общий canonical exclusion намеренно сохранён.
 В каждом overlap проверены duplicate, checkpoint SHA/offsets, rollback/retry,
 stale ownership rejection, итоговая cardinality и final payload/MessageID digest.
@@ -1812,3 +1811,26 @@ VoteSegments/RBSubspans всего D2 новым microbenchmark не перес�
 Существующие group-result payload поля и scientific identity проверены в выбранном
 scope; source hashes защищают отсутствие изменений kernel. Это не заменяет
 независимый comparator полного scientific pipeline.
+
+
+Уточнение fixture provenance перед закрытием: существующая workerfixture.New
+включает случайный Source.Path в SHA моделей/IDs. Начальные 12/12 PASS lock
+attempts сохранены как exploratory, их latency не входит в финальную таблицу.
+Повторены только 12/12 concurrency attempts через testing.TB.TempDir adapter
+с фиксированным отдельным `.cache/p14-1c/fixed-fixture`; frozen модель и реальные
+SQL functions те же, математические параметры не менялись. Input SHA и final
+canonical payload/MessageID SHA теперь одинаковы во всех 12 попытках; final
+hash дополнительно проверен против результата, подготовленного до SQL.
+Это не independent mathematical oracle для синтетики (AnnotateOutside общий).
+Итого: 48/48 measured test attempts PASS, из них 36 сравнимых и 12 exploratory;
+12 ожидаемых SQL timeout failures (6 exploratory + 6 final), все 12 retry PASS.
+Также сохранены 6 PASS SQL pilots и 2 CLI setup errors, не достигшие SQL.
+Исторические D2 FAIL не менялись. Исправление затрагивает только opt-in fixture;
+clean/diagnostic code paths не менялись и повторно не измерялись; исходный test
+и binaries сохранены с отдельным SHA/commit в test-source-provenance.json.
+
+Финальная fixed-fixture серия: 77 resource samples, available RAM
+2444–2637MiB, free disk ≥17.46GB,
+commit ≤17.67GB. Memory/commit gates не сработали.
+Причина изменения общего свободного места/фоновой памяти не установлена;
+она не приписывается PostgreSQL. Никаких Windows/WSL settings не меняли.
