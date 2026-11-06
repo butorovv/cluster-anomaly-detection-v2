@@ -14,6 +14,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/analysis"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,6 +47,11 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	advertise := flags.String("advertise-url", "", "reachable Worker URL; inferred only for loopback")
 	masterURL := flags.String("master-url", "http://127.0.0.1:8080", "Master URL for http_push")
 	createResults := flags.Bool("create-results-topic", false, "explicitly initialize/validate group.results")
+	async := flags.Bool("kafka-async", true, "bounded asynchronous Worker Kafka output")
+	asyncRecords := flags.Int("kafka-output-inflight-records", 4, "maximum unfinished Kafka deliveries (1..16)")
+	asyncBytes := flags.Int64("kafka-output-buffer-bytes", 4194304+256, "maximum reserved Kafka payload/key bytes")
+	asyncLinger := flags.Duration("kafka-output-linger", 0, "asynchronous Kafka linger")
+	asyncDrain := flags.Duration("kafka-output-drain", 5*time.Second, "bounded Kafka output shutdown drain")
 	level := flags.String("log-level", "info", "info or debug (offsets only, no telemetry payload)")
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -132,5 +138,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return RunWithOutput(ctx, Config{Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults})
+	return RunWithOutput(ctx, Config{Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults, KafkaAsync: *async, KafkaAsyncConfig: usecase.AsyncConfig{MaxRecords: *asyncRecords, MaxBytes: *asyncBytes, DrainTimeout: *asyncDrain}, KafkaAsyncLinger: *asyncLinger})
 }

@@ -1,0 +1,60 @@
+{
+  "sources": {
+    "P13": "c9a81e637c18c628c708c59a1816708bce6e0847",
+    "SQL": "9da066efb9c42947f683afd14dc26620c43156b1",
+    "Kafka": "64445776dd240b7e441f0babbdd6a68df6ecbc28"
+  },
+  "tested_snapshots": {
+    "A": {
+      "commit": "c9a81e637c18c628c708c59a1816708bce6e0847",
+      "tree": "60bd6268545a592e45a07d49daea34dad27bf24e",
+      "D1": false,
+      "V8": false,
+      "Kafka": false
+    },
+    "B": {
+      "commit": "1870f8a56575fe4d64a1ecca58ffc601d5a5b677",
+      "tree": "f0e5023f3d02fd64c8e26c6b70976a68636b9bdc",
+      "D1": true,
+      "V8": true,
+      "Kafka": false
+    },
+    "C": {
+      "commit": "7f840af6ffbcd4e0e65f954154d7030701ce0b1b",
+      "tree": "f09ea94fdf8357f543b6ceda7a7acc6162c8b0a8",
+      "D1": false,
+      "V8": false,
+      "Kafka": true
+    },
+    "D": {
+      "commit": "c00b90f7ca58dbbd3b78e7298a8fc355db22c0fa",
+      "tree": "2cd6f3de3b42fece611d149b48d433cd676f8d73",
+      "D1": true,
+      "V8": true,
+      "Kafka": true
+    },
+    "D1-only": {
+      "commit": "4ff85a61370ca499d1ded340c0ff4a0bc686d506",
+      "tree": "71c3eebdc616489a6135410c82dd63d21c319214",
+      "D1": true,
+      "V8": false,
+      "Kafka": false
+    },
+    "V8-only": {
+      "commit": "13084be6a9d8e39ac9512b804f8beba9b6abaf84",
+      "tree": "c4665d1794160b3b03195d561b95bb20021d40a4",
+      "D1": false,
+      "V8": true,
+      "Kafka": false
+    }
+  },
+  "production_equivalence": "Final integration db/ and internal/ match tested D; verified before publication.",
+  "omitted_SQL_changes": [
+    "profiling hooks",
+    "old experiment runner changes",
+    "microbenchmarks",
+    "historical README and archive tooling"
+  ],
+  "performance": "NOT_RUN",
+  "system_acceptance": "INCONCLUSIVE"
+}

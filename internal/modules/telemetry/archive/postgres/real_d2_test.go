@@ -70,7 +70,7 @@ func TestRealD2Archive(t *testing.T) {
 		t.Fatal("isolated PostgreSQL connection failed")
 	}
 	defer c.Close(context.Background())
-	if n, e := db.Apply(ctx, c, db.Files); e != nil || n != 7 {
+	if n, e := db.Apply(ctx, c, db.Files); e != nil || n != 8 {
 		t.Fatal(n, e)
 	}
 	w, err := New(ctx, c, 1024)
