@@ -165,9 +165,18 @@ func describeProducerSource(ctx context.Context, admin producerTopicAdmin, topic
 	return m.Cluster, t.ID.String(), nil
 }
 
-// ConsumeKafka processes output records synchronously. Durable PostgreSQL
-// positions are loaded before each assignment is allowed to fetch records.
+// ConsumeKafka uses bounded partition-aware processing with default limits.
 func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, metrics ...*observability.Registry) (retErr error) {
+	return ConsumeKafkaWithConfig(ctx, seeds, consumerGroup, pin, load, handle, KafkaConsumerConfig{}, metrics...)
+}
+
+// ConsumeKafkaWithConfig loads SQL positions before fetch and retains the
+// rebalance barrier until every handler in the bounded wave has returned.
+func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) (retErr error) {
+	cfg = cfg.WithDefaults()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	var registry *observability.Registry
 	if len(metrics) > 0 {
 		registry = metrics[0]
@@ -311,7 +320,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		}
 		return offsets, nil
 	}
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond))
+	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(domain.MaxMessageBytes+1024), kgo.MaxConcurrentFetches(0), kgo.SessionTimeout(10*time.Second), kgo.HeartbeatInterval(time.Second), kgo.RebalanceTimeout(30*time.Second))
 	if err != nil {
 		return err
 	}
@@ -325,7 +334,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 	}()
 	for {
 		pollStarted := time.Now()
-		fetches := cl.PollRecords(ctx, 128)
+		fetches := cl.PollRecords(ctx, cfg.MaxPollRecords)
 		polledAt := time.Now()
 		registry.Observe("results_kafka_poll_wait", polledAt.Sub(pollStarted))
 		if err := ctx.Err(); err != nil {
@@ -336,46 +345,30 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 		}
 		records := fetches.Records()
 		registry.Set("results_kafka_poll_batch_records", float64(len(records)))
-		for _, r := range records {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			mu.Lock()
-			next, ok := expected[r.Partition]
-			mu.Unlock()
-			if r.Topic != ResultsTopic || !ok || r.Offset != next {
-				return fmt.Errorf("unexpected result record position at %s/%d@%d", r.Topic, r.Partition, r.Offset)
-			}
-			e, err := domain.Decode(r.Value)
-			if err != nil {
-				return fmt.Errorf("decode output %d@%d: %w", r.Partition, r.Offset, err)
-			}
-			p, err := topology.PartitionForGroup(e.GroupID)
-			if err != nil || p != int(r.Partition) || string(r.Key) != e.GroupID {
-				return fmt.Errorf("physical/logical output routing mismatch at %d@%d", r.Partition, r.Offset)
-			}
-			intakeAt := time.Now()
-			registry.Observe("results_kafka_poll_to_intake", intakeAt.Sub(polledAt))
-			// Record CreateTime is a processing clock assigned by this producer,
-			// never Summit's historical scientific event_time. This combined interval
-			// still includes producer transit, broker and client prefetch queue.
-			if !r.Timestamp.IsZero() && !polledAt.Before(r.Timestamp) {
-				registry.Observe("results_kafka_create_to_poll", polledAt.Sub(r.Timestamp))
-			}
-			if err := handle(ctx, r, r.Value); err != nil {
-				return fmt.Errorf("handle output %d@%d: %w", r.Partition, r.Offset, err)
-			}
-			registry.Observe("results_kafka_intake_service", time.Since(intakeAt))
-			mu.Lock()
-			expected[r.Partition] = r.Offset + 1
-			mu.Unlock()
+		mu.Lock()
+		positions := make(map[int32]int64, len(expected))
+		for p, next := range expected {
+			positions[p] = next
 		}
+		mu.Unlock()
+		lasts, err := processKafkaBatch(ctx, cfg, records, positions, polledAt, handle, registry)
+		if err != nil {
+			return err
+		} // SQL prefixes remain durable; restart loads them.
+		mu.Lock()
+		for _, r := range lasts {
+			expected[r.Partition] = r.Offset + 1
+		}
+		mu.Unlock()
 		// PostgreSQL output positions are already durable per record. Kafka's
 		// auxiliary commit can acknowledge the successfully processed poll batch;
 		// a crash in its middle restores SQL positions, never Kafka progress.
-		if len(records) > 0 {
+		if len(lasts) > 0 {
 			commitStarted := time.Now()
-			if err := cl.CommitRecords(ctx, records...); err != nil {
+			commitCtx, commitCancel := context.WithTimeout(ctx, time.Second)
+			err := cl.CommitRecords(commitCtx, lasts...)
+			commitCancel()
+			if err != nil {
 				return fmt.Errorf("commit durable output batch: %w", err)
 			}
 			registry.Observe("results_kafka_aux_commit", time.Since(commitStarted))

@@ -11,7 +11,17 @@ import (
 	"strconv"
 )
 
-func RunKafka(ctx context.Context, seeds []string, consumer, execution string, create bool, store repo.MasterStore, master usecase.Master) error {
+func RunKafka(ctx context.Context, seeds []string, consumer, execution string, create bool, store repo.MasterStore, master usecase.Master, options ...resulttransport.KafkaConsumerConfig) error {
+	if len(options) > 1 {
+		return fmt.Errorf("one Kafka intake configuration required")
+	}
+	cfg := resulttransport.KafkaConsumerConfig{}.WithDefaults()
+	if len(options) == 1 {
+		cfg = options[0].WithDefaults()
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
 	sender, err := resulttransport.NewKafka(ctx, seeds, create, master.Metrics)
 	if err != nil {
 		return err
@@ -38,7 +48,7 @@ func RunKafka(ctx context.Context, seeds []string, consumer, execution string, c
 	if err := store.BindResults(ctx, execution, pin.ClusterID, pin.TopicID, consumer, offsets); err != nil {
 		return err
 	}
-	return resulttransport.ConsumeKafka(ctx, seeds, consumer, pin, func(ctx context.Context, p int32) (int64, error) { return store.ResultOffset(ctx, execution, p) }, func(ctx context.Context, r *kgo.Record, b []byte) error {
+	return resulttransport.ConsumeKafkaWithConfig(ctx, seeds, consumer, pin, func(ctx context.Context, p int32) (int64, error) { return store.ResultOffset(ctx, execution, p) }, func(ctx context.Context, r *kgo.Record, b []byte) error {
 		return master.AcceptKafka(ctx, execution, pin.TopicID, r.Partition, r.Offset, b)
-	}, master.Metrics)
+	}, cfg, master.Metrics)
 }
