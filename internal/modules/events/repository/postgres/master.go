@@ -7,6 +7,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -35,7 +36,7 @@ func (s MasterStore) Identity(ctx context.Context, execution string) (group.RBI2
 	return id, nil
 }
 func (s MasterStore) Accept(ctx context.Context, e domain.Envelope) (bool, error) {
-	tx, err := s.DB.Begin(ctx)
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return false, err
 	}
