@@ -127,27 +127,31 @@ func (s *Store) Save(ctx context.Context, l Lease, transition core.Transition) (
 			fragments = append(fragments, fragment)
 		}
 	}
-	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return 0, err
-	}
-	defer tx.Rollback(context.Background())
 	var revision int64
-	err = tx.QueryRow(ctx, `SELECT cad_v2.commit_checkpoint($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,'json-utf8',$9::bytea,$10::cad_v2.sha256_hex,$11,$12::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision-1, c.NextOffset, c.LastTick, group.MathSnapshotSchemaVersion, c.Snapshot, c.SHA256, c.Finalized, payload).Scan(&revision)
-	if err != nil {
-		return 0, err
-	}
-	for i, fragment := range fragments {
-		bytes, err := json.Marshal(fragment)
-		if err != nil {
+	for attempt := 0; ; attempt++ {
+		var commitAttempted bool
+		revision, commitAttempted, err = s.saveAttempt(ctx, l, c, payload, outputs, fragments)
+		if err == nil {
+			return revision, nil
+		}
+		if commitAttempted {
+			break // ambiguous COMMIT is reconciled below, never blindly retried
+		}
+		var pgerr *pgconn.PgError
+		if attempt == 2 || ctx.Err() != nil || !errors.As(err, &pgerr) ||
+			(pgerr.Code != "55P03" && pgerr.Code != "57014" && pgerr.Code != "40001" && pgerr.Code != "40P01") {
 			return 0, err
 		}
-		if _, err := tx.Exec(ctx, `SELECT cad_v2.stage_tick_fragment($1::uuid,$2,$3::uuid,$4,$5,$6,$7::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision, len(outputs)+i+1, bytes); err != nil {
-			return 0, err
+		// The failed transaction has rolled back. Retry only this immutable
+		// proposal, without re-running Step or acknowledging RAM/input progress.
+		// Keep the caller's original deadline and re-check ownership in SQL.
+		timer := time.NewTimer(time.Duration(attempt+1) * 50 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return 0, ctx.Err()
+		case <-timer.C:
 		}
-	}
-	if err = tx.Commit(ctx); err == nil {
-		return revision, nil
 	}
 	// COMMIT errors may mean the server committed but the ACK was lost. Never
 	// blindly retry the CAS/write; reread on an independent bounded connection.
@@ -181,6 +185,32 @@ func (s *Store) Save(ctx context.Context, l Lease, transition core.Transition) (
 		}
 	}
 	return durable.Revision, nil
+}
+
+// saveAttempt reports whether COMMIT was sent. Only known SQL failures before
+// that point may be retried; deferred rollback completes before returning.
+func (s *Store) saveAttempt(ctx context.Context, l Lease, c core.Checkpoint, payload []byte, outputs []core.EventEnvelope, fragments []events.Envelope) (int64, bool, error) {
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, false, err
+	}
+	defer tx.Rollback(context.Background())
+	var revision int64
+	err = tx.QueryRow(ctx, `SELECT cad_v2.commit_checkpoint($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,'json-utf8',$9::bytea,$10::cad_v2.sha256_hex,$11,$12::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision-1, c.NextOffset, c.LastTick, group.MathSnapshotSchemaVersion, c.Snapshot, c.SHA256, c.Finalized, payload).Scan(&revision)
+	if err != nil {
+		return 0, false, err
+	}
+	for i, fragment := range fragments {
+		bytes, err := json.Marshal(fragment)
+		if err != nil {
+			return 0, false, err
+		}
+		if _, err := tx.Exec(ctx, `SELECT cad_v2.stage_tick_fragment($1::uuid,$2,$3::uuid,$4,$5,$6,$7::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision, len(outputs)+i+1, bytes); err != nil {
+			return 0, false, err
+		}
+	}
+	err = tx.Commit(ctx)
+	return revision, true, err
 }
 
 // Pending returns durable messages without acknowledgement or dispatch. They
