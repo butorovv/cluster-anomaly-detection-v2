@@ -17,14 +17,14 @@ import (
 
 type pausedDeliveryAck struct {
 	usecase.Outbox
-	once    sync.Once
-	entered chan string
+	once      sync.Once
+	entered   chan string
+	blockedID string
 }
 
 func (s *pausedDeliveryAck) Ack(ctx context.Context, o domain.Owner, id string) error {
-	first := false
-	s.once.Do(func() { first = true; s.entered <- id })
-	if first {
+	s.once.Do(func() { s.blockedID = id; s.entered <- id })
+	if id == s.blockedID {
 		<-ctx.Done()
 		return ctx.Err()
 	}
@@ -71,6 +71,15 @@ func TestWorkerAsyncRestartAfterKafkaACKBeforeSQLACK(t *testing.T) {
 	case <-time.After(20 * time.Second):
 		t.Fatal("Kafka ACK / SQL gap not reached")
 	}
+	// Keep k's delivery SQL ACK blocked across retries while the SAME Worker
+	// computes and checkpoints k+1. This is actual Kafka/PG progress, not a
+	// goroutine-count assertion or a timing assumption about a 3s request.
+	rig.sendTick(t, 1)
+	rig.waitRevision(t, 2)
+	var stillPending bool
+	if err := rig.pool.QueryRow(context.Background(), `SELECT delivered_at IS NULL FROM cad_v2.worker_tick_fragments WHERE message_id=$1`, id).Scan(&stillPending); err != nil || !stillPending {
+		t.Fatal("k delivery ACK completed before k+1 checkpoint", stillPending, err)
+	}
 	stopWorker(t, stop, stopped)
 	var pending bool
 	err := rig.pool.QueryRow(context.Background(), `SELECT EXISTS(SELECT 1 FROM cad_v2.worker_tick_fragments WHERE message_id=$1 AND delivered_at IS NULL)`, id).Scan(&pending)
@@ -79,7 +88,7 @@ func TestWorkerAsyncRestartAfterKafkaACKBeforeSQLACK(t *testing.T) {
 	}
 	_, stop2, stopped2 := rig.startOutput(t, newOutput(repo.OutboxStore{DB: rig.pool}))
 	defer stopWorker(t, stop2, stopped2)
-	for tick := 1; tick < 6; tick++ {
+	for tick := 2; tick < 6; tick++ {
 		rig.sendTick(t, tick)
 		rig.waitRevision(t, int64(tick+1))
 	}
