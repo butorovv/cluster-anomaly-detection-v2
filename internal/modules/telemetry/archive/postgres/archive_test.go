@@ -56,8 +56,8 @@ func archiveDB(t testing.TB) (*pgx.Conn, *pgx.Conn) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { conn.Close(context.Background()) })
-	if n, err := db.Apply(ctx, conn, db.Files); err != nil || n != 8 {
-		t.Fatalf("apply V1-V8: %d %v", n, err)
+	if n, err := db.Apply(ctx, conn, db.Files); err != nil || n != 9 {
+		t.Fatalf("apply V1-V9: %d %v", n, err)
 	}
 	return conn, conn
 }
