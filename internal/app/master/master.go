@@ -44,6 +44,12 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("invalid MASTER_DATABASE_URL")
 	}
 	cfg.MaxConns = 16
+	metrics := observability.New()
+	var stages *observability.Registry
+	if observability.ProfilingEnabled() {
+		cfg.ConnConfig.Tracer = observability.QueryTracer{Metrics: metrics}
+		stages = metrics
+	}
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "5000"
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "2000"
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -69,13 +75,12 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	ctx, cancelRuntime := context.WithCancel(ctx)
 	defer cancelRuntime()
 	log := slog.New(slog.NewJSONHandler(stderr, nil))
-	metrics := observability.New()
 	for _, name := range []string{"master_accepted", "master_duplicates", "master_rejected", "master_conflicts"} {
 		metrics.Add(name, 0)
 	}
 	metrics.Label("role", "master")
 	metrics.Label("execution_id", *execution)
-	service := usecase.Master{Store: repo.MasterStore{DB: pool}, Metrics: metrics, Logger: log, Measure: *measure}
+	service := usecase.Master{Store: repo.MasterStore{DB: pool, Stages: stages}, Metrics: metrics, Logger: log, Measure: *measure}
 	background := make(chan error, 1)
 	if *mode == "http_push" {
 		background <- nil
@@ -91,13 +96,13 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		go func() {
 			var err error
 			if *mode == "polling" {
-				err = (usecase.Poller{ExecutionID: *execution, Groups: id.Groups, Interval: *interval, Store: repo.MasterStore{DB: pool}, Master: service, Logger: log}).Run(ctx)
+				err = (usecase.Poller{ExecutionID: *execution, Groups: id.Groups, Interval: *interval, Store: repo.MasterStore{DB: pool, Stages: stages}, Master: service, Logger: log}).Run(ctx)
 			} else {
 				group := *resultsGroup
 				if group == "" {
 					group = "cad-results-" + *execution
 				}
-				err = RunKafka(ctx, strings.Split(*brokers, ","), group, *execution, *createResults, repo.MasterStore{DB: pool}, service)
+				err = RunKafka(ctx, strings.Split(*brokers, ","), group, *execution, *createResults, repo.MasterStore{DB: pool, Stages: stages}, service)
 			}
 			background <- err
 			if err != nil {

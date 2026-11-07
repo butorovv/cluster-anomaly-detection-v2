@@ -74,6 +74,37 @@ def inventory(repo):
     return sorted(entries.values(), key=lambda e: e['path'])
 
 
+def inventory_results(repo, roots):
+    """New experiments may reference the immutable P13 archive instead of copying it.
+
+    Select only explicit result directories; preserve the original full-backup
+    inventory and its independent-golden provenance checks as the default.
+    """
+    repo = Path(repo).resolve()
+    allowed = repo / 'experiments/artifacts'
+    entries = {}
+    for root in roots:
+        root = (repo / root).resolve()
+        if not root.is_dir() or (root != allowed and allowed not in root.parents):
+            raise ValueError('results root must be an existing experiments/artifacts directory')
+        for path in sorted(root.rglob('*')):
+            if path.is_symlink():
+                raise ValueError(f'result symlink is not archival input: {path}')
+            if path.is_file():
+                source = path.resolve()
+                if allowed not in source.parents:
+                    raise ValueError('result escapes artifacts directory')
+                member = 'repo/' + source.relative_to(repo).as_posix()
+                safe_path(member)
+                if member in entries:
+                    raise ValueError('overlapping result roots')
+                entries[member] = {'path': member, 'original_path': str(source),
+                                   'bytes': source.stat().st_size, 'sha256': sha(source)}
+    if not entries:
+        raise ValueError('empty result inventory')
+    return sorted(entries.values(), key=lambda entry: entry['path'])
+
+
 def create(directory, entries, commit):
     directory = Path(directory).resolve()
     if not entries:
@@ -146,6 +177,8 @@ def main():
     parser.add_argument('command', choices=('create', 'verify', 'restore'))
     parser.add_argument('--repo', type=Path, default=Path('.'))
     parser.add_argument('--archive-dir', type=Path)
+    parser.add_argument('--results-root', type=Path, action='append',
+                        help='archive only these explicit experiments/artifacts directories (repeatable)')
     parser.add_argument('--manifest', type=Path)
     parser.add_argument('--destination', type=Path)
     args = parser.parse_args()
@@ -156,7 +189,8 @@ def main():
         if directory == repo or repo in directory.parents:
             parser.error('archive must be outside repository')
         commit = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
-        print(create(directory, inventory(repo), commit), flush=True)
+        entries = inventory_results(repo, args.results_root) if args.results_root else inventory(repo)
+        print(create(directory, entries, commit), flush=True)
     else:
         if not args.manifest or (args.command == 'restore' and not args.destination):
             parser.error('--manifest required; restore also requires --destination')

@@ -6,10 +6,14 @@ import (
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-type MasterStore struct{ DB *pgxpool.Pool }
+type MasterStore struct {
+	DB     *pgxpool.Pool
+	Stages *observability.Registry // optional, profiling trials only
+}
 
 func (s MasterStore) Identity(ctx context.Context, execution string) (group.RBI2Identity, error) {
 	var id group.RBI2Identity
