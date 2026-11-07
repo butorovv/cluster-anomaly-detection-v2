@@ -320,7 +320,10 @@ func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 		}
 		return offsets, nil
 	}
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(domain.MaxMessageBytes+1024), kgo.MaxConcurrentFetches(0), kgo.SessionTimeout(10*time.Second), kgo.HeartbeatInterval(time.Second), kgo.RebalanceTimeout(30*time.Second))
+	// Keep the existing franz-go session/rebalance defaults. Even the maximum
+	// configured processing deadline (15s) is below its 45s session timeout;
+	// normal SQL operations also retain their shorter statement/lock timeouts.
+	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(domain.MaxMessageBytes+1024), kgo.MaxConcurrentFetches(0))
 	if err != nil {
 		return err
 	}
