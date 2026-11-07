@@ -1,5 +1,41 @@
 # cluster-anomaly-detection-v2
 
+## P14: экспериментальный итог 07.11.2026
+
+**P14 SYSTEM STATUS: INCONCLUSIVE.** Девять завершённых сравнительных full Summit D2
+(основные A→D→D→A, B→C→C→B и поздний A) прошли independent V1 golden,
+SQL/Kafka offsets, 16 final checkpoint Restore и MessageID/projection audit.
+Production recovery fix: `c230399` — bounded retry aborted pre-COMMIT checkpoint
+transactions; SQL timeouts, fencing, scientific kernel и frozen golden не менялись.
+Targeted real 55P03/57014, COMMIT ambiguity, Worker/Kafka/PG fault integration,
+targeted race и go vet прошли.
+
+| Variant | Successful throughput, group-ticks/s | Primary median |
+|---|---|---|
+| A: P13 | 154.474; 156.531 | 155.503 |
+| B: SQL D1/V8 | 182.613; 212.290 | 197.451 |
+| C: Kafka B1/B2 | 182.886; 179.511 | 181.198 |
+| D: main c230399 | 180.181; 188.874 | 184.528 |
+
+Парные приросты D/A: +16.64% и +20.66%; отношение медиан +18.67% —
+описательная локальная величина. Поздний A=168.288 (+8.22% к ранней медиане)
+показывает дрейф: сравнение отдельных D с поздним A даёт +7.07…+12.23%,
+не новый matched estimate. Дополнительный поздний B завершился FAIL на renewal
+client deadline и SQL 55P03 в read_outbox/renew_partition до comparator;
+он сохранён, не исключён из denominator (B: 2 PASS / 1 FAIL).
+Низкий disk headroom/WAL stalls наблюдались, причинность не установлена.
+При отключении RAM stop wrapper ошибочно перевёл остальные resource guards
+в warnings; non-RAM guards восстановлены. Эти ограничения не позволяют объявить
+безусловный performance/system ACCEPT. B3/E3/E4 не реализовывались.
+
+Полный отчёт, все отдельные запуски, SQL/Kafka stage histogram intervals,
+CPU/RSS/paging, fault receipts и failure diagnosis — во внешнем архиве
+`experiment-archives/cluster-anomaly-detection-v2/p14-main-system-20261107/REPORT.md`.
+Raw evidence сжато lossless с проверкой исходных SHA-256; restore/analysis scripts
+и manifests сохраняются вместе с отчётом. Исторические FAIL ниже остаются
+историческими, их результаты не смешиваются с новой серией.
+
+
 Go-реализация курсовой системы обнаружения групповых аномалий Summit.
 Главный архитектурный и математический контракт —
 [утверждённое ТЗ](docs/spec/FINAL_TZ_KR_Distributed_Group_Anomaly_Detection_V2.md).
