@@ -29,10 +29,15 @@ type KafkaSender struct {
 }
 
 func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*observability.Registry) (*KafkaSender, error) {
+	return newKafka(ctx, seeds, create, nil, metrics...)
+}
+
+func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt, metrics ...*observability.Registry) (*KafkaSender, error) {
 	if len(seeds) == 0 {
 		return nil, fmt.Errorf("Kafka seeds required")
 	}
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks()))
+	opts := []kgo.Opt{kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks())}
+	cl, err := kgo.NewClient(append(opts, extra...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -78,7 +83,7 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 		return err
 	}
 	checkStarted := time.Now()
-	cluster, topic, err := kafkainput.DescribeSourceWithClient(ctx, s.client, ResultsTopic)
+	cluster, topic, err := describeProducerSource(ctx, kadm.NewClient(s.client), ResultsTopic)
 	s.metrics.Observe("results_kafka_identity_check", time.Since(checkStarted))
 	if err != nil {
 		return err
@@ -94,6 +99,71 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 }
 
 func (s *KafkaSender) Close() error { s.client.Close(); return nil }
+
+type producerTopicAdmin interface {
+	Metadata(context.Context, ...string) (kadm.Metadata, error)
+	DescribeTopicConfigs(context.Context, ...string) (kadm.ResourceConfigs, error)
+}
+
+// describeProducerSource deliberately stays local to the producer: input and
+// result consumers retain their existing identity checks. Every send still
+// checks fresh metadata and effective policy; no identity is cached here.
+func describeProducerSource(ctx context.Context, admin producerTopicAdmin, topic string) (string, string, error) {
+	if admin == nil || topic == "" {
+		return "", "", fmt.Errorf("Kafka admin/topic required")
+	}
+	m, err := admin.Metadata(ctx, topic)
+	if err != nil {
+		return "", "", err
+	}
+	if m.Cluster == "" {
+		return "", "", fmt.Errorf("Kafka cluster ID required")
+	}
+	t, ok := m.Topics[topic]
+	if !ok || t.Err != nil {
+		return "", "", fmt.Errorf("topic %s unavailable: %v", topic, t.Err)
+	}
+	if len(t.Partitions) != resultPartitions {
+		return "", "", fmt.Errorf("topic %s: require 16 partitions, got %d", topic, len(t.Partitions))
+	}
+	for p := int32(0); p < resultPartitions; p++ {
+		d, ok := t.Partitions[p]
+		if !ok || d.Err != nil || d.Leader < 0 {
+			return "", "", fmt.Errorf("partition %d unavailable: %v", p, d.Err)
+		}
+	}
+	if t.ID == (kadm.TopicID{}) {
+		return "", "", fmt.Errorf("topic ID required for recovery identity")
+	}
+	configs, err := admin.DescribeTopicConfigs(ctx, topic)
+	if err != nil {
+		return "", "", fmt.Errorf("describe configuration for topic %s: %w", topic, err)
+	}
+	if len(configs) != 1 || configs[0].Name != topic {
+		return "", "", fmt.Errorf("topic %s configuration unavailable: require exactly one resource", topic)
+	}
+	config := configs[0]
+	if config.Err != nil {
+		return "", "", fmt.Errorf("topic %s configuration unavailable: %w", topic, config.Err)
+	}
+	var policy *string
+	seen := false
+	for _, c := range config.Configs {
+		if c.Key == "cleanup.policy" {
+			if seen {
+				return "", "", fmt.Errorf("topic %s has duplicate cleanup.policy configurations", topic)
+			}
+			seen, policy = true, c.Value
+		}
+	}
+	if policy == nil {
+		return "", "", fmt.Errorf("topic %s cleanup.policy unavailable", topic)
+	}
+	if *policy != "delete" {
+		return "", "", fmt.Errorf("topic %s has unsafe cleanup.policy %q: require delete", topic, *policy)
+	}
+	return m.Cluster, t.ID.String(), nil
+}
 
 // ConsumeKafka processes output records synchronously. Durable PostgreSQL
 // positions are loaded before each assignment is allowed to fetch records.

@@ -43,11 +43,11 @@ func TestV5UpgradePreservesDurableExecution(t *testing.T) {
 		return values
 	}
 	before := snapshot()
-	if n, err := Apply(ctx, c, Files); err != nil || n != 2 {
+	if n, err := Apply(ctx, c, Files); err != nil || n != 3 {
 		t.Fatal(n, err)
 	}
 	if after := snapshot(); !reflect.DeepEqual(before, after) {
-		t.Fatal("V6/V7 changed existing durable rows")
+		t.Fatal("V6-V8 changed existing durable rows")
 	}
 	if n, err := Apply(ctx, c, Files); err != nil || n != 0 {
 		t.Fatal(n, err)

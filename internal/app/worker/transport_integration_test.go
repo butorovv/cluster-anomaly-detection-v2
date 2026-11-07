@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync/atomic"
@@ -43,6 +44,14 @@ func (r *workerRig) startDelivery(t *testing.T, mode, masterURL string) (*Runner
 		}
 		d.Sender = sender
 	case "kafka":
+		if os.Getenv("SYSTEM_KAFKA_ASYNC_INTEGRATION") == "1" {
+			sender, err := resulttransport.NewKafkaAsync(context.Background(), r.broker.Seeds, true, resulttransport.KafkaAsyncOptions{MaxRecords: 4, MaxBytes: domain.MaxMessageBytes + 256})
+			if err != nil {
+				t.Fatal(err)
+			}
+			d.AsyncSender = sender
+			break
+		}
 		sender, err := resulttransport.NewKafka(context.Background(), r.broker.Seeds, true)
 		if err != nil {
 			t.Fatal(err)

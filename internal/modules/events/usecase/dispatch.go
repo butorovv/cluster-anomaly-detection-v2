@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	topology "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"log/slog"
 	"sort"
@@ -17,6 +18,7 @@ type Sender interface {
 	Close() error
 }
 type Outbox interface {
+	// Implementations must honor context cancellation; shutdown joins all calls.
 	Advertise(context.Context, domain.Owner, string) error
 	Page(context.Context, domain.Owner, domain.Cursor, int, bool) ([]domain.Delivery, error)
 	Ack(context.Context, domain.Owner, string) error
@@ -26,11 +28,15 @@ type Dispatcher struct {
 	Store                       Outbox
 	ExecutionID, Mode, Endpoint string
 	Sender                      Sender
+	AsyncSender                 AsyncSender
+	AsyncConfig                 AsyncConfig
 	Logger                      *slog.Logger
 	Metrics                     *observability.Registry
 	Measure                     bool
 	mu                          sync.Mutex
 	owners                      map[string]domain.Owner
+	generations                 map[string]uint64
+	closed                      bool
 	closeOnce                   sync.Once
 	closeErr                    error
 }
@@ -39,6 +45,11 @@ func (d *Dispatcher) Track(ctx context.Context, o domain.Owner) error {
 	if o.ExecutionID != d.ExecutionID {
 		return fmt.Errorf("dispatcher execution mismatch")
 	}
+	if d.AsyncSender != nil {
+		if _, err := topology.PartitionForGroup(o.GroupID); err != nil {
+			return err
+		}
+	}
 	if d.Mode == "polling" {
 		if err := d.Store.Advertise(ctx, o, d.Endpoint); err != nil {
 			return err
@@ -46,17 +57,25 @@ func (d *Dispatcher) Track(ctx context.Context, o domain.Owner) error {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.AsyncSender != nil && d.closed {
+		return fmt.Errorf("async dispatcher closed")
+	}
 	if d.owners == nil {
 		d.owners = map[string]domain.Owner{}
 	}
+	if d.generations == nil {
+		d.generations = map[string]uint64{}
+	}
+	d.generations[o.GroupID]++
 	d.owners[o.GroupID] = o
 	return nil
 }
 func (d *Dispatcher) Forget(groupID string, epoch int64) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.owners[groupID].Epoch == epoch {
+	if o, ok := d.owners[groupID]; ok && o.Epoch == epoch {
 		delete(d.owners, groupID)
+		d.generations[groupID]++
 	}
 }
 func (d *Dispatcher) Owner(groupID string) (domain.Owner, bool) {
@@ -69,7 +88,12 @@ func (d *Dispatcher) Owner(groupID string) (domain.Owner, bool) {
 // Close also covers startup failures before Run has been entered.
 func (d *Dispatcher) Close() error {
 	d.closeOnce.Do(func() {
-		if d.Sender != nil {
+		d.mu.Lock()
+		d.closed = true
+		d.mu.Unlock()
+		if d.AsyncSender != nil {
+			d.closeErr = d.AsyncSender.Close()
+		} else if d.Sender != nil {
 			d.closeErr = d.Sender.Close()
 		}
 	})
@@ -79,6 +103,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	if d.Mode == "polling" {
 		<-ctx.Done()
 		return nil
+	}
+	if d.AsyncSender != nil {
+		return d.runAsync(ctx)
 	}
 	if d.Sender == nil {
 		return fmt.Errorf("output sender required")
