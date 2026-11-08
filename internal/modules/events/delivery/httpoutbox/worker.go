@@ -61,7 +61,11 @@ func Handler(dispatcher *usecase.Dispatcher) http.Handler {
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(domain.Page{ExecutionID: owner.ExecutionID, GroupID: owner.GroupID, OwnerID: owner.OwnerID, Epoch: owner.Epoch, Items: items})
+		// Avoid expanding an already bounded JSON envelope up to sixfold for
+		// '<', '>' and '&'. The response is JSON, not embedded HTML.
+		encoder := json.NewEncoder(w)
+		encoder.SetEscapeHTML(false)
+		_ = encoder.Encode(domain.Page{ExecutionID: owner.ExecutionID, GroupID: owner.GroupID, OwnerID: owner.OwnerID, Epoch: owner.Epoch, Items: items})
 	})
 	return mux
 }

@@ -127,8 +127,11 @@ func (d *Dispatcher) runAsync(ctx context.Context) (retErr error) {
 		g := groups[r.job.owner.GroupID]
 		g.busy = false
 		g.items, g.retired = r.items, r.retired
-		if r.fatal {
-			retErr = r.err
+		if r.fatal || (domain.IsPermanentDelivery(r.err) && d.asyncCurrent(r.job.owner, r.job.generation)) {
+			if domain.IsPermanentDelivery(r.err) {
+				d.Metrics.Add("output_permanent_errors", 1)
+			}
+			retErr = errors.Join(retErr, fmt.Errorf("output failure for group %s; durable pending retained: %w", r.job.owner.GroupID, r.err))
 			cancelPrep()
 			return
 		}

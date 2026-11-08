@@ -96,9 +96,10 @@ func TestProducerSourceRealTopicRecreation(t *testing.T) {
 	admin := kadm.NewClient(client)
 	topic := fmt.Sprintf("p142-b1-incarnation-%d", time.Now().UnixNano())
 	policy := "delete"
+	maxBytes := fmt.Sprint(KafkaBatchMaxBytes)
 	create := func() {
 		t.Helper()
-		results, err := admin.CreateTopics(ctx, resultPartitions, 1, map[string]*string{"cleanup.policy": &policy}, topic)
+		results, err := admin.CreateTopics(ctx, resultPartitions, 1, map[string]*string{"cleanup.policy": &policy, "max.message.bytes": &maxBytes}, topic)
 		if err != nil {
 			t.Fatal(err)
 		}

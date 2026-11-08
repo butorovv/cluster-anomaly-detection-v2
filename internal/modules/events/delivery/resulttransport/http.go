@@ -44,7 +44,7 @@ func NewHTTP(endpoint string, timeout time.Duration, metrics ...*observability.R
 func (s *HTTPSender) Send(ctx context.Context, raw []byte, groupID string) error {
 	e, err := domain.Decode(raw)
 	if err != nil {
-		return err
+		return domain.PermanentDelivery(err)
 	}
 	if groupID == "" || len(groupID) > 256 || strings.TrimSpace(groupID) != groupID || e.GroupID != groupID {
 		return fmt.Errorf("invalid or mismatched result group ID")
@@ -64,7 +64,11 @@ func (s *HTTPSender) Send(ctx context.Context, raw []byte, groupID string) error
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, receiptLimit))
-		return fmt.Errorf("result receiver returned HTTP %d", resp.StatusCode)
+		err := fmt.Errorf("result receiver returned HTTP %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusRequestEntityTooLarge {
+			return domain.PermanentDelivery(err)
+		}
+		return err
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, receiptLimit+1))
 	if err != nil {

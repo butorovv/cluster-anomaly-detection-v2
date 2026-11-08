@@ -58,6 +58,9 @@ services:
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
       KAFKA_LOG_DIRS: /var/lib/kafka/data
       KAFKA_LOG_RETENTION_HOURS: 168
+      # Encoded result envelope 4 MiB plus bounded Kafka record/batch framing.
+      KAFKA_MESSAGE_MAX_BYTES: 4195328
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 4195328
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
       KAFKA_HEAP_OPTS: -Xms256m -Xmx768m
     ports: ["127.0.0.1:${KAFKA_PORT:-29092}:29092"]
