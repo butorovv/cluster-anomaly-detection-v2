@@ -1870,3 +1870,14 @@ clean/diagnostic code paths не менялись и повторно не из�
 commit ≤17.67GB. Memory/commit gates не сработали.
 Причина изменения общего свободного места/фоновой памяти не установлена;
 она не приписывается PostgreSQL. Никаких Windows/WSL settings не меняли.
+
+### P16-R1: ownership-safe committed outbox pages
+
+V10 adds `read_outbox_page`; Worker Page uses one READ COMMITTED command snapshot
+without an ownership row lock. All mutations retain V3 fencing. Before deploying,
+quiesce Worker input/output and HTTP Polling requests, finish their transactions,
+apply V10 and refreshed runtime grants, and deploy the new Worker binary.
+The legacy locked reader is no longer in the Worker grant allowlist. Do not mix
+old binaries with refreshed grants. Contract, risks and controlled rollback:
+[P16-R1 SQL ownership design](docs/P16_R1_SQL_OWNERSHIP.md).
+Targeted SQL/HTTP tests are separate from future broker/process/golden/D2 acceptance.
