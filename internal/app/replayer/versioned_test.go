@@ -29,7 +29,7 @@ func TestVersionedCLIAndLegacyDefault(t *testing.T) {
 	if !bytes.Equal(defaultOut.Bytes(), explicitOut.Bytes()) {
 		t.Fatal("legacy defaults changed")
 	}
-	args := append(append([]string{}, base...), "--completion-mode", "full-grid", "--start", "2022-01-18T08:00:00Z", "--end", "2022-01-18T08:00:30Z", "--wire-format", "v1", "--execution-id", "p03-test", "--input-sha256", strings.Repeat("a", 64), "--profile-sha256", strings.Repeat("b", 64))
+	args := append(append([]string{}, base...), "--completion-mode", "full-grid", "--start", "2022-01-18T08:00:00Z", "--end", "2022-01-18T08:00:30Z", "--wire-format", "v1", "--execution-id", "p03-test", "--input-sha256", cliSourceSHA(t, path), "--profile-sha256", strings.Repeat("b", 64))
 	var out bytes.Buffer
 	if err := Replayer(context.Background(), args, getenv, &out, io.Discard); err != nil {
 		t.Fatal(err)

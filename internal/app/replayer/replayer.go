@@ -58,7 +58,13 @@ func Replayer(ctx context.Context, args []string, getenv func(string) string, st
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	raw, err := parquet.OpenParquet(cfg.input)
+	var raw *parquet.ParquetReader
+	var verified parquet.SourceVerification
+	if cfg.wireFormat == "v1" {
+		raw, verified, err = parquet.OpenVerifiedParquet(ctx, cfg.input, cfg.binding.InputSHA256)
+	} else {
+		raw, err = parquet.OpenParquet(cfg.input)
+	}
 	if err != nil {
 		return err
 	}
@@ -69,6 +75,12 @@ func Replayer(ctx context.Context, args []string, getenv func(string) string, st
 		}
 	}()
 	log := slog.New(slog.NewTextHandler(stderr, nil))
+	if cfg.wireFormat == "v1" {
+		log.InfoContext(ctx, "source verified", "input_sha256", verified.SHA256, "source_bytes", verified.Bytes, "verification_seconds", verified.Duration.Seconds())
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	log.InfoContext(ctx, "dataset loaded", "input", cfg.input, "rows", raw.Rows())
 	var reader usecase.RecordReader = selectedReader{source: raw}
 	if !cfg.start.IsZero() {

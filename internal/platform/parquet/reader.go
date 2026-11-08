@@ -53,6 +53,7 @@ type ParquetReader struct {
 	pending      error
 	rows         int64
 	firstDay     string
+	verifiedFile os.FileInfo // non-nil only for a verified, immutable source
 }
 
 func OpenParquet(path string) (*ParquetReader, error) {
@@ -60,6 +61,12 @@ func OpenParquet(path string) (*ParquetReader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open prepared parquet: %w", err)
 	}
+	return openParquetFile(file)
+}
+
+// openParquetFile takes ownership of this handle, including on failure.
+// Verification and decoding must never open the pathname independently.
+func openParquetFile(file *os.File) (*ParquetReader, error) {
 	fail := func(err error) (*ParquetReader, error) { _ = file.Close(); return nil, err }
 	info, err := file.Stat()
 	if err != nil {
@@ -132,8 +139,16 @@ func (r *ParquetReader) Next(ctx context.Context) (domain.TelemetryRecord, error
 		if r.pending != nil {
 			return domain.TelemetryRecord{}, r.pending
 		}
+		if err := r.checkSourceUnchanged(); err != nil {
+			r.pending = err
+			return domain.TelemetryRecord{}, err
+		}
 		r.count, r.pending = r.reader.Read(r.buffer)
 		r.index = 0
+		if err := r.checkSourceUnchanged(); err != nil {
+			r.count, r.pending = 0, err // discard the affected batch; stay failed
+			return domain.TelemetryRecord{}, err
+		}
 		if r.count == 0 {
 			if r.pending == nil {
 				return domain.TelemetryRecord{}, io.ErrNoProgress
@@ -158,7 +173,7 @@ func (r *ParquetReader) Next(ctx context.Context) (domain.TelemetryRecord, error
 }
 
 func (r *ParquetReader) Close() error {
-	return errors.Join(r.reader.Close(), r.file.Close())
+	return errors.Join(r.checkSourceUnchanged(), r.reader.Close(), r.file.Close())
 }
 
 func (row preparedRow) record() (domain.TelemetryRecord, error) {
