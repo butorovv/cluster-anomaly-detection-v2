@@ -74,7 +74,7 @@ func (s MasterStore) acceptTx(ctx context.Context, tx pgx.Tx, e domain.Envelope)
 	return accepted, err
 }
 func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.Cursor) (bool, error) {
-	tx, err := s.DB.Begin(ctx)
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return false, err
 	}
@@ -105,7 +105,7 @@ func (s MasterStore) ResultOffset(ctx context.Context, execution string, p int32
 	return next, err
 }
 func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p int32, offset int64, e *domain.Envelope) (bool, error) {
-	tx, err := s.DB.Begin(ctx)
+	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return false, err
 	}

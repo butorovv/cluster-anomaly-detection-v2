@@ -25,8 +25,10 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	}
 	var identityBytes []byte
 	var fragmentCount int
-	// accept_tick_fragment holds the existing canonical execution-row locks until
-	// COMMIT. Count under those same locks; partial timestamps need no payloads.
+	// accept_tick_fragment holds this timestamp's advisory guard until COMMIT.
+	// This MUST remain a separate READ COMMITTED statement after that call: after
+	// a lock wait its new snapshot sees the preceding arrival's committed rows.
+	// Partial timestamps need no payloads.
 	// Identity and completeness share one round trip. Durable SQL remains the sole
 	// aggregation source, including after restart or an uncertain COMMIT outcome.
 	if err := tx.QueryRow(ctx, `SELECT r.identity_json,

@@ -15,14 +15,13 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/workerfixture"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"sync"
 	"testing"
 	"time"
 )
 
-// Hold a01 until ALL completing timestamps are queued. The old lock order first
-// took FK KEY SHARE on a04, then V5 upgraded all rows to UPDATE: a deterministic
-// cross-timestamp upgrade cycle after releasing this guard. Acquire UPDATE in
-// canonical order before FK INSERT so concurrent joins queue safely instead.
+// Regression for the historical FK-upgrade deadlock. An external UPDATE lock
+// deliberately blocks final FK checks; V9 never upgrades those FK KEY SHAREs.
 func TestConcurrentTimestampJoinLockOrder(t *testing.T) {
 	pool := postgrestest.New(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -150,5 +149,98 @@ func TestConcurrentTimestampJoinLockOrder(t *testing.T) {
 	var count int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM cad_v2.master_results`).Scan(&count); err != nil || count != 16 {
 		t.Fatal("lost concurrent final diagnostics", count, err)
+	}
+}
+
+// The barrier is AFTER the first real final INSERT, before its COMMIT. T2 intake
+// and T3 finalization must COMMIT while that transaction is still held open.
+func TestIndependentTimestampsCommitBeforeHeldFinalJoin(t *testing.T) {
+	for _, groups := range []int{4, 8, 16} {
+		for _, delta := range []int{0, 10, 30, 60} {
+			t.Run(fmt.Sprintf("g%d-d%d", groups, delta), func(t *testing.T) {
+				r := newTimestampRig(t, groups, delta, 3)
+				r.prime(t, 0, groups-1)
+				r.prime(t, 2, groups-1)
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				barrier := &finalInsertBarrier{ready: make(chan struct{}), release: make(chan struct{})}
+				traced := barrierPool(t, r.master, barrier)
+				var release sync.Once
+				defer release.Do(func() { close(barrier.release) })
+				t1 := make(chan error, 1)
+				go func() { _, err := (repo.MasterStore{DB: traced}).Accept(ctx, r.fragments[0][groups-1]); t1 <- err }()
+				select {
+				case <-barrier.ready:
+				case err := <-t1:
+					t.Fatal("T1 did not reach final INSERT", err)
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
+				t2, t3 := make(chan error, 1), make(chan error, 1)
+				go func() { _, err := r.store().Accept(ctx, r.fragments[1][0]); t2 <- err }()
+				go func() { _, err := r.store().Accept(ctx, r.fragments[2][groups-1]); t3 <- err }()
+				waitResult(t, ctx, t2)
+				waitResult(t, ctx, t3)
+				r.counts(t, 0, groups-1, 0, 0)
+				r.counts(t, 1, 1, 0, 0)
+				r.counts(t, 2, groups, groups, 1)
+				select {
+				case err := <-t1:
+					t.Fatal("T1 escaped barrier", err)
+				default:
+				}
+				release.Do(func() { close(barrier.release) })
+				waitResult(t, ctx, t1)
+				r.counts(t, 0, groups, groups, 1)
+			})
+		}
+	}
+}
+
+func TestConcurrentFinalArrivalsObserveCommittedPredecessor(t *testing.T) {
+	for _, groups := range []int{4, 8, 16} {
+		t.Run(fmt.Sprint(groups), func(t *testing.T) {
+			r := newTimestampRig(t, groups, 30, 1)
+			r.prime(t, 0, groups-2)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			guard, err := r.master.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer guard.Rollback(context.Background())
+			// The penultimate arrival is real and uncommitted while the last waits.
+			var pid uint32
+			if err := guard.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&pid); err != nil {
+				t.Fatal(err)
+			}
+			b, _ := json.Marshal(r.fragments[0][groups-2])
+			var accepted bool
+			if err := guard.QueryRow(ctx, `SELECT cad_v2.accept_tick_fragment($1::uuid,$2::jsonb)`, r.registration.Binding.ExecutionID, b).Scan(&accepted); err != nil || !accepted {
+				t.Fatal(accepted, err)
+			}
+			last := make(chan error, 1)
+			go func() { _, err := r.store().Accept(ctx, r.fragments[0][groups-1]); last <- err }()
+			waitBlockedBy(t, ctx, r.admin, pid)
+			if err := guard.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			waitResult(t, ctx, last)
+			r.counts(t, 0, groups, groups, 1)
+			// Concurrent duplicate final arrivals must not add another final set.
+			duplicates := make(chan error, 2)
+			for i := 0; i < 2; i++ {
+				go func() {
+					ok, err := r.store().Accept(ctx, r.fragments[0][groups-1])
+					if ok && err == nil {
+						err = fmt.Errorf("duplicate accepted")
+					}
+					duplicates <- err
+				}()
+			}
+			waitResult(t, ctx, duplicates)
+			waitResult(t, ctx, duplicates)
+			r.counts(t, 0, groups, groups, 1)
+		})
 	}
 }

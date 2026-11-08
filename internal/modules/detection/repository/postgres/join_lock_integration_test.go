@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/butorovv/cluster-anomaly-detection-v2/db"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	checkpoints "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/repository/postgres"
 	events "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
@@ -54,17 +55,23 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 			if updateGuard {
-				// Negative control: change only the test database's identity guard
-				// to V7's mode. Migration files/history are never modified.
-				var definition string
-				if err := pool.QueryRow(ctx, `SELECT pg_get_functiondef('cad_v2.accept_tick_fragment(uuid,jsonb)'::regprocedure)`).Scan(&definition); err != nil {
+				// Install the real V7 function as a test-only negative control.
+				// V9 contains no fragment identity lock to mechanically replace.
+				v7, err := db.Files.ReadFile("migrations/V7__diagnostic_join.sql")
+				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := pool.Exec(ctx, strings.ReplaceAll(definition, "FOR NO KEY UPDATE", "FOR UPDATE")); err != nil {
+				definition := string(v7)
+				definition = definition[strings.Index(definition, "CREATE FUNCTION cad_v2.accept_tick_fragment("):]
+				definition = definition[:strings.Index(definition, "END $$;")+len("END $$;")]
+				definition = strings.Replace(definition, "CREATE FUNCTION", "CREATE OR REPLACE FUNCTION", 1)
+				if _, err := pool.Exec(ctx, definition); err != nil {
 					t.Fatal(err)
 				}
 			}
-			service := usecase.Master{Store: master.MasterStore{DB: pool}}
+			workerRuntime, masterRuntime := joinRuntimePools(t, pool)
+			store.DB = workerRuntime
+			service := usecase.Master{Store: master.MasterStore{DB: masterRuntime}}
 			var last []byte
 			for g := 1; g <= f.Options.Groups; g++ {
 				result := candidate.Result
@@ -100,7 +107,7 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 				}
 			}
 			barrier := &finalJoinBarrier{ready: make(chan struct{}), release: make(chan struct{})}
-			cfg := pool.Config()
+			cfg := masterRuntime.Config()
 			cfg.ConnConfig.Tracer = barrier
 			traced, err := pgxpool.NewWithConfig(ctx, cfg)
 			if err != nil {
@@ -126,8 +133,12 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 			if err := pool.QueryRow(ctx, `SELECT count(*) FROM cad_v2.master_results`).Scan(&finals); err != nil || finals != 0 {
 				t.Fatal("uncommitted final visible", finals, err)
 			}
-			workerCfg := pool.Config()
+			workerCfg := workerRuntime.Config()
+			workerSetup := workerCfg.AfterConnect
 			workerCfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+				if err := workerSetup(ctx, c); err != nil {
+					return err
+				}
 				_, err := c.Exec(ctx, `SET lock_timeout='250ms'`)
 				return err
 			}
@@ -148,7 +159,7 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 					t.Fatal("blocked checkpoint leaked durable state", cp, outbox, fragments, err)
 				}
 			} else if saveErr != nil || revision != 1 {
-				t.Fatal("V8 blocked real Worker FK write during final join", revision, saveErr)
+				t.Fatal("V9 blocked real Worker FK write during final join", revision, saveErr)
 			}
 			release.Do(func() { close(barrier.release) })
 			if err := <-completed; err != nil {
@@ -183,7 +194,7 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 			// Treat the successful Master COMMIT response as lost. Reconnect and
 			// redeliver the last fragment; no RAM history is available to this pool.
 			traced.Close()
-			restarted, err := pgxpool.NewWithConfig(ctx, pool.Config())
+			restarted, err := pgxpool.NewWithConfig(ctx, masterRuntime.Config())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,4 +215,45 @@ func TestWorkerCheckpointDuringFinalJoin(t *testing.T) {
 			}
 		})
 	}
+}
+
+func joinRuntimePools(t *testing.T, admin *pgxpool.Pool) (*pgxpool.Pool, *pgxpool.Pool) {
+	t.Helper()
+	w, m := fmt.Sprintf("p15jw_%d", time.Now().UnixNano()), fmt.Sprintf("p15jm_%d", time.Now().UnixNano())
+	for _, role := range []string{w, m} {
+		if _, err := admin.Exec(context.Background(), "CREATE ROLE "+pgx.Identifier{role}.Sanitize()+" NOLOGIN"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Cleanup(func() {
+		for _, role := range []string{w, m} {
+			q := pgx.Identifier{role}.Sanitize()
+			if _, err := admin.Exec(context.Background(), "DROP OWNED BY "+q+";DROP ROLE "+q); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	c, err := admin.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.GrantRuntime(context.Background(), c.Conn(), w, m)
+	c.Release()
+	if err != nil {
+		t.Fatal(err)
+	}
+	makePool := func(role string) *pgxpool.Pool {
+		cfg := admin.Config()
+		cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+			_, err := c.Exec(ctx, "SET ROLE "+pgx.Identifier{role}.Sanitize())
+			return err
+		}
+		p, err := pgxpool.NewWithConfig(context.Background(), cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(p.Close)
+		return p
+	}
+	return makePool(w), makePool(m)
 }

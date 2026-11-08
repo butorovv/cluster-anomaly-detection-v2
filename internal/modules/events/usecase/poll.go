@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type PollStore interface {
 type Poller struct {
 	ExecutionID string
 	Groups      int
+	Concurrency int
 	Interval    time.Duration
 	Store       PollStore
 	Master      Master
@@ -29,36 +31,123 @@ type Poller struct {
 }
 
 func (p Poller) Run(ctx context.Context) error {
-	if !domain.ValidExecution(p.ExecutionID) || (p.Groups != 4 && p.Groups != 8 && p.Groups != 16) || p.Interval < time.Millisecond || p.Interval > time.Minute {
+	if p.Concurrency == 0 {
+		p.Concurrency = 4
+	}
+	if !domain.ValidExecution(p.ExecutionID) || (p.Groups != 4 && p.Groups != 8 && p.Groups != 16) || p.Concurrency < 1 || p.Concurrency > 16 || p.Interval < time.Millisecond || p.Interval > time.Minute {
 		return fmt.Errorf("invalid polling configuration")
 	}
-	if p.Client == nil {
+	ownedClient := p.Client == nil
+	if ownedClient {
 		transport := http.DefaultTransport.(*http.Transport).Clone()
 		transport.DialContext = observability.CountDial(transport.DialContext, p.Master.Metrics, "results_http")
 		p.Client = &http.Client{Timeout: 2 * time.Second, Transport: transport}
-		defer p.Client.CloseIdleConnections()
 	}
 	if p.Logger == nil {
 		p.Logger = slog.Default()
 	}
-	ticker := time.NewTicker(p.Interval)
-	defer ticker.Stop()
+	concurrency := p.Concurrency
+	if concurrency > p.Groups {
+		concurrency = p.Groups
+	}
+	type job struct{ index int }
+	type result struct {
+		index    int
+		err      error
+		finished time.Time
+	}
+	jobs := make(chan job)
+	results := make(chan result, concurrency)
+	var workers sync.WaitGroup
+	workers.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer workers.Done()
+			for task := range jobs {
+				g := fmt.Sprintf("a%02d", task.index+1)
+				bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
+				err := p.poll(bounded, g)
+				cancel()
+				results <- result{index: task.index, err: err, finished: time.Now()}
+			}
+		}()
+	}
+	defer func() {
+		close(jobs)
+		workers.Wait()
+		p.Master.Metrics.Set("poll_active_groups", 0)
+		if ownedClient {
+			p.Client.CloseIdleConnections()
+		}
+	}()
+
+	due := make([]time.Time, p.Groups)
+	busy := make([]bool, p.Groups)
+	firstDue := time.Now().Add(p.Interval)
+	for i := range due {
+		due[i] = firstDue
+	}
+	active := 0
+	fairAfter := -1
+	timer := time.NewTimer(time.Hour)
+	if !timer.Stop() {
+		<-timer.C
+	}
+	defer timer.Stop()
 	for {
+		if ctx.Err() != nil {
+			return nil
+		}
+		now := time.Now()
+		chosen, earliest := -1, time.Time{}
+		if active < concurrency {
+			for offset := 0; offset < p.Groups; offset++ {
+				i := (fairAfter + 1 + offset) % p.Groups
+				if busy[i] {
+					continue
+				}
+				if earliest.IsZero() || due[i].Before(earliest) {
+					earliest = due[i]
+					chosen = i
+				}
+			}
+		}
+		var jobCh chan job
+		var nextJob job
+		var timerCh <-chan time.Time
+		if chosen >= 0 {
+			if !earliest.After(now) {
+				jobCh = jobs
+				nextJob = job{index: chosen}
+			} else {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				d := time.Until(earliest)
+				timer.Reset(d)
+				timerCh = timer.C
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-ticker.C:
-		}
-		for i := 1; i <= p.Groups; i++ {
-			if ctx.Err() != nil {
-				return nil
-			}
-			g := fmt.Sprintf("a%02d", i)
-			bounded, cancel := context.WithTimeout(ctx, 3*time.Second)
-			err := p.poll(bounded, g)
-			cancel()
-			if err != nil {
-				p.Logger.WarnContext(ctx, "polling attempt failed", "execution", p.ExecutionID, "group", g, "error", err)
+		case <-timerCh:
+		case jobCh <- nextJob:
+			busy[chosen] = true
+			active++
+			p.Master.Metrics.Set("poll_active_groups", float64(active))
+			fairAfter = chosen
+		case completed := <-results:
+			busy[completed.index] = false
+			active--
+			p.Master.Metrics.Set("poll_active_groups", float64(active))
+			due[completed.index] = completed.finished.Add(p.Interval)
+			if completed.err != nil {
+				g := fmt.Sprintf("a%02d", completed.index+1)
+				p.Logger.WarnContext(ctx, "polling attempt failed", "execution", p.ExecutionID, "group", g, "error", completed.err)
 			}
 		}
 	}

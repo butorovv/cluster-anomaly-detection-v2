@@ -17,7 +17,11 @@ func TestV7UpgradePreservesPendingDiagnosticJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := fstest.MapFS{}
+	latestV8 := fstest.MapFS{}
 	for _, m := range series {
+		if m.version <= 8 {
+			latestV8["migrations/"+m.name] = &fstest.MapFile{Data: []byte(m.sql)}
+		}
 		if m.version <= 7 {
 			old["migrations/"+m.name] = &fstest.MapFile{Data: []byte(m.sql)}
 		}
@@ -54,13 +58,13 @@ func TestV7UpgradePreservesPendingDiagnosticJoin(t *testing.T) {
 		return values
 	}
 	before := snapshot()
-	if n, err := Apply(ctx, c, Files); err != nil || n != 1 {
+	if n, err := Apply(ctx, c, latestV8); err != nil || n != 1 {
 		t.Fatal(n, err)
 	}
 	if after := snapshot(); !reflect.DeepEqual(before, after) {
 		t.Fatal("V8 changed durable checkpoint/outbox/join data")
 	}
-	if n, err := Apply(ctx, c, Files); err != nil || n != 0 {
+	if n, err := Apply(ctx, c, latestV8); err != nil || n != 0 {
 		t.Fatal(n, err)
 	}
 	var accepted bool

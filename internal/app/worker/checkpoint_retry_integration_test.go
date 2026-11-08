@@ -44,14 +44,17 @@ func TestWorkerContinuesSamePartitionAfterRetriedStageTimeout(t *testing.T) {
 		t.Fatal(err)
 	}
 	adminSQL := `CREATE SEQUENCE retry_worker_calls;
-CREATE FUNCTION retry_worker_delay() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF nextval('public.retry_worker_calls') <= 1 THEN PERFORM pg_sleep(0.2); END IF; RETURN NEW; END $$;
+CREATE FUNCTION retry_worker_delay() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF nextval('public.retry_worker_calls') <= 1 THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$;
 CREATE TRIGGER retry_worker_delay BEFORE INSERT ON cad_v2.worker_tick_fragments FOR EACH ROW EXECUTE FUNCTION retry_worker_delay()`
 	if _, err := pool.Exec(ctx, adminSQL); err != nil {
 		t.Fatal(err)
 	}
 	cfg := pool.Config()
 	cfg.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
-		_, err := conn.Exec(ctx, `SET statement_timeout='35ms'`)
+		// Leave headroom for cold setup/restore under -race. The first stage
+		// trigger still necessarily exceeds this limit, without timing ordinary
+		// ownership queries against a fragile 35ms budget.
+		_, err := conn.Exec(ctx, `SET statement_timeout='500ms'`)
 		return err
 	}
 	runtime, err := pgxpool.NewWithConfig(ctx, cfg)
@@ -101,6 +104,10 @@ CREATE TRIGGER retry_worker_delay BEFORE INSERT ON cad_v2.worker_tick_fragments 
 	}
 	if outbox != 0 {
 		t.Fatalf("unexpected terminal events=%d", outbox)
+	}
+	var stageCalls int
+	if err := pool.QueryRow(ctx, `SELECT last_value FROM retry_worker_calls`).Scan(&stageCalls); err != nil || stageCalls != 3 {
+		t.Fatalf("stage retry not observed: calls=%d want 3 (one rollback and two committed fragments), err=%v", stageCalls, err)
 	}
 	if runner.parts[0].core == nil {
 		t.Fatal("worker partition unexpectedly absent after retry")

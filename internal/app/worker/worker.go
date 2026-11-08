@@ -40,6 +40,11 @@ type Config struct {
 }
 
 type assignedPartition struct {
+	// op serializes this processor's load/Accept/Ack/retirement. Never wait for
+	// op while holding Runner.mu. Registry and progress fields use Runner.mu.
+	op            sync.Mutex
+	lifetime      context.Context
+	retire        context.CancelFunc
 	lease         repo.Lease
 	core          *core.Partition
 	loading       bool
@@ -157,7 +162,7 @@ func stale(err error) bool { var e *pgconn.PgError; return errors.As(err, &e) &&
 
 func (r *Runner) revokeHook(ctx context.Context, ids []kafkainput.Identity) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	retired := make([]*assignedPartition, 0, len(ids))
 	var result error
 	for _, id := range ids {
 		delete(r.assigned, id.Partition)
@@ -165,17 +170,46 @@ func (r *Runner) revokeHook(ctx context.Context, ids []kafkainput.Identity) erro
 		r.cfg.Metrics.Set("assigned_partitions", float64(len(r.assigned)))
 		state := r.parts[id.Partition]
 		delete(r.parts, id.Partition) // discard partial/uncommitted RAM before release
-		if state != nil && r.cfg.Output != nil {
-			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
-		}
-		if state != nil && state.lease.Epoch > 0 {
-			if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
-				result = errors.Join(result, err)
-			}
+		if state != nil {
+			state.retire()
+			retired = append(retired, state)
 		}
 		r.cfg.Logger.InfoContext(ctx, "partition revoked/lost", "execution", r.cfg.Options.Binding.ExecutionID, "owner", r.cfg.OwnerID, "partition", id.Partition, "group", id.GroupID)
 	}
+	r.mu.Unlock()
+	for _, state := range retired {
+		result = errors.Join(result, r.releaseState(ctx, state))
+	}
 	return result
+}
+
+func (r *Runner) releaseState(ctx context.Context, state *assignedPartition) error {
+	state.op.Lock()
+	defer state.op.Unlock()
+	if r.cfg.Output != nil {
+		r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
+	}
+	if state.lease.Epoch == 0 {
+		return nil
+	}
+	if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
+		return err
+	}
+	return nil
+}
+
+func (r *Runner) current(partition int32, state *assignedPartition) bool {
+	_, assigned := r.assigned[partition]
+	return !r.closed && assigned && r.parts[partition] == state && state.lifetime.Err() == nil
+}
+
+func stateContext(ctx context.Context, state *assignedPartition) (context.Context, func()) {
+	bounded, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(state.lifetime, cancel)
+	if state.lifetime.Err() != nil {
+		cancel()
+	}
+	return bounded, func() { stop(); cancel() }
 }
 
 func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.Position, error) {
@@ -190,16 +224,29 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 		return kafkainput.Position{}, fmt.Errorf("restore without actual assignment")
 	}
 	state := r.parts[id.Partition]
-	if state != nil {
-		state.loading = true
+	if state == nil {
+		lifetime, retire := context.WithCancel(context.Background())
+		state = &assignedPartition{lifetime: lifetime, retire: retire}
+		r.parts[id.Partition] = state
 	}
+	state.loading = true
 	r.mu.Unlock()
+	state.op.Lock()
+	defer state.op.Unlock()
+	ctx, stopState := stateContext(ctx, state)
+	defer stopState()
+	r.mu.Lock()
+	current := r.current(id.Partition, state) && r.assigned[id.Partition] == id
+	r.mu.Unlock()
+	if !current {
+		return kafkainput.Position{}, fmt.Errorf("assignment disappeared before restore")
+	}
 	// Acquire/restore may wait for an expired crashed owner's lease. Do not hold
 	// the manager mutex here: retained partitions must continue renewing leases.
 	var lease repo.Lease
 	var saved *core.Checkpoint
 	var err error
-	if state == nil {
+	if state.lease.Epoch == 0 {
 		for {
 			lease, saved, err = r.store.Acquire(ctx, id.GroupID, r.cfg.OwnerID, r.cfg.LeaseTTL)
 			if !errors.Is(err, repo.ErrLeased) {
@@ -214,9 +261,8 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 		if err != nil {
 			return kafkainput.Position{}, err
 		}
-		state = &assignedPartition{lease: lease, loading: true}
 		r.mu.Lock()
-		r.parts[id.Partition] = state
+		state.lease = lease
 		r.mu.Unlock()
 	} else {
 		lease = state.lease
@@ -242,15 +288,15 @@ func (r *Runner) load(ctx context.Context, id kafkainput.Identity) (kafkainput.P
 	if saved != nil {
 		next = saved.NextOffset
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.closed || r.assigned[id.Partition] != id {
-		return kafkainput.Position{}, fmt.Errorf("assignment disappeared during restore")
-	}
 	if r.cfg.Output != nil {
 		if err := r.cfg.Output.Track(ctx, events.Owner{ExecutionID: r.cfg.Options.Binding.ExecutionID, GroupID: lease.Group, OwnerID: lease.Owner, Epoch: lease.Epoch}); err != nil {
 			return kafkainput.Position{}, err
 		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.current(id.Partition, state) || r.assigned[id.Partition] != id {
+		return kafkainput.Position{}, fmt.Errorf("assignment disappeared during restore")
 	}
 	state.core, state.loading, state.nextOffset = processor, false, next
 	// A retained assignment can restore from SQL after a session interruption.
@@ -268,13 +314,20 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 		return nil
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	state := r.parts[record.Partition]
-	if r.closed || state == nil || state.loading || state.core == nil {
+	r.mu.Unlock()
+	if state == nil {
 		return fmt.Errorf("record without restored owner")
 	}
-	if _, ok := r.assigned[record.Partition]; !ok {
-		return fmt.Errorf("record after lost assignment")
+	state.op.Lock()
+	defer state.op.Unlock()
+	ctx, stopState := stateContext(ctx, state)
+	defer stopState()
+	r.mu.Lock()
+	valid := r.current(record.Partition, state) && !state.loading && state.core != nil
+	r.mu.Unlock()
+	if !valid {
+		return fmt.Errorf("record without restored owner")
 	}
 	if state.tickStarted.IsZero() {
 		state.tickStarted = time.Now()
@@ -284,8 +337,15 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 	if err != nil {
 		return err
 	}
+	r.mu.Lock()
+	if !r.current(record.Partition, state) {
+		r.mu.Unlock()
+		return state.core.Fail(fmt.Errorf("assignment retired during compute"))
+	}
 	state.nextOffset = record.Offset + 1
-	r.cfg.Metrics.Set("kafka_lag_records_"+message.GroupID, float64(max(0, state.highWatermark-state.nextOffset)))
+	lag := max(0, state.highWatermark-state.nextOffset)
+	r.mu.Unlock()
+	r.cfg.Metrics.Set("kafka_lag_records_"+message.GroupID, float64(lag))
 	if message.Type == domain.CompleteMessage {
 		computed, duration := state.core.LastComputation()
 		timing := tickTiming{Tick: message.Timestamp, Received: state.tickStarted, Computed: state.core.ComputationFinishedAt(), Offset: record.Offset}
@@ -322,7 +382,16 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 		r.cfg.Metrics.Add("checkpoint_failures", 1)
 		return state.core.Fail(err)
 	}
-	if err = state.core.Ack(revision); err != nil {
+	// Check+Ack is a short registry critical section. Retirement cannot become
+	// visible between this check and RAM ACK; SQL/compute never hold this mutex.
+	r.mu.Lock()
+	if !r.current(record.Partition, state) {
+		r.mu.Unlock()
+		return state.core.Fail(fmt.Errorf("assignment retired before checkpoint ACK"))
+	}
+	err = state.core.Ack(revision)
+	r.mu.Unlock()
+	if err != nil {
 		return err
 	}
 	r.cfg.Metrics.Add("checkpoint_count", 1)
@@ -341,37 +410,73 @@ func (r *Runner) handle(ctx context.Context, record *kgo.Record, message domain.
 
 func (r *Runner) renew(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.closed {
+		r.mu.Unlock()
 		return nil
 	}
-	for _, state := range r.parts {
-		bounded, done := context.WithTimeout(ctx, min(5*time.Second, r.cfg.LeaseTTL/2))
-		err := r.store.Renew(bounded, state.lease, r.cfg.LeaseTTL)
-		done()
-		if err != nil {
-			return err
+	type renewal struct {
+		partition int32
+		state     *assignedPartition
+		lease     repo.Lease
+	}
+	tasks := make([]renewal, 0, len(r.parts))
+	for p, state := range r.parts {
+		if state.lease.Epoch > 0 {
+			tasks = append(tasks, renewal{p, state, state.lease})
 		}
 	}
-	return nil
+	r.mu.Unlock()
+	jobs := make(chan renewal, len(tasks))
+	for _, task := range tasks {
+		jobs <- task
+	}
+	close(jobs)
+	errorsCh := make(chan error, len(tasks))
+	var workers sync.WaitGroup
+	for i := 0; i < min(4, len(tasks)); i++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for task := range jobs {
+				bounded, done := context.WithTimeout(ctx, min(5*time.Second, r.cfg.LeaseTTL/2))
+				err := r.store.Renew(bounded, task.lease, r.cfg.LeaseTTL)
+				done()
+				if err != nil {
+					r.mu.Lock()
+					active := r.current(task.partition, task.state)
+					r.mu.Unlock()
+					if active {
+						errorsCh <- err
+					}
+				}
+			}
+		}()
+	}
+	workers.Wait()
+	close(errorsCh)
+	var result error
+	for err := range errorsCh {
+		result = errors.Join(result, err)
+	}
+	return result
 }
 
 func (r *Runner) close() error {
 	ctx, done := context.WithTimeout(context.Background(), 5*time.Second)
 	defer done()
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.closed = true
+	retired := make([]*assignedPartition, 0, len(r.parts))
 	var result error
 	for partition, state := range r.parts {
 		delete(r.parts, partition)
-		if r.cfg.Output != nil {
-			r.cfg.Output.Forget(state.lease.Group, state.lease.Epoch)
-		}
-		delete(r.assigned, partition)
-		if err := r.store.Release(ctx, state.lease); err != nil && !stale(err) {
-			result = errors.Join(result, err)
-		}
+		state.retire()
+		retired = append(retired, state)
+	}
+	clear(r.assigned)
+	r.mu.Unlock()
+	for _, state := range retired {
+		result = errors.Join(result, r.releaseState(ctx, state))
 	}
 	return result
 }

@@ -246,9 +246,10 @@ func TestMasterIdentityLocksAllowKeyShare(t *testing.T) {
 			}
 			mutatorCtx, mutatorCancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			defer mutatorCancel()
-			err = pool.QueryRow(mutatorCtx, `SELECT 1 FROM cad_v2.execution_partitions WHERE execution_id=$1::uuid AND group_id=$2 FOR NO KEY UPDATE`, envelope.ExecutionID, envelope.GroupID).Scan(&selected)
+			var duplicate bool
+			err = pool.QueryRow(mutatorCtx, "SELECT "+function+"($1::uuid,$2::jsonb)", envelope.ExecutionID, bytes).Scan(&duplicate)
 			if !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("competing Master mutation did not wait: value=%d err=%v", selected, err)
+				t.Fatalf("competing same-timestamp intake did not wait: value=%v err=%v", duplicate, err)
 			}
 			if err := locker.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
 				t.Fatal(err)
