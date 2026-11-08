@@ -30,7 +30,7 @@ func (s OutboxStore) Page(ctx context.Context, o domain.Owner, c domain.Cursor, 
 			return nil, err
 		}
 		if len(d.Envelope) > domain.MaxMessageBytes {
-			return nil, fmt.Errorf("outbox message exceeds transport limit")
+			return nil, domain.PermanentDelivery(fmt.Errorf("outbox message exceeds transport limit: %d > %d bytes; pending retained", len(d.Envelope), domain.MaxMessageBytes))
 		}
 		if size+len(d.Envelope) > domain.MaxMessageBytes && len(result) > 0 {
 			break

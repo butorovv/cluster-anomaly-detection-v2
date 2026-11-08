@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
-	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	topology "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kerr"
@@ -20,6 +20,23 @@ import (
 
 const ResultsTopic = "group.results"
 const resultPartitions = 16
+
+// KafkaBatchMaxBytes preserves the 4 MiB encoded envelope contract. With no
+// headers, a <=256-byte group key, and no compression, 1 KiB covers the record
+// varints and the record-batch framing (including the timestamp/offset fields).
+// This is a batch cap, not a payload, buffer, or process-memory limit.
+const KafkaBatchMaxBytes = domain.MaxMessageBytes + 1024
+
+func kafkaProducerOptions() []kgo.Opt {
+	return []kgo.Opt{kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks()), kgo.ProducerBatchMaxBytes(KafkaBatchMaxBytes)}
+}
+
+func kafkaDeliveryError(err error) error {
+	if errors.Is(err, kerr.MessageTooLarge) || errors.Is(err, kerr.RecordListTooLarge) || errors.Is(err, kerr.InvalidRecord) {
+		return domain.PermanentDelivery(err)
+	}
+	return err
+}
 
 type SourceIdentity struct{ ClusterID, TopicID string }
 type KafkaSender struct {
@@ -36,14 +53,16 @@ func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt,
 	if len(seeds) == 0 {
 		return nil, fmt.Errorf("Kafka seeds required")
 	}
-	opts := []kgo.Opt{kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchCompression(kgo.NoCompression()), kgo.RequiredAcks(kgo.AllISRAcks())}
+	opts := []kgo.Opt{kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second)}
+	opts = append(opts, kafkaProducerOptions()...)
 	cl, err := kgo.NewClient(append(opts, extra...)...)
 	if err != nil {
 		return nil, err
 	}
 	if create {
 		deletePolicy := "delete"
-		created, e := kadm.NewClient(cl).CreateTopics(ctx, resultPartitions, 1, map[string]*string{"cleanup.policy": &deletePolicy}, ResultsTopic)
+		batchLimit := strconv.Itoa(KafkaBatchMaxBytes)
+		created, e := kadm.NewClient(cl).CreateTopics(ctx, resultPartitions, 1, map[string]*string{"cleanup.policy": &deletePolicy, "max.message.bytes": &batchLimit}, ResultsTopic)
 		if e != nil {
 			cl.Close()
 			return nil, e
@@ -58,7 +77,7 @@ func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt,
 			return nil, err
 		}
 	}
-	cluster, topic, err := kafkainput.DescribeSourceWithClient(ctx, cl, ResultsTopic)
+	cluster, topic, err := describeProducerSource(ctx, kadm.NewClient(cl), ResultsTopic)
 	if err != nil {
 		cl.Close()
 		return nil, err
@@ -73,10 +92,10 @@ func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt,
 func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) error {
 	e, err := domain.Decode(raw)
 	if err != nil {
-		return err
+		return domain.PermanentDelivery(err)
 	}
 	if groupID == "" || strings.TrimSpace(groupID) != groupID || len(groupID) > 256 || e.GroupID != groupID {
-		return fmt.Errorf("invalid or mismatched result group ID")
+		return domain.PermanentDelivery(fmt.Errorf("invalid or mismatched result group ID"))
 	}
 	p, err := topology.PartitionForGroup(groupID)
 	if err != nil {
@@ -89,13 +108,13 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 		return err
 	}
 	if cluster != s.Identity.ClusterID || topic != s.Identity.TopicID {
-		return fmt.Errorf("results topic incarnation changed")
+		return domain.PermanentDelivery(fmt.Errorf("results topic incarnation changed"))
 	}
 	r := &kgo.Record{Topic: ResultsTopic, Partition: int32(p), Key: []byte(groupID), Value: raw}
 	publishStarted := time.Now()
 	err = s.client.ProduceSync(ctx, r).FirstErr()
 	s.metrics.Observe("results_kafka_publish_ack", time.Since(publishStarted))
-	return err
+	return kafkaDeliveryError(err)
 }
 
 func (s *KafkaSender) Close() error { s.client.Close(); return nil }
@@ -162,6 +181,23 @@ func describeProducerSource(ctx context.Context, admin producerTopicAdmin, topic
 	if *policy != "delete" {
 		return "", "", fmt.Errorf("topic %s has unsafe cleanup.policy %q: require delete", topic, *policy)
 	}
+	var maxBytes *string
+	seenMax := false
+	for _, c := range config.Configs {
+		if c.Key == "max.message.bytes" {
+			if seenMax {
+				return "", "", domain.PermanentDelivery(fmt.Errorf("topic %s has duplicate max.message.bytes", topic))
+			}
+			seenMax, maxBytes = true, c.Value
+		}
+	}
+	if maxBytes == nil {
+		return "", "", domain.PermanentDelivery(fmt.Errorf("topic %s max.message.bytes unavailable: require >= %d", topic, KafkaBatchMaxBytes))
+	}
+	n, err := strconv.ParseInt(*maxBytes, 10, 32)
+	if err != nil || n < KafkaBatchMaxBytes {
+		return "", "", domain.PermanentDelivery(fmt.Errorf("topic %s max.message.bytes=%q: require >= %d", topic, *maxBytes, KafkaBatchMaxBytes))
+	}
 	return m.Cluster, t.ID.String(), nil
 }
 
@@ -205,12 +241,12 @@ func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	checkIdentity := func(c context.Context) error {
 		bounded, done := context.WithTimeout(c, 10*time.Second)
 		defer done()
-		cluster, topic, e := kafkainput.DescribeSourceWithClient(bounded, admin, ResultsTopic)
+		cluster, topic, e := describeProducerSource(bounded, kadm.NewClient(admin), ResultsTopic)
 		if e != nil {
 			return e
 		}
 		if cluster != pin.ClusterID || topic != pin.TopicID {
-			return fmt.Errorf("results topic incarnation changed")
+			return domain.PermanentDelivery(fmt.Errorf("results topic incarnation changed"))
 		}
 		return nil
 	}
@@ -323,7 +359,7 @@ func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	// Keep the existing franz-go session/rebalance defaults. Even the maximum
 	// configured processing deadline (15s) is below its 45s session timeout;
 	// normal SQL operations also retain their shorter statement/lock timeouts.
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(domain.MaxMessageBytes+1024), kgo.MaxConcurrentFetches(0))
+	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(KafkaBatchMaxBytes), kgo.MaxConcurrentFetches(0))
 	if err != nil {
 		return err
 	}

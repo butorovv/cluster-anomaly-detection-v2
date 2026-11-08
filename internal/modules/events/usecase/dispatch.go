@@ -171,6 +171,10 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 				}
 				cancel()
 			}
+			if domain.IsPermanentDelivery(err) {
+				d.Metrics.Add("output_permanent_errors", 1)
+				return fmt.Errorf("permanent output failure for group %s; durable pending retained: %w", g, err)
+			}
 			if err != nil && !errors.Is(err, context.Canceled) {
 				d.Metrics.Add("output_retries", 1)
 				retry[g] = min(retry[g]+1, 6)

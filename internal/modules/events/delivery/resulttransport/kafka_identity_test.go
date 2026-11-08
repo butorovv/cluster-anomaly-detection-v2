@@ -37,9 +37,10 @@ func validProducerAdmin() *producerAdminStub {
 		partitions[p] = kadm.PartitionDetail{Leader: 1}
 	}
 	policy := "delete"
+	maxBytes := "4195328"
 	return &producerAdminStub{
 		metadata: kadm.Metadata{Cluster: "cluster", Topics: kadm.TopicDetails{ResultsTopic: {ID: kadm.TopicID{1}, Partitions: partitions}}},
-		configs:  kadm.ResourceConfigs{{Name: ResultsTopic, Configs: []kadm.Config{{Key: "cleanup.policy", Value: &policy}}}},
+		configs:  kadm.ResourceConfigs{{Name: ResultsTopic, Configs: []kadm.Config{{Key: "cleanup.policy", Value: &policy}, {Key: "max.message.bytes", Value: &maxBytes}}}},
 	}
 }
 func TestProducerSourceFreshMetadataAndPolicy(t *testing.T) {

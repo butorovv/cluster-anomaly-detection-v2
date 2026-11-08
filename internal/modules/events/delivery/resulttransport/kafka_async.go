@@ -46,10 +46,10 @@ func (s *KafkaAsyncSender) SendAsync(ctx context.Context, raw []byte, groupID st
 	}
 	e, err := domain.Decode(raw)
 	if err != nil {
-		return err
+		return domain.PermanentDelivery(err)
 	}
 	if groupID == "" || strings.TrimSpace(groupID) != groupID || len(groupID) > 256 || e.GroupID != groupID {
-		return fmt.Errorf("invalid or mismatched result group ID")
+		return domain.PermanentDelivery(fmt.Errorf("invalid or mismatched result group ID"))
 	}
 	p, err := topology.PartitionForGroup(groupID)
 	if err != nil {
@@ -62,7 +62,7 @@ func (s *KafkaAsyncSender) SendAsync(ctx context.Context, raw []byte, groupID st
 		return err
 	}
 	if cluster != s.sender.Identity.ClusterID || topic != s.sender.Identity.TopicID {
-		return fmt.Errorf("results topic incarnation changed")
+		return domain.PermanentDelivery(fmt.Errorf("results topic incarnation changed"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -72,7 +72,7 @@ func (s *KafkaAsyncSender) SendAsync(ctx context.Context, raw []byte, groupID st
 	s.sender.client.Produce(ctx, r, func(_ *kgo.Record, err error) {
 		// No SQL, lifecycle operations, or dispatcher locks in this callback.
 		s.sender.metrics.Observe("results_kafka_publish_ack", time.Since(started))
-		done(err)
+		done(kafkaDeliveryError(err))
 	})
 	return nil
 }
