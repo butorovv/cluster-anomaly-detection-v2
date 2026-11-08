@@ -17,7 +17,9 @@ func (s OutboxStore) Advertise(ctx context.Context, o domain.Owner, url string) 
 	return err
 }
 func (s OutboxStore) Page(ctx context.Context, o domain.Owner, c domain.Cursor, limit int, pending bool) ([]domain.Delivery, error) {
-	rows, err := s.DB.Query(ctx, `SELECT checkpoint_revision,ordinal,envelope,created_at FROM cad_v2.read_outbox($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8)`, o.ExecutionID, o.GroupID, o.OwnerID, o.Epoch, c.Revision, c.Ordinal, limit, pending)
+	// The read is authorized at the command snapshot; late delivery is safe via
+	// Master dedup. Ack/Save/Renew/Release retain exclusive SQL epoch fencing.
+	rows, err := s.DB.Query(ctx, `SELECT checkpoint_revision,ordinal,envelope,created_at FROM cad_v2.read_outbox_page($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8)`, o.ExecutionID, o.GroupID, o.OwnerID, o.Epoch, c.Revision, c.Ordinal, limit, pending)
 	if err != nil {
 		return nil, err
 	}

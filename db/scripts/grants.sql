@@ -19,12 +19,13 @@ GRANT EXECUTE ON FUNCTION
 GRANT EXECUTE ON FUNCTION cad_v2.accept_result(uuid,jsonb) TO :"master_role";
 COMMIT;
 
--- P09 extensions (run after applying V6).
+-- Transport extensions. The snapshot page API requires V10.
+-- Legacy read_outbox is deliberately absent from the Worker allowlist.
 GRANT SELECT ON cad_v2.worker_endpoints,cad_v2.partition_ownership,
  cad_v2.master_poll_cursors,cad_v2.result_topic_bindings,cad_v2.result_consumer_offsets TO :"master_role";
 GRANT EXECUTE ON FUNCTION
  cad_v2.advertise_worker(uuid,text,uuid,bigint,text),
- cad_v2.read_outbox(uuid,text,uuid,bigint,bigint,integer,integer,boolean),
+ cad_v2.read_outbox_page(uuid,text,uuid,bigint,bigint,integer,integer,boolean),
  cad_v2.ack_poll_cursor(uuid,text,uuid,bigint,bigint,integer) TO :"worker_role";
 GRANT EXECUTE ON FUNCTION
  cad_v2.advance_poll_cursor(uuid,text,bigint,integer),

@@ -32,7 +32,7 @@ func TestBootstrapInventoryAndHistoricalKeys(t *testing.T) {
 		t.Fatalf("inventory groups/hosts/components/sources=%d/%d/%d/%d", groups, hosts, components, sources)
 	}
 	var before int
-	if err := conn.QueryRow(ctx, "SELECT count(*) FROM public.schema_migrations").Scan(&before); err != nil || before != 9 {
+	if err := conn.QueryRow(ctx, "SELECT count(*) FROM public.schema_migrations").Scan(&before); err != nil || before != 10 {
 		t.Fatalf("history=%d %v", before, err)
 	}
 	if _, err := conn.Exec(ctx, `UPDATE project.metric_source s SET source_key='legacy-spelling' FROM project.component c JOIN project.node n ON n.id=c.node_id WHERE s.component_id=c.id AND n.hostname='a01n01' AND c.kind='psu' AND c.local_index=0 AND s.metric_type_id=(SELECT id FROM project.metric_type WHERE code='PSU_INPUT_POWER')`); err != nil {

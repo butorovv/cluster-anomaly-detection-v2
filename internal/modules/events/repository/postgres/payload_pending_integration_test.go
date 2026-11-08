@@ -12,6 +12,8 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type payloadSQLSender struct {
@@ -36,6 +38,25 @@ func TestPayloadSQLPendingDispatcherRestart(t *testing.T) {
 			r := newTimestampRig(t, 4, 0, 1)
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
+			// The shared timestamp rig deliberately defaults to REPEATABLE READ
+			// for Master transaction tests. V10 Page requires standalone READ
+			// COMMITTED; preserve the runtime role and all existing timeouts.
+			cfg := r.worker.Config()
+			setup := cfg.AfterConnect
+			cfg.AfterConnect = func(ctx context.Context, c *pgx.Conn) error {
+				if setup != nil {
+					if err := setup(ctx, c); err != nil {
+						return err
+					}
+				}
+				_, err := c.Exec(ctx, "SET default_transaction_isolation='read committed'")
+				return err
+			}
+			worker, err := pgxpool.NewWithConfig(ctx, cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(worker.Close)
 			e := r.fragments[0][0]
 			e.SchemaVersion = 1
 			e.Kind = "group_result"
@@ -61,10 +82,10 @@ func TestPayloadSQLPendingDispatcherRestart(t *testing.T) {
 				t.Fatal("synthetic row size", len(saved), size, err)
 			}
 			owner := domain.Owner{ExecutionID: e.ExecutionID, GroupID: "a01", OwnerID: "123e4567-e89b-12d3-a456-426614174001"}
-			if err := r.worker.QueryRow(ctx, `SELECT cad_v2.acquire_partition($1::uuid,$2,$3::uuid,'30 seconds')`, owner.ExecutionID, owner.GroupID, owner.OwnerID).Scan(&owner.Epoch); err != nil {
+			if err := worker.QueryRow(ctx, `SELECT cad_v2.acquire_partition($1::uuid,$2,$3::uuid,'30 seconds')`, owner.ExecutionID, owner.GroupID, owner.OwnerID).Scan(&owner.Epoch); err != nil {
 				t.Fatal(err)
 			}
-			store := repo.OutboxStore{DB: r.worker}
+			store := repo.OutboxStore{DB: worker}
 			items, err := store.Page(ctx, owner, domain.Cursor{}, 64, true)
 			if size > domain.MaxMessageBytes {
 				if !domain.IsPermanentDelivery(err) {
@@ -88,7 +109,7 @@ func TestPayloadSQLPendingDispatcherRestart(t *testing.T) {
 			if size > domain.MaxMessageBytes {
 				return
 			} // Remains pending; cannot send outside contract.
-			second := &usecase.Dispatcher{ExecutionID: e.ExecutionID, Mode: "kafka", Store: repo.OutboxStore{DB: r.worker}, Sender: &payloadSQLSender{raw: saved}}
+			second := &usecase.Dispatcher{ExecutionID: e.ExecutionID, Mode: "kafka", Store: repo.OutboxStore{DB: worker}, Sender: &payloadSQLSender{raw: saved}}
 			if err := second.Track(ctx, owner); err != nil {
 				t.Fatal(err)
 			}
