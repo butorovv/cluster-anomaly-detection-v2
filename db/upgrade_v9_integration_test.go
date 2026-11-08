@@ -129,7 +129,7 @@ func TestV9UpgradeRollbackAndRetry(t *testing.T) {
 	if err := workerTx.QueryRow(ctx, `SELECT count(*) FROM cad_v2.read_outbox('00000000-0000-0000-0000-000000000001','a01','00000000-0000-0000-0000-000000000011',1,0,0,64,true)`).Scan(&pending); err != nil || pending != 2 {
 		t.Fatal(pending, err)
 	}
-	if n, err := Apply(ctx, c, Files); err != nil || n != 1 {
+	if n, err := Apply(ctx, c, ownershipSeries(t, 9)); err != nil || n != 1 {
 		t.Fatal("V9 retry failed", n, err)
 	}
 	if _, err := c.Exec(ctx, `SET lock_timeout='100ms'`); err != nil {
@@ -149,7 +149,7 @@ func TestV9UpgradeRollbackAndRetry(t *testing.T) {
 	if got := snapshot(); !reflect.DeepEqual(beforeRows, got) {
 		t.Fatal("online V9 retry changed durable state")
 	}
-	if n, err := Apply(ctx, c, Files); err != nil || n != 0 {
+	if n, err := Apply(ctx, c, ownershipSeries(t, 9)); err != nil || n != 0 {
 		t.Fatal("repeat Apply was not a no-op", n, err)
 	}
 	var publicExecute bool
