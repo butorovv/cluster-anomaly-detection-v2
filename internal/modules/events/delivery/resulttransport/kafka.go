@@ -424,10 +424,19 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	if commit == nil {
 		commit = cl.CommitRecords
 	}
+	var previousPollEnd time.Time
+	if cfg.Diagnostics {
+		registry.Set("results_kafka_max_poll_records", float64(cfg.MaxPollRecords))
+		registry.Set("results_kafka_max_partition_handlers", float64(cfg.Concurrency))
+	}
 	for {
 		pollStarted := time.Now()
+		if cfg.Diagnostics && !previousPollEnd.IsZero() {
+			registry.Observe("results_kafka_gap_between_polls", pollStarted.Sub(previousPollEnd))
+		}
 		fetches := cl.PollRecords(ctx, cfg.MaxPollRecords)
 		polledAt := time.Now()
+		previousPollEnd = polledAt
 		registry.Observe("results_kafka_poll_wait", polledAt.Sub(pollStarted))
 		if err := ctx.Err(); err != nil {
 			return err
@@ -437,6 +446,13 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 		}
 		records := fetches.Records()
 		registry.Set("results_kafka_poll_batch_records", float64(len(records)))
+		if cfg.Diagnostics {
+			registry.Add("results_kafka_polls", 1)
+			registry.Add("results_kafka_polled_records", int64(len(records)))
+			if len(records) == 0 {
+				registry.Set("results_kafka_distinct_partitions_per_poll", 0)
+			}
+		}
 		mu.Lock()
 		positions := make(map[int32]int64, len(expected))
 		for p, next := range expected {

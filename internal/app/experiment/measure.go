@@ -45,6 +45,7 @@ func distribution(values []float64) Distribution {
 
 type Measurements struct {
 	KafkaTimings            map[string]observability.Histogram `json:"kafka_stage_histograms,omitempty"`
+	MasterDiagnostics       *observability.Data                `json:"master_kafka_diagnostics,omitempty"`
 	PostgresWaitSamples     map[string]int                     `json:"postgres_active_wait_samples,omitempty"`
 	PostgresWaitSampleCount int                                `json:"postgres_wait_sample_count"`
 	KafkaLagStatus          string                             `json:"input_kafka_lag_status"`
@@ -71,12 +72,25 @@ type Measurements struct {
 	Network                 string                             `json:"network_measurement"`
 }
 type resourceSample struct {
-	PostgresWaits        map[string]int `json:"postgres_active_waits,omitempty"`
-	At                   time.Time      `json:"at"`
+	PostgresWaits        map[string]int     `json:"postgres_active_waits,omitempty"`
+	MasterKafka          *masterKafkaSample `json:"master_kafka,omitempty"`
+	At                   time.Time          `json:"at"`
 	WorkerCPU, MasterCPU float64
 	WorkerRSS, MasterRSS uint64
 	Backlog, Lag         float64
 	Counters             map[string]int64 `json:"counters"`
+}
+
+type masterKafkaSample struct {
+	At      time.Time                  `json:"at"`
+	PID     int                        `json:"pid"`
+	Gauges  map[string]float64         `json:"gauges"`
+	Timings map[string]timingAggregate `json:"timings"`
+}
+
+type timingAggregate struct {
+	Count   int64   `json:"count"`
+	Seconds float64 `json:"sum_seconds"`
 }
 type sampler struct {
 	database  *pgxpool.Pool
@@ -193,6 +207,9 @@ func (s *sampler) capture(ctx context.Context) {
 		}
 	}
 	for id, data := range current {
+		if id == "master" && data.Labels["master_kafka_diagnostics"] == "1" {
+			sample.MasterKafka = captureMasterKafkaSample(data)
+		}
 		if data.Process.RSSBytes != nil {
 			if id == "master" {
 				sample.MasterRSS += *data.Process.RSSBytes
@@ -208,6 +225,34 @@ func (s *sampler) capture(ctx context.Context) {
 		}
 	}
 	s.samples = append(s.samples, sample)
+}
+
+func captureMasterKafkaSample(data observability.Data) *masterKafkaSample {
+	sample := &masterKafkaSample{
+		At: data.At, PID: data.Process.PID,
+		Gauges: make(map[string]float64), Timings: make(map[string]timingAggregate),
+	}
+	gauges := data.Gauges
+	for key, value := range gauges {
+		if !strings.HasPrefix(key, "results_kafka_") {
+			continue
+		}
+		if key == "results_kafka_durable_confirmations_per_second" && gauges["results_kafka_durable_rate_valid"] != 1 {
+			continue
+		}
+		if strings.HasPrefix(key, "results_kafka_backlog_") &&
+			key != "results_kafka_backlog_sample_valid" &&
+			gauges["results_kafka_backlog_sample_valid"] != 1 {
+			continue
+		}
+		sample.Gauges[key] = value
+	}
+	for key, value := range data.Histograms {
+		if strings.HasPrefix(key, "results_kafka_") || strings.HasPrefix(key, "master_pg_") {
+			sample.Timings[key] = timingAggregate{Count: value.Count, Seconds: value.Sum}
+		}
+	}
+	return sample
 }
 func (s *sampler) Samples() []resourceSample {
 	s.mu.Lock()
@@ -344,6 +389,9 @@ func measureLogs(directory, run string, groups int, s *sampler, expectedTicks ..
 	}
 	m.Compute, m.InputQueue, m.DurabilityWait, m.Transport, m.MasterCommit, m.EndToEnd = distribution(compute), distribution(queue), distribution(durability), distribution(transport), distribution(masterCommit), distribution(e2e)
 	m.KafkaTimings = map[string]observability.Histogram{}
+	if master, ok := s.last["master"]; ok && master.Labels["master_kafka_diagnostics"] == "1" {
+		m.MasterDiagnostics = &master
+	}
 	for _, data := range s.last {
 		for key, value := range data.Histograms {
 			if !strings.HasPrefix(key, "results_kafka_") {

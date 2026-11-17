@@ -19,6 +19,7 @@ type KafkaConsumerConfig struct {
 	Concurrency    int
 	MaxPollRecords int
 	BatchTimeout   time.Duration
+	Diagnostics    bool
 }
 
 func (c KafkaConsumerConfig) WithDefaults() KafkaConsumerConfig {
@@ -48,14 +49,30 @@ type partitionBatch struct {
 type partitionProgress struct {
 	last *kgo.Record
 	err  error
+	work time.Duration
+	ran  bool
 }
 
 // processKafkaBatch owns at most Concurrency workers and one bounded poll batch.
 // Each partition appears in one FIFO job. A handler must honor cancellation and
 // return nil only after its SQL transaction is confirmed committed.
-func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) ([]*kgo.Record, error) {
+func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) (lasts []*kgo.Record, retErr error) {
 	if len(records) == 0 {
 		return nil, nil
+	}
+	if cfg.Diagnostics {
+		defer func() {
+			metrics.Observe("results_kafka_poll_wave_duration", time.Since(polledAt))
+			if retErr != nil {
+				metrics.Add("results_kafka_poll_wave_errors", 1)
+			}
+			// Include a successfully committed prefix of a failed wave.
+			var confirmed int64
+			for _, last := range lasts {
+				confirmed += last.Offset - expected[last.Partition] + 1
+			}
+			metrics.Add("results_kafka_durable_confirmations", confirmed)
+		}()
 	}
 	if len(records) > cfg.MaxPollRecords {
 		return nil, fmt.Errorf("Kafka poll exceeded record bound")
@@ -82,6 +99,10 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 		part.records = append(part.records, r)
 	}
 	metrics.Set("results_kafka_batch_bytes", float64(batchBytes))
+	if cfg.Diagnostics {
+		metrics.Set("results_kafka_distinct_partitions_per_poll", float64(len(parts)))
+		metrics.Add("results_kafka_polled_partitions", int64(len(parts)))
+	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.BatchTimeout)
 	defer cancel()
 	jobs := make(chan *partitionBatch)
@@ -107,7 +128,15 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 					}
 				}
 				metrics.Set("results_kafka_active_partitions", float64(n))
+				var started time.Time
+				if cfg.Diagnostics {
+					started = time.Now()
+				}
 				progress := processPartition(ctx, *part, polledAt, handle, metrics)
+				if cfg.Diagnostics {
+					progress.work = time.Since(started)
+					progress.ran = true
+				}
 				metrics.Set("results_kafka_active_partitions", float64(active.Add(-1)))
 				if progress.err != nil {
 					fail(progress.err)
@@ -138,12 +167,23 @@ admission:
 	workers.Wait() // callbacks/SQL have returned before the caller releases assignment
 	metrics.Set("results_kafka_active_partitions", 0)
 	metrics.Set("results_kafka_peak_partitions", float64(peak.Load()))
-	lasts := make([]*kgo.Record, 0, admitted)
+	lasts = make([]*kgo.Record, 0, admitted)
+	var slowest, work time.Duration
+	var ran bool
 	for i := 0; i < admitted; i++ {
 		r := <-results
+		if r.ran {
+			slowest = max(slowest, r.work)
+			work += r.work
+			ran = true
+		}
 		if r.last != nil {
 			lasts = append(lasts, r.last)
 		}
+	}
+	if ran {
+		metrics.Observe("results_kafka_slowest_partition_job_duration", slowest)
+		metrics.Observe("results_kafka_partition_handler_work", work)
 	}
 	if firstError != nil {
 		return lasts, firstError

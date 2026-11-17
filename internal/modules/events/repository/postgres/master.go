@@ -13,8 +13,9 @@ import (
 )
 
 type MasterStore struct {
-	DB     *pgxpool.Pool
-	Stages *observability.Registry // optional, profiling trials only
+	DB          *pgxpool.Pool
+	Stages      *observability.Registry // optional, profiling trials only
+	Diagnostics *observability.Registry // optional, with QueryTracer installed on DB
 }
 
 func (s MasterStore) Identity(ctx context.Context, execution string) (group.RBI2Identity, error) {
