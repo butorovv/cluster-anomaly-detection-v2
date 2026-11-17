@@ -57,3 +57,26 @@ Get-Content -LiteralPath $runnerBuild[1]
 `--resume` требует тот же проверенный bundle и подтверждённую остановку для
 повторного принятия сохранённого PASS. Для исторических результатов используйте
 `--audit-saved` или отдельный новый `output` для свежего прогона.
+
+## AUD-008. Ручная проверка Kafka intake
+
+Поле верхнего уровня `kafka_intake_mode` выбирает режим всех Kafka-прогонов
+конфига. Если поле опущено, используется `wave`. В отчёте Kafka-прогона поле
+`kafka_intake_mode` содержит режим, переданный Master. Значение участвует в
+`configuration_sha256`, поэтому `--resume` различает `wave` и `pipeline`.
+
+Конфиги [wave](../../experiments/configs/p16-aud008-wave.json) и
+[pipeline](../../experiments/configs/p16-aud008-pipeline.json) задают одинаковый
+полный сценарий D2 с четырьмя Worker, 16 группами, δ0 и cadence 1. Используйте
+один build bundle и одинаковый независимый golden на изолированном стенде.
+Задайте `ASSETS_ROOT`, `P07_TEST_KAFKA_BROKERS`, `V1_GOLDEN_ROOT`,
+`V1_GOLDEN_MANIFEST`, `SYSTEM_TEST_DATABASE_URL` и `SYSTEM_KAFKA_ISOLATED=1`.
+
+```powershell
+$trialRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cad-aud008-' + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $trialRoot | Out-Null
+$env:P16_AUD008_WAVE_OUTPUT = Join-Path $trialRoot 'wave'
+$env:P16_AUD008_PIPELINE_OUTPUT = Join-Path $trialRoot 'pipeline'
+& $runner @runnerBuild --config experiments/configs/p16-aud008-wave.json
+& $runner @runnerBuild --config experiments/configs/p16-aud008-pipeline.json
+```

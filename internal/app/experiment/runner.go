@@ -47,19 +47,25 @@ type RunSpec struct {
 	Fault       string  `json:"fault,omitempty"`
 }
 type Config struct {
-	Profile        bool      `json:"profile,omitempty"`
-	Measure        bool      `json:"measure"`
-	SchemaVersion  int       `json:"schema_version"`
-	Assets         string    `json:"assets"`
-	ProfileSHA     string    `json:"profile_sha256"`
-	InputSHA       string    `json:"input_sha256"`
-	Brokers        string    `json:"brokers"`
-	GoldenRoot     string    `json:"golden_root"`
-	GoldenManifest string    `json:"golden_manifest"`
-	Output         string    `json:"output"`
-	TimeoutSeconds int       `json:"timeout_seconds"`
-	Runs           []RunSpec `json:"runs"`
+	Profile         bool      `json:"profile,omitempty"`
+	Measure         bool      `json:"measure"`
+	SchemaVersion   int       `json:"schema_version"`
+	Assets          string    `json:"assets"`
+	ProfileSHA      string    `json:"profile_sha256"`
+	InputSHA        string    `json:"input_sha256"`
+	Brokers         string    `json:"brokers"`
+	KafkaIntakeMode string    `json:"kafka_intake_mode,omitempty"`
+	GoldenRoot      string    `json:"golden_root"`
+	GoldenManifest  string    `json:"golden_manifest"`
+	Output          string    `json:"output"`
+	TimeoutSeconds  int       `json:"timeout_seconds"`
+	Runs            []RunSpec `json:"runs"`
 }
+
+func (cfg Config) kafkaIntake() resulttransport.KafkaConsumerConfig {
+	return (resulttransport.KafkaConsumerConfig{IntakeMode: cfg.KafkaIntakeMode}).WithDefaults()
+}
+
 type Result struct {
 	Provenance       string            `json:"configuration_sha256,omitempty"`
 	BuildManifestSHA string            `json:"build_manifest_sha256,omitempty"`
@@ -67,6 +73,7 @@ type Result struct {
 	SchemaVersion    int               `json:"schema_version"`
 	Status           string            `json:"status"`
 	Spec             RunSpec           `json:"configuration"`
+	KafkaIntakeMode  string            `json:"kafka_intake_mode,omitempty"`
 	ExecutionID      string            `json:"execution_id"`
 	RunID            string            `json:"run_id"`
 	ConfigID         string            `json:"config_id"`
@@ -170,6 +177,10 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 			return fmt.Errorf("invalid run name")
 		}
 	}
+	provenance, err := configurationHash(cfg)
+	if err != nil {
+		return err
+	}
 	if *resume {
 		if err := checkResumeBuild(cfg, build); err != nil {
 			return err
@@ -177,10 +188,6 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
 		return fmt.Errorf("new artifact output directory required: %w", err)
-	}
-	provenance, err := configurationHash(cfg)
-	if err != nil {
-		return err
 	}
 	results := []Result{}
 	for _, spec := range cfg.Runs {
@@ -258,6 +265,22 @@ func freeEndpoint() (string, string, error) {
 	_ = l.Close()
 	return address, "http://" + address, nil
 }
+
+func masterArguments(cfg Config, spec RunSpec, address, execution string) []string {
+	args := []string{"--listen", address, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
+	if spec.PollMS < 1 {
+		spec.PollMS = 100
+	}
+	args = append(args, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
+	if spec.Mode == "kafka" {
+		args = append(args, "--kafka-intake-mode", cfg.kafkaIntake().IntakeMode)
+	}
+	if cfg.Measure {
+		args = append(args, "--measure=true")
+	}
+	return args
+}
+
 func wait(ctx context.Context, condition func() (bool, error), processes func() []*process) error {
 	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
@@ -292,6 +315,9 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, build verifiedBuild) 
 	start := time.Now()
 	report.Environment["source_commit"] = build.SourceCommit
 	report.Environment["source_archive_sha256"] = build.ArchiveSHA256
+	if spec.Mode == "kafka" {
+		report.KafkaIntakeMode = cfg.kafkaIntake().IntakeMode
+	}
 	if build.OverlaySHA256 != "" {
 		report.Environment["overlay_sha256"] = build.OverlaySHA256
 	}
@@ -490,14 +516,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, build verifiedBuild) 
 		}
 		return p, err
 	}
-	masterArgs := []string{"--listen", masterAddress, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
-	if spec.PollMS < 1 {
-		spec.PollMS = 100
-	}
-	masterArgs = append(masterArgs, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
-	if cfg.Measure {
-		masterArgs = append(masterArgs, "--measure=true")
-	}
+	masterArgs := masterArguments(cfg, spec, masterAddress, execution)
 	master, err := startChild("master", "master.log", masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 	if err != nil {
 		return report, err
