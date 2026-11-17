@@ -111,6 +111,38 @@ func TestKafkaBatchPartitionFIFOAndPrefixOnGap(t *testing.T) {
 	}
 }
 
+func TestKafkaWaveDiagnosticsCountOnlyDurablePrefix(t *testing.T) {
+	failure := errors.New("injected SQL error")
+	metrics := observability.New()
+	cfg := KafkaConsumerConfig{Concurrency: 1, MaxPollRecords: 4, BatchTimeout: time.Second, Diagnostics: true}
+	expected := batchExpected("a01")
+	records := []*kgo.Record{batchRecord("a01", 0), batchRecord("a01", 1), batchRecord("a01", 2)}
+	lasts, err := processKafkaBatch(context.Background(), cfg, records, expected, time.Now(), func(_ context.Context, r *kgo.Record, _ []byte) error {
+		if r.Offset == 1 {
+			return failure
+		}
+		return nil
+	}, metrics)
+	if !errors.Is(err, failure) || len(lasts) != 1 || lasts[0].Offset != 0 || expected[0] != 0 {
+		t.Fatal("diagnostics changed failure or progress", lasts, err, expected)
+	}
+	data := metrics.Snapshot()
+	if data.Counters["results_kafka_durable_confirmations"] != 1 || data.Counters["results_kafka_poll_wave_errors"] != 1 ||
+		data.Gauges["results_kafka_distinct_partitions_per_poll"] != 1 || data.Gauges["results_kafka_active_partitions"] != 0 ||
+		data.Histograms["results_kafka_poll_wave_duration"].Count != 1 ||
+		data.Histograms["results_kafka_slowest_partition_job_duration"].Count != 1 {
+		t.Fatal("wrong counters after failed wave", data)
+	}
+	cfg.Diagnostics = false
+	fresh := observability.New()
+	if _, err := processKafkaBatch(context.Background(), cfg, records, expected, time.Now(), func(context.Context, *kgo.Record, []byte) error { return nil }, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Snapshot().Histograms["results_kafka_poll_wave_duration"].Count != 0 {
+		t.Fatal("detailed diagnostics were not disabled")
+	}
+}
+
 func TestKafkaBatchFailureCancelsAndJoinsHandlers(t *testing.T) {
 	failure := errors.New("handler failed")
 	started := make(chan struct{}, 2)
