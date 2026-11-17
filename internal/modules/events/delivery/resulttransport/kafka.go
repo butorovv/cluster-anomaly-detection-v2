@@ -136,9 +136,31 @@ func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) erro
 	}
 	r := &kgo.Record{Topic: ResultsTopic, Partition: int32(p), Key: []byte(groupID), Value: raw}
 	publishStarted := time.Now()
-	err = s.client.ProduceSync(ctx, r).FirstErr()
+	err = awaitSyncPublish(ctx, func(ctx context.Context) error {
+		return s.client.ProduceSync(ctx, r).FirstErr()
+	}, s.Close)
 	s.metrics.Observe("results_kafka_publish_ack", time.Since(publishStarted))
 	return kafkaDeliveryError(err)
+}
+
+func awaitSyncPublish(ctx context.Context, produce func(context.Context) error, closeSender func() error) error {
+	bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() { result <- produce(bounded) }()
+	select {
+	case err := <-result:
+		return err
+	case <-bounded.Done():
+		// Close resolves the SDK callback even for an idempotent request whose
+		// outcome is unknown. Do not retry or ACK it through this client.
+		_ = closeSender()
+		<-result
+		if ctx.Err() == context.Canceled {
+			return ctx.Err()
+		}
+		return domain.PermanentDelivery(fmt.Errorf("Kafka publish outcome unknown; restart sender: %w", bounded.Err()))
+	}
 }
 
 func (s *KafkaSender) Close() error { s.client.Close(); return nil }

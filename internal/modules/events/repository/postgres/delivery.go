@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,7 +81,7 @@ func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.C
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	ok, err := s.acceptTx(ctx, tx, e)
 	if err != nil {
 		return false, err
@@ -111,7 +112,7 @@ func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	accepted := false
 	if e != nil {
 		accepted, err = s.acceptTx(ctx, tx, *e)

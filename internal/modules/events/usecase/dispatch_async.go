@@ -28,9 +28,10 @@ type AsyncSender interface {
 }
 
 type AsyncConfig struct {
-	MaxRecords   int
-	MaxBytes     int64
-	DrainTimeout time.Duration
+	MaxRecords     int
+	MaxBytes       int64
+	DrainTimeout   time.Duration
+	PublishTimeout time.Duration
 }
 
 func (c AsyncConfig) WithDefaults() AsyncConfig {
@@ -43,10 +44,13 @@ func (c AsyncConfig) WithDefaults() AsyncConfig {
 	if c.DrainTimeout == 0 {
 		c.DrainTimeout = 5 * time.Second
 	}
+	if c.PublishTimeout == 0 {
+		c.PublishTimeout = 30 * time.Second
+	}
 	return c
 }
 func (c AsyncConfig) Validate() error {
-	if c.MaxRecords < 1 || c.MaxRecords > 16 || c.MaxBytes < domain.MaxMessageBytes+256 || c.MaxBytes > 16*(domain.MaxMessageBytes+256) || c.DrainTimeout <= 0 || c.DrainTimeout > 15*time.Second {
+	if c.MaxRecords < 1 || c.MaxRecords > 16 || c.MaxBytes < domain.MaxMessageBytes+256 || c.MaxBytes > 16*(domain.MaxMessageBytes+256) || c.DrainTimeout <= 0 || c.DrainTimeout > 15*time.Second || c.PublishTimeout <= 0 {
 		return fmt.Errorf("invalid async delivery bounds")
 	}
 	return nil
@@ -110,7 +114,7 @@ func (d *Dispatcher) runAsync(ctx context.Context) (retErr error) {
 		go func() {
 			defer workers.Done()
 			for job := range jobs {
-				results <- d.deliverAsync(prepCtx, ackCtx, budget, &bytes, &peakBytes, &pendingSQL, job)
+				results <- d.deliverAsync(prepCtx, ackCtx, budget, &bytes, &peakBytes, &pendingSQL, job, cfg.PublishTimeout, cancelPrep)
 			}
 		}()
 	}
@@ -256,7 +260,7 @@ loop:
 	return retErr
 }
 
-func (d *Dispatcher) deliverAsync(prepCtx, ackCtx context.Context, budget *semaphore.Weighted, bytes, peak, pendingSQL *atomic.Int64, job asyncJob) (r asyncResult) {
+func (d *Dispatcher) deliverAsync(prepCtx, ackCtx context.Context, budget *semaphore.Weighted, bytes, peak, pendingSQL *atomic.Int64, job asyncJob, publishTimeout time.Duration, stopAdmission context.CancelFunc) (r asyncResult) {
 	r.job = job
 	items := job.items
 	if !d.asyncCurrent(job.owner, job.generation) {
@@ -328,9 +332,22 @@ func (d *Dispatcher) deliverAsync(prepCtx, ackCtx context.Context, budget *semap
 		r.err = err
 		return
 	}
-	// Neither cancellation nor an elapsed deadline proves non-publication.
-	// Only the callback (including one forced by Close) completes this attempt.
-	outcome := <-completion
+	timer := time.NewTimer(publishTimeout)
+	defer timer.Stop()
+	var outcome asyncOutcome
+	select {
+	case outcome = <-completion:
+	case <-timer.C:
+		// Preserve the borrowed payload and the byte reservation until Flush
+		// or Close completes the callback. Stop admission before releasing it.
+		// A late receipt cannot acknowledge this timed-out attempt.
+		stopAdmission()
+		<-completion
+		done()
+		r.err = fmt.Errorf("Kafka publish outcome unknown after %s: %w", publishTimeout, context.DeadlineExceeded)
+		r.fatal = true
+		return
+	}
 	done()
 	d.Metrics.Observe("delivery_ack", outcome.at.Sub(sentAt))
 	d.Metrics.Observe("async_completion_queue", time.Since(outcome.at))
