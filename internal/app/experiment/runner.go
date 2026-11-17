@@ -28,7 +28,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -63,6 +62,7 @@ type Config struct {
 }
 type Result struct {
 	Provenance       string            `json:"configuration_sha256,omitempty"`
+	BuildManifestSHA string            `json:"build_manifest_sha256,omitempty"`
 	ShutdownVerified bool              `json:"shutdown_verified,omitempty"`
 	SchemaVersion    int               `json:"schema_version"`
 	Status           string            `json:"status"`
@@ -103,6 +103,12 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	auditManifest := flags.String("golden-manifest", "", "independent golden manifest for audit")
 	auditOutput := flags.String("audit-output", "", "new machine-readable audit output")
 	path := flags.String("config", "", "JSON experiment configuration")
+	buildSource := flags.String("build-source", "", "uncompressed git archive of a commit")
+	sourceSHA := flags.String("source-sha256", "", "pinned SHA-256 of the source archive")
+	sourceOverlay := flags.String("source-overlay", "", "overlay directory with source-relative files")
+	buildOutput := flags.String("build-output", "", "new verified build bundle directory")
+	manifestPath := flags.String("build-manifest", "", "manifest of the bundle used for this run")
+	manifestSHA := flags.String("build-manifest-sha256", "", "SHA-256 emitted when building the bundle")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -112,8 +118,30 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if *audit != "" {
 		return AuditSaved(*audit, *auditGolden, *auditManifest, *auditOutput)
 	}
+	if *buildSource != "" {
+		if *buildOutput == "" || *path != "" || *manifestPath != "" || *manifestSHA != "" || *resume || flags.NArg() != 0 {
+			return fmt.Errorf("--build-source requires --build-output and is a separate invocation from running an experiment")
+		}
+		digest, err := buildFromArchive(ctx, *buildSource, *sourceSHA, *sourceOverlay, *buildOutput)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(stdout, digest)
+		return err
+	}
 	if *path == "" || flags.NArg() != 0 {
 		return fmt.Errorf("--config required")
+	}
+	if *buildOutput != "" || *sourceSHA != "" || *sourceOverlay != "" {
+		return fmt.Errorf("source options require --build-source")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	build, err := loadBuild(*manifestPath, *manifestSHA, self)
+	if err != nil {
+		return err
 	}
 	b, err := os.ReadFile(*path)
 	if err != nil {
@@ -137,6 +165,16 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if cfg.TimeoutSeconds < 1 {
 		cfg.TimeoutSeconds = 900
 	}
+	for _, spec := range cfg.Runs {
+		if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") {
+			return fmt.Errorf("invalid run name")
+		}
+	}
+	if *resume {
+		if err := checkResumeBuild(cfg, build); err != nil {
+			return err
+		}
+	}
 	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
 		return fmt.Errorf("new artifact output directory required: %w", err)
 	}
@@ -144,7 +182,6 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
-	var binaries, hashes map[string]string
 	results := []Result{}
 	for _, spec := range cfg.Runs {
 		if *resume {
@@ -153,6 +190,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 				var previous Result
 				if json.Unmarshal(b, &previous) != nil {
 					return fmt.Errorf("invalid saved result %s", spec.Name)
+				}
+				if err := build.verifySaved(previous); err != nil {
+					return err
 				}
 				a, _ := json.Marshal(previous.Spec)
 				b, _ := json.Marshal(spec)
@@ -186,15 +226,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 				return err
 			}
 		}
-		if binaries == nil {
-			binaries, hashes, err = build(ctx, cfg.Output)
-			if err != nil {
-				return err
-			}
-		}
 		fmt.Fprintf(stdout, "RUN %s workers=%d groups=%d delta=%d mode=%s cadence=%d\n", spec.Name, spec.Workers, spec.Groups, spec.Delta, spec.Mode, spec.Cadence)
 		bounded, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
-		result, err := runOne(bounded, cfg, spec, binaries, hashes)
+		result, err := runOne(bounded, cfg, spec, build)
 		result.Provenance = provenance
 		cancel()
 		if err != nil {
@@ -215,40 +249,6 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	return nil
 }
-func build(ctx context.Context, out string) (map[string]string, map[string]string, error) {
-	binaries, hashes := map[string]string{}, map[string]string{}
-	suffix := ""
-	if runtime.GOOS == "windows" {
-		suffix = ".exe"
-	}
-	binRoot := filepath.Join(out, "bin")
-	if err := os.MkdirAll(binRoot, 0700); err != nil {
-		return nil, nil, err
-	}
-	// Never overwrite a binary used by an earlier saved experiment.
-	binDir, err := os.MkdirTemp(binRoot, "build-")
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, name := range []string{"worker", "master", "replayer"} {
-		binary, err := filepath.Abs(filepath.Join(binDir, name+suffix))
-		if err != nil {
-			return nil, nil, err
-		}
-		cmd := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
-		if b, err := cmd.CombinedOutput(); err != nil {
-			return nil, nil, fmt.Errorf("build %s: %w %s", name, err, b)
-		}
-		b, err := os.ReadFile(binary)
-		if err != nil {
-			return nil, nil, err
-		}
-		hashes[name] = domain.Hash(b)
-		binaries[name] = binary
-	}
-	return binaries, hashes, nil
-}
-
 func freeEndpoint() (string, string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -281,13 +281,19 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 		}
 	}
 }
-func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[string]string) (report Result, retErr error) {
+func runOne(ctx context.Context, cfg Config, spec RunSpec, build verifiedBuild) (report Result, retErr error) {
 	defer func() { finishRun(ctx, &report, &retErr) }()
-	defer func() { report.BinaryPaths = binaries }()
-	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
+	defer func() {
+		if retErr == nil {
+			_, retErr = loadBuild(build.manifestPath, build.manifestSHA, build.paths["runner"])
+		}
+	}()
+	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinaryPaths: build.paths, BinarySHA256: build.BinarySHA256, BuildManifestSHA: build.manifestSHA, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
-	if commit, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output(); err == nil {
-		report.Environment["source_commit"] = strings.TrimSpace(string(commit))
+	report.Environment["source_commit"] = build.SourceCommit
+	report.Environment["source_archive_sha256"] = build.ArchiveSHA256
+	if build.OverlaySHA256 != "" {
+		report.Environment["overlay_sha256"] = build.OverlaySHA256
 	}
 	defer func() { report.Finished = time.Now().UTC(); report.ElapsedSeconds = time.Since(start).Seconds() }()
 	if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") || spec.Workers < 1 || spec.Workers > 16 || (spec.Groups != 4 && spec.Groups != 8 && spec.Groups != 16) || (spec.Delta != 0 && spec.Delta != 10 && spec.Delta != 30 && spec.Delta != 60) || (spec.Cadence != 1 && spec.Cadence != 3 && spec.Cadence != 6) || (spec.Mode != "polling" && spec.Mode != "http_push" && spec.Mode != "kafka") {
@@ -465,13 +471,20 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		defer sampler.Stop()
 	}
 	var children []*process
+	var replayStart time.Time
 	defer func() {
 		err := shutdownProcesses(children)
 		report.ShutdownVerified = retErr == nil && err == nil
 		retErr = errors.Join(retErr, err)
 	}()
 	startChild := func(role, logName string, args, env []string) (*process, error) {
-		p, err := startProcess(ctx, role, binaries[role], filepath.Join(logDir, logName), args, env)
+		if err := build.verifyBinary(role); err != nil {
+			return nil, err
+		}
+		if role == "replayer" {
+			replayStart = time.Now()
+		}
+		p, err := startProcess(ctx, role, build.paths[role], filepath.Join(logDir, logName), args, env)
 		if err == nil {
 			children = append(children, p)
 		}
@@ -567,7 +580,6 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			}
 		}()
 	}
-	replayStart := time.Now()
 	replayer, err := startChild("replayer", "replayer.log", replayArgs, []string{"GOMAXPROCS=1"})
 	if err != nil {
 		return report, err

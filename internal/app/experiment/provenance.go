@@ -89,7 +89,7 @@ func reusable(saved Result, cfg Config, provenance string) error {
 	if saved.RunID != id.RunID || saved.ConfigID != id.ConfigID {
 		return fmt.Errorf("saved scientific identity differs")
 	}
-	for _, name := range []string{"worker", "master", "replayer"} {
+	for _, name := range experimentBinaries {
 		actual, err := fileSHA(saved.BinaryPaths[name])
 		if err != nil {
 			return fmt.Errorf("saved %s binary unavailable: %w", name, err)
