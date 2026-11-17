@@ -253,7 +253,7 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 }
 
 // ConsumeKafkaWithConfig loads SQL positions before fetch and retains the
-// rebalance barrier until every handler in the bounded wave has returned.
+// rebalance barrier until every active handler in the intake window has returned.
 func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) error {
 	return consumeKafkaWithConfig(ctx, seeds, consumerGroup, pin, load, handle, cfg, nil, metrics...)
 }
@@ -409,7 +409,19 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	// Keep the existing franz-go session/rebalance defaults. Even the maximum
 	// configured processing deadline (15s) is below its 45s session timeout;
 	// normal SQL operations also retain their shorter statement/lock timeouts.
-	cl, err := kgo.NewClient(kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5*time.Second), kgo.RequestTimeoutOverhead(5*time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100*time.Millisecond), kgo.FetchMaxBytes(8<<20), kgo.FetchMaxPartitionBytes(KafkaBatchMaxBytes), kgo.MaxConcurrentFetches(0))
+	opts := []kgo.Opt{kgo.Dialer(resultDialer(metrics)), kgo.SeedBrokers(seeds...), kgo.DialTimeout(5 * time.Second), kgo.RequestTimeoutOverhead(5 * time.Second), kgo.ConsumerGroup(consumerGroup), kgo.ConsumeTopics(ResultsTopic), kgo.DisableAutoCommit(), kgo.Balancers(kgo.CooperativeStickyBalancer()), kgo.BlockRebalanceOnPoll(), kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.AdjustFetchOffsetsFn(adjust), kgo.OnPartitionsAssigned(callback), kgo.OnPartitionsRevoked(clear), kgo.OnPartitionsLost(clear), kgo.FetchMaxWait(100 * time.Millisecond), kgo.FetchMaxBytes(8 << 20), kgo.FetchMaxPartitionBytes(KafkaBatchMaxBytes), kgo.MaxConcurrentFetches(0)}
+	var rebalance <-chan struct{}
+	if cfg.IntakeMode == KafkaIntakePipeline {
+		requested := make(chan struct{}, 1)
+		rebalance = requested
+		opts = append(opts, kgo.OnPartitionsCallbackBlocked(func(context.Context, *kgo.Client) {
+			select {
+			case requested <- struct{}{}:
+			default:
+			}
+		}))
+	}
+	cl, err := kgo.NewClient(opts...)
 	if err != nil {
 		return err
 	}
@@ -424,25 +436,54 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	if commit == nil {
 		commit = cl.CommitRecords
 	}
+	positions := func() map[int32]int64 {
+		mu.Lock()
+		defer mu.Unlock()
+		snapshot := make(map[int32]int64, len(expected))
+		for p, next := range expected {
+			snapshot[p] = next
+		}
+		return snapshot
+	}
+	finish := func(lasts []*kgo.Record) error {
+		mu.Lock()
+		for _, r := range lasts {
+			expected[r.Partition] = r.Offset + 1
+		}
+		mu.Unlock()
+		// SQL has already confirmed this prefix. Restart always restores from SQL.
+		if err := commitKafkaProgress(ctx, commit, lasts, registry); err != nil {
+			return err
+		}
+		cl.AllowRebalance()
+		return nil
+	}
+	return runKafkaIntake(ctx, cfg, cl.PollRecords, positions, finish, rebalance, handle, registry)
+}
+
+func runKafkaIntake(ctx context.Context, cfg KafkaConsumerConfig, pollRecords func(context.Context, int) kgo.Fetches, positions func() map[int32]int64, finish func([]*kgo.Record) error, rebalance <-chan struct{}, handle func(context.Context, *kgo.Record, []byte) error, registry *observability.Registry) error {
 	var previousPollEnd time.Time
 	if cfg.Diagnostics {
+		registry.Label("results_kafka_intake_mode", cfg.IntakeMode)
 		registry.Set("results_kafka_max_poll_records", float64(cfg.MaxPollRecords))
 		registry.Set("results_kafka_max_partition_handlers", float64(cfg.Concurrency))
 	}
-	for {
+	poll := func(ctx context.Context) kafkaPoll {
 		pollStarted := time.Now()
 		if cfg.Diagnostics && !previousPollEnd.IsZero() {
 			registry.Observe("results_kafka_gap_between_polls", pollStarted.Sub(previousPollEnd))
 		}
-		fetches := cl.PollRecords(ctx, cfg.MaxPollRecords)
+		fetches := pollRecords(ctx, cfg.MaxPollRecords)
 		polledAt := time.Now()
 		previousPollEnd = polledAt
 		registry.Observe("results_kafka_poll_wait", polledAt.Sub(pollStarted))
-		if err := ctx.Err(); err != nil {
-			return err
-		}
 		if e := fetches.Errors(); len(e) != 0 {
-			return fmt.Errorf("Kafka output fetch %s/%d: %w", e[0].Topic, e[0].Partition, e[0].Err)
+			// PollRecords reports local cancellation as an error-only fetch.
+			// Any result carrying records or additional errors must fail closed.
+			if err := ctx.Err(); err != nil && len(e) == 1 && fetches.Empty() && errors.Is(e[0].Err, err) {
+				return kafkaPoll{at: polledAt}
+			}
+			return kafkaPoll{err: fmt.Errorf("Kafka output fetch %s/%d: %w", e[0].Topic, e[0].Partition, e[0].Err)}
 		}
 		records := fetches.Records()
 		registry.Set("results_kafka_poll_batch_records", float64(len(records)))
@@ -453,28 +494,31 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 				registry.Set("results_kafka_distinct_partitions_per_poll", 0)
 			}
 		}
-		mu.Lock()
-		positions := make(map[int32]int64, len(expected))
-		for p, next := range expected {
-			positions[p] = next
+		return kafkaPoll{records: records, at: polledAt}
+	}
+	for {
+		batch := poll(ctx)
+		if err := ctx.Err(); err != nil {
+			return err
 		}
-		mu.Unlock()
-		lasts, err := processKafkaBatch(ctx, cfg, records, positions, polledAt, handle, registry)
+		if batch.err != nil {
+			return batch.err
+		}
+		var lasts []*kgo.Record
+		var err error
+		if cfg.IntakeMode == KafkaIntakePipeline {
+			if len(batch.records) > 0 {
+				lasts, err = processKafkaPipeline(ctx, cfg, batch, positions, poll, rebalance, handle, registry)
+			}
+		} else {
+			lasts, err = processKafkaBatch(ctx, cfg, batch.records, positions(), batch.at, handle, registry)
+		}
 		if err != nil {
-			return err
-		} // SQL prefixes remain durable; restart loads them.
-		mu.Lock()
-		for _, r := range lasts {
-			expected[r.Partition] = r.Offset + 1
+			return err // Closing the client discards work; a new assignment reloads SQL.
 		}
-		mu.Unlock()
-		// PostgreSQL output positions are already durable per record. Kafka's
-		// auxiliary commit can acknowledge the successfully processed poll batch;
-		// a crash in its middle restores SQL positions, never Kafka progress.
-		if err := commitKafkaProgress(ctx, commit, lasts, registry); err != nil {
+		if err := finish(lasts); err != nil {
 			return err
 		}
-		cl.AllowRebalance()
 	}
 }
 

@@ -28,9 +28,10 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	execution := flags.String("execution-id", "", "registered execution (required for polling/kafka)")
 	interval := flags.Duration("poll-interval", 100*time.Millisecond, "Worker HTTP polling period")
 	pollConcurrency := flags.Int("poll-concurrency", 4, "maximum independent polling operations (1..16)")
+	kafkaIntakeMode := flags.String("kafka-intake-mode", resulttransport.KafkaIntakeWave, "Kafka result intake scheduling: wave | pipeline")
 	kafkaConcurrency := flags.Int("kafka-intake-concurrency", 4, "maximum concurrent result partitions (1..16)")
-	kafkaRecords := flags.Int("kafka-poll-records", 16, "maximum result records per poll wave (1..128)")
-	kafkaTimeout := flags.Duration("kafka-batch-timeout", 8*time.Second, "bounded result poll processing deadline (1ms..15s)")
+	kafkaRecords := flags.Int("kafka-poll-records", 16, "maximum result records per poll (1..128)")
+	kafkaTimeout := flags.Duration("kafka-batch-timeout", 8*time.Second, "bounded Kafka intake processing deadline (1ms..15s)")
 	brokers := flags.String("kafka-brokers", "localhost:9092", "results Kafka seeds")
 	resultsGroup := flags.String("results-group", "", "Kafka results Consumer Group; default execution-scoped")
 	createResults := flags.Bool("create-results-topic", false, "explicitly initialize group.results")
@@ -40,7 +41,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if flags.NArg() != 0 || *listen == "" {
 		return fmt.Errorf("listen address required; no positional arguments")
 	}
-	kafkaConfig := resulttransport.KafkaConsumerConfig{Concurrency: *kafkaConcurrency, MaxPollRecords: *kafkaRecords, BatchTimeout: *kafkaTimeout}
+	kafkaConfig := resulttransport.KafkaConsumerConfig{IntakeMode: *kafkaIntakeMode, Concurrency: *kafkaConcurrency, MaxPollRecords: *kafkaRecords, BatchTimeout: *kafkaTimeout}
 	if err := kafkaConfig.Validate(); err != nil {
 		return err
 	}

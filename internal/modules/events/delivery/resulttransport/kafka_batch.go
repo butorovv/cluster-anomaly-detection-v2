@@ -14,8 +14,14 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// KafkaConsumerConfig bounds one poll wave; there is no persistent record queue.
+const (
+	KafkaIntakeWave     = "wave"
+	KafkaIntakePipeline = "pipeline"
+)
+
+// KafkaConsumerConfig bounds result processing within a rebalance barrier.
 type KafkaConsumerConfig struct {
+	IntakeMode     string
 	Concurrency    int
 	MaxPollRecords int
 	BatchTimeout   time.Duration
@@ -23,6 +29,9 @@ type KafkaConsumerConfig struct {
 }
 
 func (c KafkaConsumerConfig) WithDefaults() KafkaConsumerConfig {
+	if c.IntakeMode == "" {
+		c.IntakeMode = KafkaIntakeWave
+	}
 	if c.Concurrency == 0 {
 		c.Concurrency = 4
 	}
@@ -35,6 +44,9 @@ func (c KafkaConsumerConfig) WithDefaults() KafkaConsumerConfig {
 	return c
 }
 func (c KafkaConsumerConfig) Validate() error {
+	if c.IntakeMode != KafkaIntakeWave && c.IntakeMode != KafkaIntakePipeline {
+		return fmt.Errorf("invalid Kafka intake mode %q: want wave or pipeline", c.IntakeMode)
+	}
 	if c.Concurrency < 1 || c.Concurrency > 16 || c.MaxPollRecords < 1 || c.MaxPollRecords > 128 || c.BatchTimeout < time.Millisecond || c.BatchTimeout > 15*time.Second {
 		return fmt.Errorf("invalid Kafka intake limits")
 	}
@@ -80,15 +92,9 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 	parts := map[int32]*partitionBatch{}
 	var batchBytes int64
 	for _, r := range records {
-		if r == nil {
-			return nil, fmt.Errorf("nil Kafka result record")
-		}
-		next, ok := expected[r.Partition]
-		if r.Topic != ResultsTopic || !ok || r.Partition < 0 || r.Partition >= resultPartitions {
-			return nil, fmt.Errorf("unexpected result assignment at %s/%d", r.Topic, r.Partition)
-		}
-		if len(r.Value) == 0 || len(r.Value) > domain.MaxMessageBytes || len(r.Key) == 0 || len(r.Key) > 256 {
-			return nil, fmt.Errorf("result record exceeds message/key limit")
+		next, err := validateKafkaRecord(r, expected)
+		if err != nil {
+			return nil, err
 		}
 		batchBytes += int64(len(r.Value) + len(r.Key))
 		part := parts[r.Partition]
@@ -192,6 +198,20 @@ admission:
 		return lasts, err
 	}
 	return lasts, nil
+}
+
+func validateKafkaRecord(r *kgo.Record, expected map[int32]int64) (int64, error) {
+	if r == nil {
+		return 0, fmt.Errorf("nil Kafka result record")
+	}
+	next, ok := expected[r.Partition]
+	if r.Topic != ResultsTopic || !ok || r.Partition < 0 || r.Partition >= resultPartitions {
+		return 0, fmt.Errorf("unexpected result assignment at %s/%d", r.Topic, r.Partition)
+	}
+	if len(r.Value) == 0 || len(r.Value) > domain.MaxMessageBytes || len(r.Key) == 0 || len(r.Key) > 256 {
+		return 0, fmt.Errorf("result record exceeds message/key limit")
+	}
+	return next, nil
 }
 
 func processPartition(ctx context.Context, part partitionBatch, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) (progress partitionProgress) {
