@@ -254,7 +254,11 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 
 // ConsumeKafkaWithConfig loads SQL positions before fetch and retains the
 // rebalance barrier until every handler in the bounded wave has returned.
-func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) (retErr error) {
+func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) error {
+	return consumeKafkaWithConfig(ctx, seeds, consumerGroup, pin, load, handle, cfg, nil, metrics...)
+}
+
+func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, commit func(context.Context, ...*kgo.Record) error, metrics ...*observability.Registry) (retErr error) {
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -417,6 +421,9 @@ func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 		default:
 		}
 	}()
+	if commit == nil {
+		commit = cl.CommitRecords
+	}
 	for {
 		pollStarted := time.Now()
 		fetches := cl.PollRecords(ctx, cfg.MaxPollRecords)
@@ -448,15 +455,8 @@ func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 		// PostgreSQL output positions are already durable per record. Kafka's
 		// auxiliary commit can acknowledge the successfully processed poll batch;
 		// a crash in its middle restores SQL positions, never Kafka progress.
-		if len(lasts) > 0 {
-			commitStarted := time.Now()
-			commitCtx, commitCancel := context.WithTimeout(ctx, time.Second)
-			err := cl.CommitRecords(commitCtx, lasts...)
-			commitCancel()
-			if err != nil {
-				return fmt.Errorf("commit durable output batch: %w", err)
-			}
-			registry.Observe("results_kafka_aux_commit", time.Since(commitStarted))
+		if err := commitKafkaProgress(ctx, commit, lasts, registry); err != nil {
+			return err
 		}
 		cl.AllowRebalance()
 	}

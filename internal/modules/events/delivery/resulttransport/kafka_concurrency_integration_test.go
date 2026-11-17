@@ -21,6 +21,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/workerfixture"
 	"github.com/google/uuid"
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"github.com/twmb/franz-go/pkg/kmsg"
 )
@@ -138,6 +139,76 @@ func (r *kafkaSQLRig) finals() int {
 	var n int
 	_ = r.store.DB.QueryRow(context.Background(), `SELECT count(*) FROM cad_v2.master_results`).Scan(&n)
 	return n
+}
+
+func TestKafkaAuxCommitFailureRestartsAtDurableSQLPosition(t *testing.T) {
+	r := newKafkaSQLRig(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	load := func(ctx context.Context, p int32) (int64, error) { return r.store.ResultOffset(ctx, r.execution, p) }
+	firstCtx, stopFirst := context.WithCancel(ctx)
+	defer stopFirst()
+	done := make(chan error, 1)
+	go func() {
+		done <- consumeKafkaWithConfig(firstCtx, r.seeds, r.consumer, r.sender.Identity, load, r.accept,
+			KafkaConsumerConfig{MaxPollRecords: 1}, func(ctx context.Context, records ...*kgo.Record) error {
+				for _, record := range records {
+					next, err := load(ctx, record.Partition)
+					if err != nil || next != record.Offset+1 {
+						return fmt.Errorf("offset commit attempted before SQL commit: %d %v", next, err)
+					}
+				}
+				return kerr.NotCoordinator // No broker commit reaches Kafka.
+			}, r.master.Metrics)
+	}()
+	waitKafkaSQL(t, func() bool {
+		return r.finals() == 12 && r.master.Metrics.Snapshot().Counters["results_kafka_aux_commit_deferred"] == 12
+	})
+	stopFirst()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	// A new record at the SQL boundary carries an already accepted MessageID.
+	// If restart used the absent broker offset, it would replay earlier records.
+	if err := r.sender.Send(ctx, r.raw[0][0], "a01"); err != nil {
+		t.Fatal(err)
+	}
+	restartCtx, stopRestart := context.WithCancel(ctx)
+	defer stopRestart()
+	firstOffset := make(chan int64, 1)
+	var once sync.Once
+	go func() {
+		done <- r.run(restartCtx, func(ctx context.Context, record *kgo.Record, body []byte) error {
+			once.Do(func() { firstOffset <- record.Offset })
+			return r.accept(ctx, record, body)
+		})
+	}()
+	select {
+	case offset := <-firstOffset:
+		if offset != r.starts[0]+3 {
+			t.Fatalf("restart offset %d did not match SQL position %d", offset, r.starts[0]+3)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	waitKafkaSQL(t, func() bool { return r.offset(0) == r.starts[0]+4 })
+	if r.finals() != 12 {
+		t.Fatal("duplicate created another result")
+	}
+	stopRestart()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 }
 
 func TestKafkaPartitionsCommitBeforeSlowPartitionAndRestart(t *testing.T) {
