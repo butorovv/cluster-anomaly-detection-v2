@@ -46,10 +46,16 @@ type KafkaSender struct {
 }
 
 func NewKafka(ctx context.Context, seeds []string, create bool, metrics ...*observability.Registry) (*KafkaSender, error) {
-	return newKafka(ctx, seeds, create, nil, metrics...)
+	return newKafka(ctx, seeds, create, nil, nil, metrics...)
 }
 
-func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt, metrics ...*observability.Registry) (*KafkaSender, error) {
+// NewPinnedKafka opens a sender for an already registered execution. The
+// administrative bootstrap owns topic creation and initial binding.
+func NewPinnedKafka(ctx context.Context, seeds []string, pin SourceIdentity, metrics ...*observability.Registry) (*KafkaSender, error) {
+	return newKafka(ctx, seeds, false, &pin, nil, metrics...)
+}
+
+func newKafka(ctx context.Context, seeds []string, create bool, pin *SourceIdentity, extra []kgo.Opt, metrics ...*observability.Registry) (*KafkaSender, error) {
 	if len(seeds) == 0 {
 		return nil, fmt.Errorf("Kafka seeds required")
 	}
@@ -77,7 +83,7 @@ func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt,
 			return nil, err
 		}
 	}
-	cluster, topic, err := describeProducerSource(ctx, kadm.NewClient(cl), ResultsTopic)
+	identity, err := openProducerSource(ctx, kadm.NewClient(cl), pin)
 	if err != nil {
 		cl.Close()
 		return nil, err
@@ -86,7 +92,25 @@ func newKafka(ctx context.Context, seeds []string, create bool, extra []kgo.Opt,
 	if len(metrics) > 0 {
 		registry = metrics[0]
 	}
-	return &KafkaSender{client: cl, Identity: SourceIdentity{ClusterID: cluster, TopicID: topic}, metrics: registry}, nil
+	return &KafkaSender{client: cl, Identity: identity, metrics: registry}, nil
+}
+
+func openProducerSource(ctx context.Context, admin producerTopicAdmin, pin *SourceIdentity) (SourceIdentity, error) {
+	if pin != nil && (pin.ClusterID == "" || pin.TopicID == "") {
+		return SourceIdentity{}, fmt.Errorf("registered results source identity required")
+	}
+	cluster, topic, err := describeProducerSource(ctx, admin, ResultsTopic)
+	if err != nil {
+		return SourceIdentity{}, err
+	}
+	live := SourceIdentity{ClusterID: cluster, TopicID: topic}
+	if pin == nil {
+		return live, nil
+	}
+	if live != *pin {
+		return SourceIdentity{}, domain.PermanentDelivery(fmt.Errorf("results topic incarnation differs from registered execution"))
+	}
+	return *pin, nil
 }
 
 func (s *KafkaSender) Send(ctx context.Context, raw []byte, groupID string) error {

@@ -19,7 +19,6 @@ import (
 
 type OutputOptions struct {
 	Listen, Advertise, MasterURL string
-	CreateResultsTopic           bool
 	KafkaAsync                   bool
 	KafkaAsyncConfig             usecase.AsyncConfig
 	KafkaAsyncLinger             time.Duration
@@ -58,19 +57,25 @@ func RunWithOutput(ctx context.Context, cfg Config, store *checkpoints.Store, po
 		}
 		dispatcher.Sender = sender
 	case "kafka":
+		var pin resulttransport.SourceIdentity
+		err := pool.QueryRow(ctx, `SELECT cluster_id,topic_id FROM cad_v2.result_topic_bindings WHERE execution_id=$1::uuid`,
+			dispatcher.ExecutionID).Scan(&pin.ClusterID, &pin.TopicID)
+		if err != nil {
+			return fmt.Errorf("load registered Kafka output source for execution %s: %w", dispatcher.ExecutionID, err)
+		}
 		if output.KafkaAsync {
 			limits := output.KafkaAsyncConfig.WithDefaults()
 			if err := limits.Validate(); err != nil {
 				return err
 			}
-			sender, err := resulttransport.NewKafkaAsync(ctx, cfg.Broker.Seeds, output.CreateResultsTopic, resulttransport.KafkaAsyncOptions{MaxRecords: limits.MaxRecords, MaxBytes: limits.MaxBytes, Linger: output.KafkaAsyncLinger}, cfg.Metrics)
+			sender, err := resulttransport.NewPinnedKafkaAsync(ctx, cfg.Broker.Seeds, pin, resulttransport.KafkaAsyncOptions{MaxRecords: limits.MaxRecords, MaxBytes: limits.MaxBytes, Linger: output.KafkaAsyncLinger}, cfg.Metrics)
 			if err != nil {
 				return err
 			}
 			dispatcher.AsyncSender, dispatcher.AsyncConfig = sender, limits
 			break
 		}
-		sender, err := resulttransport.NewKafka(ctx, cfg.Broker.Seeds, output.CreateResultsTopic, cfg.Metrics)
+		sender, err := resulttransport.NewPinnedKafka(ctx, cfg.Broker.Seeds, pin, cfg.Metrics)
 		if err != nil {
 			return err
 		}

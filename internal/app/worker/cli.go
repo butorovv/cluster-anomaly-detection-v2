@@ -47,7 +47,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	listen := flags.String("listen", "127.0.0.1:0", "Worker HTTP listen address")
 	advertise := flags.String("advertise-url", "", "reachable Worker URL; inferred only for loopback")
 	masterURL := flags.String("master-url", "http://127.0.0.1:8080", "Master URL for http_push")
-	createResults := flags.Bool("create-results-topic", false, "explicitly initialize/validate group.results")
+	flags.Bool("create-results-topic", false, "deprecated compatibility flag; bootstrap must bind group.results before Worker starts")
 	async := flags.Bool("kafka-async", true, "bounded asynchronous Worker Kafka output")
 	asyncRecords := flags.Int("kafka-output-inflight-records", 4, "maximum unfinished Kafka deliveries (1..16)")
 	asyncBytes := flags.Int64("kafka-output-buffer-bytes", 4194304+256, "maximum reserved Kafka payload/key bytes")
@@ -143,5 +143,5 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return RunWithOutput(ctx, Config{Metrics: metrics, Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, CreateResultsTopic: *createResults, KafkaAsync: *async, KafkaAsyncConfig: usecase.AsyncConfig{MaxRecords: *asyncRecords, MaxBytes: *asyncBytes, DrainTimeout: *asyncDrain}, KafkaAsyncLinger: *asyncLinger})
+	return RunWithOutput(ctx, Config{Metrics: metrics, Measure: *measure, CheckpointIntervalTicks: *cadence, Bundle: bundle, Options: opts, Broker: broker, ConsumerGroup: *consumer, OwnerID: *ownerID, LeaseTTL: *lease, Logger: log}, &repo.Store{DB: pool, Registration: r}, pool, OutputOptions{Listen: *listen, Advertise: *advertise, MasterURL: *masterURL, KafkaAsync: *async, KafkaAsyncConfig: usecase.AsyncConfig{MaxRecords: *asyncRecords, MaxBytes: *asyncBytes, DrainTimeout: *asyncDrain}, KafkaAsyncLinger: *asyncLinger})
 }

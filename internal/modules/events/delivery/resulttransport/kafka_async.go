@@ -28,10 +28,18 @@ type KafkaAsyncSender struct {
 }
 
 func NewKafkaAsync(ctx context.Context, seeds []string, create bool, opts KafkaAsyncOptions, metrics ...*observability.Registry) (*KafkaAsyncSender, error) {
+	return newKafkaAsync(ctx, seeds, create, nil, opts, metrics...)
+}
+
+func NewPinnedKafkaAsync(ctx context.Context, seeds []string, pin SourceIdentity, opts KafkaAsyncOptions, metrics ...*observability.Registry) (*KafkaAsyncSender, error) {
+	return newKafkaAsync(ctx, seeds, false, &pin, opts, metrics...)
+}
+
+func newKafkaAsync(ctx context.Context, seeds []string, create bool, pin *SourceIdentity, opts KafkaAsyncOptions, metrics ...*observability.Registry) (*KafkaAsyncSender, error) {
 	if opts.MaxRecords < 1 || opts.MaxRecords > resultPartitions || opts.MaxBytes < domain.MaxMessageBytes+256 || opts.MaxBytes > resultPartitions*(domain.MaxMessageBytes+256) || opts.Linger < 0 || opts.Linger > time.Second {
 		return nil, fmt.Errorf("invalid bounded Kafka producer options")
 	}
-	s, err := newKafka(ctx, seeds, create, []kgo.Opt{kgo.MaxBufferedRecords(opts.MaxRecords), kgo.MaxBufferedBytes(int(opts.MaxBytes)), kgo.ProducerLinger(opts.Linger)}, metrics...)
+	s, err := newKafka(ctx, seeds, create, pin, []kgo.Opt{kgo.MaxBufferedRecords(opts.MaxRecords), kgo.MaxBufferedBytes(int(opts.MaxBytes)), kgo.ProducerLinger(opts.Linger)}, metrics...)
 	if err != nil {
 		return nil, err
 	}
