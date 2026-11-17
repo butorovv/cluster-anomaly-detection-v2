@@ -62,27 +62,28 @@ type Config struct {
 	Runs           []RunSpec `json:"runs"`
 }
 type Result struct {
-	Provenance     string            `json:"configuration_sha256,omitempty"`
-	SchemaVersion  int               `json:"schema_version"`
-	Status         string            `json:"status"`
-	Spec           RunSpec           `json:"configuration"`
-	ExecutionID    string            `json:"execution_id"`
-	RunID          string            `json:"run_id"`
-	ConfigID       string            `json:"config_id"`
-	Started        time.Time         `json:"started_at"`
-	Finished       time.Time         `json:"finished_at"`
-	ElapsedSeconds float64           `json:"elapsed_seconds"`
-	ReplaySeconds  float64           `json:"replay_seconds"`
-	Comparison     Comparison        `json:"comparison"`
-	Assignment     map[string]string `json:"initial_assignment"`
-	NextOffsets    map[string]int64  `json:"next_offsets"`
-	BinarySHA256   map[string]string `json:"binary_sha256"`
-	BinaryPaths    map[string]string `json:"binary_paths,omitempty"`
-	Environment    map[string]any    `json:"environment"`
-	LogDirectory   string            `json:"log_directory,omitempty"`
-	Fault          map[string]any    `json:"fault,omitempty"`
-	Measurements   *Measurements     `json:"measurements,omitempty"`
-	Error          string            `json:"error,omitempty"`
+	Provenance       string            `json:"configuration_sha256,omitempty"`
+	ShutdownVerified bool              `json:"shutdown_verified,omitempty"`
+	SchemaVersion    int               `json:"schema_version"`
+	Status           string            `json:"status"`
+	Spec             RunSpec           `json:"configuration"`
+	ExecutionID      string            `json:"execution_id"`
+	RunID            string            `json:"run_id"`
+	ConfigID         string            `json:"config_id"`
+	Started          time.Time         `json:"started_at"`
+	Finished         time.Time         `json:"finished_at"`
+	ElapsedSeconds   float64           `json:"elapsed_seconds"`
+	ReplaySeconds    float64           `json:"replay_seconds"`
+	Comparison       Comparison        `json:"comparison"`
+	Assignment       map[string]string `json:"initial_assignment"`
+	NextOffsets      map[string]int64  `json:"next_offsets"`
+	BinarySHA256     map[string]string `json:"binary_sha256"`
+	BinaryPaths      map[string]string `json:"binary_paths,omitempty"`
+	Environment      map[string]any    `json:"environment"`
+	LogDirectory     string            `json:"log_directory,omitempty"`
+	Fault            map[string]any    `json:"fault,omitempty"`
+	Measurements     *Measurements     `json:"measurements,omitempty"`
+	Error            string            `json:"error,omitempty"`
 }
 
 func saveJSON(path string, value any) error {
@@ -167,6 +168,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 					}
 				}
 				if previous.Status == "PASS" && previous.Comparison.Status == "PASS" {
+					if !previous.ShutdownVerified {
+						return fmt.Errorf("saved PASS lacks verified child shutdown: use a new output directory for %s", spec.Name)
+					}
 					if err := reusable(previous, cfg, provenance); err != nil {
 						return fmt.Errorf("cannot resume %s: %w", spec.Name, err)
 					}
@@ -245,54 +249,6 @@ func build(ctx context.Context, out string) (map[string]string, map[string]strin
 	return binaries, hashes, nil
 }
 
-type process struct {
-	cmd             *exec.Cmd
-	log             *os.File
-	done            chan struct{}
-	err             error
-	owner, endpoint string
-}
-
-func startProcess(ctx context.Context, binary, logPath string, args []string, env []string) (*process, error) {
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = append(os.Environ(), env...)
-	cmd.Stdout = f
-	cmd.Stderr = f
-	p := &process{cmd: cmd, log: f, done: make(chan struct{})}
-	if err := cmd.Start(); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	go func() { p.err = cmd.Wait(); _ = f.Close(); close(p.done) }()
-	return p, nil
-}
-func (p *process) stop() {
-	if p == nil {
-		return
-	}
-	select {
-	case <-p.done:
-		return
-	default:
-	}
-	_ = p.cmd.Process.Kill()
-	<-p.done
-}
-func (p *process) failure() error {
-	select {
-	case <-p.done:
-		if p.err != nil {
-			return fmt.Errorf("process pid=%d: %w", p.cmd.Process.Pid, p.err)
-		}
-		return fmt.Errorf("process exited before completion pid=%d", p.cmd.Process.Pid)
-	default:
-		return nil
-	}
-}
 func freeEndpoint() (string, string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -310,13 +266,13 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 		if err != nil {
 			return err
 		}
-		if ok {
-			return nil
-		}
 		for _, p := range processes() {
 			if err := p.failure(); err != nil {
 				return err
 			}
+		}
+		if ok {
+			return ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
@@ -326,6 +282,7 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 	}
 }
 func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[string]string) (report Result, retErr error) {
+	defer func() { finishRun(ctx, &report, &retErr) }()
 	defer func() { report.BinaryPaths = binaries }()
 	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
@@ -507,6 +464,19 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if cfg.Measure {
 		defer sampler.Stop()
 	}
+	var children []*process
+	defer func() {
+		err := shutdownProcesses(children)
+		report.ShutdownVerified = retErr == nil && err == nil
+		retErr = errors.Join(retErr, err)
+	}()
+	startChild := func(role, logName string, args, env []string) (*process, error) {
+		p, err := startProcess(ctx, role, binaries[role], filepath.Join(logDir, logName), args, env)
+		if err == nil {
+			children = append(children, p)
+		}
+		return p, err
+	}
 	masterArgs := []string{"--listen", masterAddress, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
 	if spec.PollMS < 1 {
 		spec.PollMS = 100
@@ -515,20 +485,14 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if cfg.Measure {
 		masterArgs = append(masterArgs, "--measure=true")
 	}
-	master, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+	master, err := startChild("master", "master.log", masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 	if err != nil {
 		return report, err
 	}
-	defer func() { master.stop() }()
 	if cfg.Measure {
 		sampler.Add("master", masterURL)
 	}
 	workers := []*process{}
-	defer func() {
-		for _, p := range workers {
-			p.stop()
-		}
-	}()
 	startWorker := func(index int) (*process, error) {
 		address, endpoint, err := freeEndpoint()
 		if err != nil {
@@ -542,7 +506,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		if cfg.Measure {
 			args = append(args, "--measure=true")
 		}
-		p, err := startProcess(ctx, binaries["worker"], filepath.Join(logDir, fmt.Sprintf("worker-%02d.log", index)), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+		p, err := startChild("worker", fmt.Sprintf("worker-%02d.log", index), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 		if err == nil {
 			p.owner, p.endpoint = owner, endpoint
 			if cfg.Measure {
@@ -604,11 +568,10 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		}()
 	}
 	replayStart := time.Now()
-	replayer, err := startProcess(ctx, binaries["replayer"], filepath.Join(logDir, "replayer.log"), replayArgs, []string{"GOMAXPROCS=1"})
+	replayer, err := startChild("replayer", "replayer.log", replayArgs, []string{"GOMAXPROCS=1"})
 	if err != nil {
 		return report, err
 	}
-	defer replayer.stop()
 	if spec.Fault != "" {
 		faultStart := time.Now()
 		switch spec.Fault {
@@ -637,8 +600,11 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 					return false, fmt.Errorf("open event owner process absent")
 				}
 				killedAt = time.Now()
-				victim.stop()
+				killErr := victim.killForFault(ctx)
 				_ = tx.Rollback(context.Background())
+				if killErr != nil {
+					return false, killErr
+				}
 				replacement, err := startWorker(len(workers))
 				if err != nil {
 					return false, err
@@ -698,8 +664,10 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			}, active); err != nil {
 				return report, err
 			}
-			master.stop()
-			replacement, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master-restart.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+			if err := master.killForFault(ctx); err != nil {
+				return report, err
+			}
+			replacement, err := startChild("master", "master-restart.log", masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 			if err != nil {
 				return report, err
 			}
@@ -785,7 +753,6 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			return report, fmt.Errorf("measurement: %w", err)
 		}
 	}
-	report.Status = "PASS"
 	return report, nil
 }
 func verifyReference(manifestPath, directory string, groups, delta int) error {
