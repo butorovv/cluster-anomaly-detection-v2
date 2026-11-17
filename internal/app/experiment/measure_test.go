@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -60,13 +61,22 @@ func TestMeasurementJoinClocksAndQuantiles(t *testing.T) {
 	}
 }
 
+type metricsRoundTripper func(*http.Request) (*http.Response, error)
+
+func (f metricsRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
 func TestSamplerIncludesNonzeroPartitionLag(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"gauges":{"kafka_lag_records_a01":17,"kafka_lag_records_a16":25,"other":999}}`))
-	}))
-	defer server.Close()
 	s := newSampler()
-	s.Add("worker", server.URL)
+	s.client = &http.Client{Transport: metricsRoundTripper(func(r *http.Request) (*http.Response, error) {
+		if r.Method != http.MethodGet || r.URL.String() != "http://worker.test/metrics" {
+			t.Fatalf("unexpected metrics request: %s %s", r.Method, r.URL)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"gauges":{"kafka_lag_records_a01":17,"kafka_lag_records_a16":25,"other":999}}`)),
+		}, nil
+	})}
+	s.Add("worker", "http://worker.test")
 	s.capture(context.Background())
 	if got := s.Samples()[0].Lag; got != 42 {
 		t.Fatalf("lost input Kafka lag: got %v want 42", got)

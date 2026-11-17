@@ -94,6 +94,7 @@ type timingAggregate struct {
 }
 type sampler struct {
 	database  *pgxpool.Pool
+	client    *http.Client
 	mu        sync.Mutex
 	endpoints map[string]string
 	last      map[string]observability.Data
@@ -105,7 +106,7 @@ type sampler struct {
 }
 
 func newSampler() *sampler {
-	return &sampler{endpoints: map[string]string{}, last: map[string]observability.Data{}}
+	return &sampler{client: http.DefaultClient, endpoints: map[string]string{}, last: map[string]observability.Data{}}
 }
 func (s *sampler) Add(id, url string) { s.mu.Lock(); defer s.mu.Unlock(); s.endpoints[id] = url }
 func (s *sampler) Start(ctx context.Context) {
@@ -177,7 +178,7 @@ func (s *sampler) capture(ctx context.Context) {
 		bounded, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 		req, err := http.NewRequestWithContext(bounded, "GET", url+"/metrics", nil)
 		if err == nil {
-			response, e := http.DefaultClient.Do(req)
+			response, e := s.client.Do(req)
 			if e == nil {
 				var data observability.Data
 				if response.StatusCode == 200 && json.NewDecoder(http.MaxBytesReader(nil, response.Body, 1<<20)).Decode(&data) == nil {
