@@ -69,6 +69,18 @@ func (r *Registry) Set(k string, v float64) {
 	defer r.mu.Unlock()
 	r.gauges[k] = v
 }
+
+// SetGauges publishes one sample without exposing half-updated gauges.
+func (r *Registry) SetGauges(values map[string]float64) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for key, value := range values {
+		r.gauges[key] = value
+	}
+}
 func (r *Registry) Observe(k string, d time.Duration) {
 	if r == nil {
 		return

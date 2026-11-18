@@ -34,6 +34,7 @@ GRANT EXECUTE ON FUNCTION
 
 -- P10 extensions (run after applying V7).
 GRANT SELECT ON cad_v2.worker_tick_fragments TO :"worker_role";
+GRANT SELECT (execution_id,cluster_id,topic_id) ON cad_v2.result_topic_bindings TO :"worker_role";
 GRANT SELECT ON cad_v2.master_tick_fragments,cad_v2.master_tick_joins TO :"master_role";
 GRANT EXECUTE ON FUNCTION cad_v2.stage_tick_fragment(uuid,text,uuid,bigint,bigint,integer,jsonb),cad_v2.ack_delivery(uuid,text,uuid,bigint,text) TO :"worker_role";
 GRANT EXECUTE ON FUNCTION cad_v2.accept_tick_fragment(uuid,jsonb) TO :"master_role";

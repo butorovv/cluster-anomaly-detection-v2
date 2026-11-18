@@ -30,6 +30,10 @@ func fileSHA(path string) (string, error) {
 // A saved PASS describes its original execution, never a new run of current code.
 // Bind reuse to global inputs as well as RunSpec, and retain the exact binaries.
 func configurationHash(cfg Config) (string, error) {
+	intake := cfg.kafkaIntake()
+	if err := intake.Validate(); err != nil {
+		return "", err
+	}
 	for path, want := range map[string]string{
 		filepath.Join(cfg.Assets, "data/prepared/summit-D1-pilot/D1.parquet"): cfg.InputSHA,
 		filepath.Join(cfg.Assets, "configs/group-profile.summit-v1.json"):     cfg.ProfileSHA,
@@ -49,7 +53,8 @@ func configurationHash(cfg Config) (string, error) {
 	value := struct {
 		Assets, Brokers, Profile, Input, GoldenManifest string
 		Measure                                         bool
-	}{filepath.Clean(cfg.Assets), cfg.Brokers, cfg.ProfileSHA, cfg.InputSHA, manifest, cfg.Measure}
+		KafkaIntakeMode                                 string
+	}{filepath.Clean(cfg.Assets), cfg.Brokers, cfg.ProfileSHA, cfg.InputSHA, manifest, cfg.Measure, intake.IntakeMode}
 	b, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -65,7 +70,10 @@ func reusable(saved Result, cfg Config, provenance string) error {
 		return fmt.Errorf("legacy PASS lacks configuration provenance; audit saved artifacts separately, do not silently replay")
 	}
 	if saved.Provenance != provenance {
-		return fmt.Errorf("global input/golden/measurement configuration differs")
+		return fmt.Errorf("global input/golden/measurement/Kafka intake configuration differs")
+	}
+	if saved.Spec.Mode == "kafka" && saved.KafkaIntakeMode != cfg.kafkaIntake().IntakeMode {
+		return fmt.Errorf("saved Kafka intake mode differs")
 	}
 	reference := filepath.Join(cfg.GoldenRoot, fmt.Sprintf("g%d-d%d", saved.Spec.Groups, saved.Spec.Delta))
 	if err := verifyReference(cfg.GoldenManifest, reference, saved.Spec.Groups, saved.Spec.Delta); err != nil {
@@ -89,7 +97,7 @@ func reusable(saved Result, cfg Config, provenance string) error {
 	if saved.RunID != id.RunID || saved.ConfigID != id.ConfigID {
 		return fmt.Errorf("saved scientific identity differs")
 	}
-	for _, name := range []string{"worker", "master", "replayer"} {
+	for _, name := range experimentBinaries {
 		actual, err := fileSHA(saved.BinaryPaths[name])
 		if err != nil {
 			return fmt.Errorf("saved %s binary unavailable: %w", name, err)

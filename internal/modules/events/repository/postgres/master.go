@@ -7,13 +7,15 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type MasterStore struct {
-	DB     *pgxpool.Pool
-	Stages *observability.Registry // optional, profiling trials only
+	DB          *pgxpool.Pool
+	Stages      *observability.Registry // optional, profiling trials only
+	Diagnostics *observability.Registry // optional, with QueryTracer installed on DB
 }
 
 func (s MasterStore) Identity(ctx context.Context, execution string) (group.RBI2Identity, error) {
@@ -40,7 +42,7 @@ func (s MasterStore) Accept(ctx context.Context, e domain.Envelope) (bool, error
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	accepted, err := s.acceptTx(ctx, tx, e)
 	if err != nil {
 		return false, err

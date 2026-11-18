@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -50,7 +51,7 @@ func TestKafkaBatchSlowPartitionDoesNotBlockOthersAndHonorsConcurrency(t *testin
 	finished := make(chan struct{}, 3)
 	var mu sync.Mutex
 	var active, peak int
-	handle := func(_ context.Context, r *kgo.Record, _ []byte) error {
+	handle := func(_ context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 		mu.Lock()
 		active++
 		if active > peak {
@@ -102,12 +103,47 @@ func TestKafkaBatchSlowPartitionDoesNotBlockOthersAndHonorsConcurrency(t *testin
 func TestKafkaBatchPartitionFIFOAndPrefixOnGap(t *testing.T) {
 	seen := []int64{}
 	records := []*kgo.Record{batchRecord("a01", 0), batchRecord("a01", 1), batchRecord("a01", 3)}
-	last, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 3, MaxPollRecords: 4, BatchTimeout: time.Second}, records, batchExpected("a01"), time.Now(), func(_ context.Context, r *kgo.Record, _ []byte) error { seen = append(seen, r.Offset); return nil }, observability.New())
+	last, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 3, MaxPollRecords: 4, BatchTimeout: time.Second}, records, batchExpected("a01"), time.Now(), func(_ context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
+		seen = append(seen, r.Offset)
+		return nil
+	}, observability.New())
 	if err == nil || !reflect.DeepEqual(seen, []int64{0, 1}) {
 		t.Fatalf("seen=%v err=%v", seen, err)
 	}
 	if len(last) != 1 || last[0].Offset != 1 {
 		t.Fatalf("successful prefix=%v", last)
+	}
+}
+
+func TestKafkaWaveDiagnosticsCountOnlyDurablePrefix(t *testing.T) {
+	failure := errors.New("injected SQL error")
+	metrics := observability.New()
+	cfg := KafkaConsumerConfig{Concurrency: 1, MaxPollRecords: 4, BatchTimeout: time.Second, Diagnostics: true}
+	expected := batchExpected("a01")
+	records := []*kgo.Record{batchRecord("a01", 0), batchRecord("a01", 1), batchRecord("a01", 2)}
+	lasts, err := processKafkaBatch(context.Background(), cfg, records, expected, time.Now(), func(_ context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
+		if r.Offset == 1 {
+			return failure
+		}
+		return nil
+	}, metrics)
+	if !errors.Is(err, failure) || len(lasts) != 1 || lasts[0].Offset != 0 || expected[0] != 0 {
+		t.Fatal("diagnostics changed failure or progress", lasts, err, expected)
+	}
+	data := metrics.Snapshot()
+	if data.Counters["results_kafka_durable_confirmations"] != 1 || data.Counters["results_kafka_poll_wave_errors"] != 1 ||
+		data.Gauges["results_kafka_distinct_partitions_per_poll"] != 1 || data.Gauges["results_kafka_active_partitions"] != 0 ||
+		data.Histograms["results_kafka_poll_wave_duration"].Count != 1 ||
+		data.Histograms["results_kafka_slowest_partition_job_duration"].Count != 1 {
+		t.Fatal("wrong counters after failed wave", data)
+	}
+	cfg.Diagnostics = false
+	fresh := observability.New()
+	if _, err := processKafkaBatch(context.Background(), cfg, records, expected, time.Now(), func(context.Context, *kgo.Record, domain.DecodedEnvelope) error { return nil }, fresh); err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Snapshot().Histograms["results_kafka_poll_wave_duration"].Count != 0 {
+		t.Fatal("detailed diagnostics were not disabled")
 	}
 }
 
@@ -121,7 +157,7 @@ func TestKafkaBatchFailureCancelsAndJoinsHandlers(t *testing.T) {
 	done := make(chan error, 1)
 	canceled := make(chan struct{}, 1)
 	go func() {
-		_, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 2, MaxPollRecords: 4, BatchTimeout: time.Second}, records, batchExpected("a01", "a02", "a03"), time.Now(), func(ctx context.Context, r *kgo.Record, _ []byte) error {
+		_, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 2, MaxPollRecords: 4, BatchTimeout: time.Second}, records, batchExpected("a01", "a02", "a03"), time.Now(), func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 			started <- struct{}{}
 			if r.Partition == 0 {
 				<-failNow
@@ -157,7 +193,7 @@ func TestKafkaBatchRejectsInvalidInputWithoutMutatingExpected(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			expected := batchExpected("a01")
 			before := map[int32]int64{0: 0}
-			_, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 1, MaxPollRecords: 4, BatchTimeout: time.Second}, records, expected, time.Now(), func(context.Context, *kgo.Record, []byte) error { return nil }, observability.New())
+			_, err := processKafkaBatch(context.Background(), KafkaConsumerConfig{Concurrency: 1, MaxPollRecords: 4, BatchTimeout: time.Second}, records, expected, time.Now(), func(context.Context, *kgo.Record, domain.DecodedEnvelope) error { return nil }, observability.New())
 			if err == nil {
 				t.Fatal("expected validation error")
 			}

@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "source_commit": "b64f2be4e1c9c623009281052398adfb995c4ed8",
+  "measured_date": "2026-11-18",
+  "kafka_version": "4.1.2",
+  "postgres_version": "17.12",
+  "master_diagnostics": 1,
+  "build_manifest_sha256": "ab4b3d29eecb9bcebc3dc25582931a8ce98ae25335fc2f918dff9894b0e89c8c",
+  "source_archive_sha256": "84d48d94e7cb3d30c31b2cba88a440b922caf9e86bcca68f7650d9d0e0649619",
+  "binary_sha256": {
+    "master": "f727069888e79dbe6ab29ab3bdb098336d080a1c5e3d81bc9fc6509fd1843ed2",
+    "replayer": "744057ac2868aff1cd35ad0bbe962416ff3fd2a81729346fb218c87b4f669373",
+    "runner": "7ac6b460b2bd68bebd229486b6c03a85521a4aaf86fbd844b5d5d76256875dd8",
+    "worker": "26fdfe2bc0e6775b058c6bd3e217bd653cbc2f73a3b93d7dced837466b211d41"
+  },
+  "short_test": {
+    "name": "TestKafkaPipelineRealRebalanceRestoresSQLOffsets",
+    "status": "PASS",
+    "skips": 0,
+    "seconds": 3.66,
+    "partitions_checked": 16,
+    "joins": 3,
+    "results": 12
+  },
+  "configuration": {
+    "name": "aud008-kafka",
+    "workers": 4,
+    "groups": 16,
+    "delta": 0,
+    "mode": "kafka",
+    "cadence": 1,
+    "poll_ms": 100,
+    "replay_speed": 0
+  },
+  "comparison": {
+    "status": "PASS",
+    "raw_rows": 46080,
+    "temporal_rows": 46080,
+    "evidence_rows": 1284,
+    "parent_events": 750,
+    "positive_ticks": 1284,
+    "i2_positive_ticks": 1408,
+    "new_events": 473,
+    "rb_subspans": 285,
+    "rb_supported_parents": 277,
+    "canonical_sha256": {
+      "events": "da2cc69c8c02b9e62e7aece888c78f3a08a216888a8c689b5291965c4bb1fe60",
+      "evidence": "91403d489576acc01ff7f2308d41b7881f7d3d3279cee408b049a8527280e1ad",
+      "raw": "dccdda0fb913e3059839361aec8ff6b2356fa61e7b9973b3c96e2bd420df7027",
+      "temporal": "70436de2a1ff0f40e2b22f85d41ae9c12aabca2e6d3abf15fd8f1425e14582f7"
+    }
+  },
+  "wave": {
+    "exit": "0",
+    "status": "PASS",
+    "golden": "PASS",
+    "measurement": "PASS",
+    "error": null,
+    "group_ticks_per_second": 125.78123028771215,
+    "measured_seconds": 366.350367,
+    "final_join_tail_from_last_fragment_send_seconds": 234.876201,
+    "sampled_kafka_backlog_peak_records": 29638,
+    "master_cpu_seconds": 158.79361,
+    "master_handler_work_seconds": 350.53149618100036,
+    "master_handler_slots": 4,
+    "master_handler_slot_occupancy_pct": 23.920509419129388,
+    "master_handlers_peak": 4
+  },
+  "pipeline": {
+    "exit": "0",
+    "status": "PASS",
+    "golden": "PASS",
+    "measurement": "PASS",
+    "error": null,
+    "group_ticks_per_second": 136.74405777230393,
+    "measured_seconds": 336.979907,
+    "final_join_tail_from_last_fragment_send_seconds": 205.154237,
+    "sampled_kafka_backlog_peak_records": 27011,
+    "master_cpu_seconds": 162.405225,
+    "master_handler_work_seconds": 363.6684326370001,
+    "master_handler_slots": 4,
+    "master_handler_slot_occupancy_pct": 26.979979004875805,
+    "master_handlers_peak": 4
+  },
+  "delta_pct": 8.715789676659536,
+  "w1_decision": "NOT_RUN: one W4 pair, improvement below the predeclared 10% follow-up threshold",
+  "evidence_archive": "vm-evidence.tgz",
+  "evidence_archive_sha256": "00a95245cbe9be6c91e2e4224aaef58ce19f528cc76b1cb572f0ad997becc8dc",
+  "original_report_sha256": {
+    "wave": "e1960f2546ac43f79365be0c697545d76f052d4e3a18353c2bd886ab8900d01d",
+    "pipeline": "20c09946787e96d2c525600f7ae812f3494ef6d8f0499c92c10d31e88ebd3cef"
+  },
+  "tail_definition": "last final join confirmation minus last send of an accepted tick_fragment",
+  "handler_occupancy_definition": "sum handler work seconds / (4 handlers * measured source-to-final-join seconds)"
+}

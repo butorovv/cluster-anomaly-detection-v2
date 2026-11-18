@@ -1,0 +1,351 @@
+{
+  "schema_version": 1,
+  "baseline_commit": "b64f2be4e1c9c623009281052398adfb995c4ed8",
+  "go_version": "go1.27.2",
+  "goos": "windows",
+  "goarch": "amd64",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12650H",
+  "gomaxprocs": 4,
+  "benchtime": "200ms",
+  "count": 3,
+  "kafka_method": "processPartition through Master validation to in-memory store, before/after separate builds",
+  "outside_method": "Before is the frozen prior calculation, After is the new calculation in the same test binary; serialization setup outside timed loop",
+  "samples": [
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "Before",
+      "ns_per_op": 265223.0,
+      "bytes_per_op": 189297,
+      "allocs_per_op": 3204
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "Before",
+      "ns_per_op": 298509.0,
+      "bytes_per_op": 189281,
+      "allocs_per_op": 3204
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "Before",
+      "ns_per_op": 243671.0,
+      "bytes_per_op": 189271,
+      "allocs_per_op": 3204
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "Before",
+      "ns_per_op": 119638.0,
+      "bytes_per_op": 91850,
+      "allocs_per_op": 1583
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "Before",
+      "ns_per_op": 117985.0,
+      "bytes_per_op": 91857,
+      "allocs_per_op": 1583
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "Before",
+      "ns_per_op": 116453.0,
+      "bytes_per_op": 91850,
+      "allocs_per_op": 1583
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "After",
+      "ns_per_op": 119547.0,
+      "bytes_per_op": 97555,
+      "allocs_per_op": 1621
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "After",
+      "ns_per_op": 117274.0,
+      "bytes_per_op": 97643,
+      "allocs_per_op": 1623
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/OwnExecution-4",
+      "stage": "After",
+      "ns_per_op": 119096.0,
+      "bytes_per_op": 97561,
+      "allocs_per_op": 1621
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "After",
+      "ns_per_op": 51462.0,
+      "bytes_per_op": 46017,
+      "allocs_per_op": 792
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "After",
+      "ns_per_op": 51571.0,
+      "bytes_per_op": 46030,
+      "allocs_per_op": 792
+    },
+    {
+      "benchmark": "BenchmarkKafkaEnvelopePath/ForeignExecution-4",
+      "stage": "After",
+      "ns_per_op": 51163.0,
+      "bytes_per_op": 46023,
+      "allocs_per_op": 792
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 3295.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 3109.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 3136.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 3093.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 3102.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 3116.0,
+      "bytes_per_op": 8176,
+      "allocs_per_op": 110
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 40836.0,
+      "bytes_per_op": 139216,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 40863.0,
+      "bytes_per_op": 139216,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 42641.0,
+      "bytes_per_op": 139217,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 39187.0,
+      "bytes_per_op": 139216,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 42027.0,
+      "bytes_per_op": 139216,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 71881.0,
+      "bytes_per_op": 139216,
+      "allocs_per_op": 570
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1318666.0,
+      "bytes_per_op": 1868673,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1294278.0,
+      "bytes_per_op": 1868670,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1153518.0,
+      "bytes_per_op": 1868671,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 1155623.0,
+      "bytes_per_op": 1868675,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 1296278.0,
+      "bytes_per_op": 1868688,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkAnnotateOutside/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 1117718.0,
+      "bytes_per_op": 1868672,
+      "allocs_per_op": 2181
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 265618.0,
+      "bytes_per_op": 77969,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 277222.0,
+      "bytes_per_op": 78045,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/Before-4",
+      "stage": "paired",
+      "ns_per_op": 283975.0,
+      "bytes_per_op": 78048,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 279694.0,
+      "bytes_per_op": 78044,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 278476.0,
+      "bytes_per_op": 78074,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/16/After-4",
+      "stage": "paired",
+      "ns_per_op": 284603.0,
+      "bytes_per_op": 77964,
+      "allocs_per_op": 176
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1550857.0,
+      "bytes_per_op": 408464,
+      "allocs_per_op": 706
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1508986.0,
+      "bytes_per_op": 408477,
+      "allocs_per_op": 706
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/Before-4",
+      "stage": "paired",
+      "ns_per_op": 1502222.0,
+      "bytes_per_op": 408185,
+      "allocs_per_op": 705
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 1577444.0,
+      "bytes_per_op": 408290,
+      "allocs_per_op": 705
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 1545478.0,
+      "bytes_per_op": 408199,
+      "allocs_per_op": 705
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/64/After-4",
+      "stage": "paired",
+      "ns_per_op": 1539261.0,
+      "bytes_per_op": 408239,
+      "allocs_per_op": 705
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 8584348.0,
+      "bytes_per_op": 2101470,
+      "allocs_per_op": 2211
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 9243923.0,
+      "bytes_per_op": 2099213,
+      "allocs_per_op": 2209
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/Before-4",
+      "stage": "paired",
+      "ns_per_op": 8654054.0,
+      "bytes_per_op": 2097203,
+      "allocs_per_op": 2207
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 8681326.0,
+      "bytes_per_op": 2098750,
+      "allocs_per_op": 2208
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 8455350.0,
+      "bytes_per_op": 2098698,
+      "allocs_per_op": 2208
+    },
+    {
+      "benchmark": "BenchmarkOutsideSerialization/200/After-4",
+      "stage": "paired",
+      "ns_per_op": 8204015.0,
+      "bytes_per_op": 2101182,
+      "allocs_per_op": 2211
+    }
+  ]
+}

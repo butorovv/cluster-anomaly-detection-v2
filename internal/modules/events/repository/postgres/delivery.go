@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -80,7 +82,7 @@ func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.C
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	ok, err := s.acceptTx(ctx, tx, e)
 	if err != nil {
 		return false, err
@@ -106,12 +108,37 @@ func (s MasterStore) ResultOffset(ctx context.Context, execution string, p int32
 	err := s.DB.QueryRow(ctx, `SELECT next_offset FROM cad_v2.result_consumer_offsets WHERE execution_id=$1::uuid AND partition_id=$2`, execution, p).Scan(&next)
 	return next, err
 }
+
+// ResultOffsets reads an execution's durable positions in a single snapshot.
+func (s MasterStore) ResultOffsets(ctx context.Context, execution string) (map[int32]int64, error) {
+	rows, err := s.DB.Query(ctx, `SELECT partition_id,next_offset FROM cad_v2.result_consumer_offsets WHERE execution_id=$1::uuid`, execution)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	offsets := make(map[int32]int64, 16)
+	for rows.Next() {
+		var partition int32
+		var offset int64
+		if err := rows.Scan(&partition, &offset); err != nil {
+			return nil, err
+		}
+		offsets[partition] = offset
+	}
+	return offsets, rows.Err()
+}
+
 func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p int32, offset int64, e *domain.Envelope) (bool, error) {
-	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	beginCtx := ctx
+	if s.Diagnostics != nil {
+		beginCtx = observability.WithIntakeAcquireTiming(ctx)
+	}
+	tx, err := s.DB.BeginTx(beginCtx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
+	defer observability.Stage(s.Diagnostics, "master_pg_transaction_body_and_commit_duration")()
 	accepted := false
 	if e != nil {
 		accepted, err = s.acceptTx(ctx, tx, *e)
@@ -122,7 +149,12 @@ func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p
 	if _, err := tx.Exec(ctx, `SELECT cad_v2.advance_result_offset($1::uuid,$2,$3,$4,$5)`, execution, topic, p, offset, offset+1); err != nil {
 		return false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	// Keep this separate from the join body: COMMIT includes durability waits.
+	finishCommitTiming := observability.Stage(s.Diagnostics, "master_pg_commit_duration")
+	err = tx.Commit(ctx)
+	finishCommitTiming()
+	if err != nil {
+		s.Diagnostics.Add("master_pg_commit_errors", 1)
 		return false, err
 	}
 	return accepted, nil
