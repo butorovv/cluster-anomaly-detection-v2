@@ -255,10 +255,18 @@ func ConsumeKafka(ctx context.Context, seeds []string, consumerGroup string, pin
 // ConsumeKafkaWithConfig loads SQL positions before fetch and retains the
 // rebalance barrier until every active handler in the intake window has returned.
 func ConsumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) error {
+	return ConsumeKafkaEnvelopesWithConfig(ctx, seeds, consumerGroup, pin, load, func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
+		return handle(ctx, r, r.Value)
+	}, cfg, metrics...)
+}
+
+// ConsumeKafkaEnvelopesWithConfig decodes each envelope once before checking its
+// physical routing and passing it to the execution-specific handler.
+func ConsumeKafkaEnvelopesWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, cfg KafkaConsumerConfig, metrics ...*observability.Registry) error {
 	return consumeKafkaWithConfig(ctx, seeds, consumerGroup, pin, load, handle, cfg, nil, metrics...)
 }
 
-func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, []byte) error, cfg KafkaConsumerConfig, commit func(context.Context, ...*kgo.Record) error, metrics ...*observability.Registry) (retErr error) {
+func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup string, pin SourceIdentity, load func(context.Context, int32) (int64, error), handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, cfg KafkaConsumerConfig, commit func(context.Context, ...*kgo.Record) error, metrics ...*observability.Registry) (retErr error) {
 	cfg = cfg.WithDefaults()
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -461,7 +469,7 @@ func consumeKafkaWithConfig(ctx context.Context, seeds []string, consumerGroup s
 	return runKafkaIntake(ctx, cfg, cl.PollRecords, positions, finish, rebalance, handle, registry)
 }
 
-func runKafkaIntake(ctx context.Context, cfg KafkaConsumerConfig, pollRecords func(context.Context, int) kgo.Fetches, positions func() map[int32]int64, finish func([]*kgo.Record) error, rebalance <-chan struct{}, handle func(context.Context, *kgo.Record, []byte) error, registry *observability.Registry) error {
+func runKafkaIntake(ctx context.Context, cfg KafkaConsumerConfig, pollRecords func(context.Context, int) kgo.Fetches, positions func() map[int32]int64, finish func([]*kgo.Record) error, rebalance <-chan struct{}, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, registry *observability.Registry) error {
 	var previousPollEnd time.Time
 	if cfg.Diagnostics {
 		registry.Label("results_kafka_intake_mode", cfg.IntakeMode)

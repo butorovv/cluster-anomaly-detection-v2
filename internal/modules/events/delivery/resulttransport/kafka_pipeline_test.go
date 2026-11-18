@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -46,7 +47,7 @@ func TestKafkaPipelineRunsNextPollOnFreeHandler(t *testing.T) {
 	var mu sync.Mutex
 	active := map[int32]bool{}
 	calls := map[int32][]int64{}
-	handle := func(ctx context.Context, r *kgo.Record, _ []byte) error {
+	handle := func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 		mu.Lock()
 		if active[r.Partition] {
 			mu.Unlock()
@@ -181,7 +182,7 @@ func TestKafkaPipelineBackpressure(t *testing.T) {
 			release := make(chan struct{}, 8)
 			done := make(chan error, 1)
 			go func() {
-				_, err := processKafkaPipeline(ctx, cfg, batch(0), func() map[int32]int64 { return batchExpected("a01") }, poll, nil, func(ctx context.Context, r *kgo.Record, _ []byte) error {
+				_, err := processKafkaPipeline(ctx, cfg, batch(0), func() map[int32]int64 { return batchExpected("a01") }, poll, nil, func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 					started <- r.Offset
 					select {
 					case <-ctx.Done():
@@ -259,7 +260,7 @@ func TestKafkaPipelineDrainsBeforeReleasingAssignment(t *testing.T) {
 							return fmt.Errorf("released assignment at SQL next=%d with commit %v", next, lasts)
 						}
 						return stop
-					}, rebalance, func(ctx context.Context, r *kgo.Record, _ []byte) error {
+					}, rebalance, func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 						if r.Offset != next {
 							return fmt.Errorf("handled %d, want SQL next=%d", r.Offset, next)
 						}
@@ -318,7 +319,7 @@ func TestKafkaPipelineFailureClosesIntakeAndRestartsAtSQL(t *testing.T) {
 	go func() {
 		done <- runKafkaIntake(ctx, cfg, poll, load, func(lasts []*kgo.Record) error {
 			return fmt.Errorf("attempted to commit or release a failed window: %v", lasts)
-		}, nil, func(handlerCtx context.Context, r *kgo.Record, _ []byte) error {
+		}, nil, func(handlerCtx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 			switch {
 			case r.Partition == 0 && r.Offset == 0:
 				sqlPositions[0]++
@@ -382,7 +383,7 @@ func TestKafkaPipelineFailureClosesIntakeAndRestartsAtSQL(t *testing.T) {
 			return restarted
 		}
 		return nil
-	}, nil, func(_ context.Context, r *kgo.Record, _ []byte) error {
+	}, nil, func(_ context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 		if r.Offset != sqlPositions[r.Partition] {
 			return fmt.Errorf("replayed %d@%d, want %d", r.Partition, r.Offset, sqlPositions[r.Partition])
 		}
@@ -404,7 +405,7 @@ func TestKafkaPipelineProcessingDeadlineCancelsActiveAndLeavesQueueUnconfirmed(t
 		func(context.Context) kafkaPoll {
 			close(polled)
 			return kafkaPoll{records: []*kgo.Record{batchRecord("a01", 1)}, at: time.Now()}
-		}, nil, func(ctx context.Context, r *kgo.Record, _ []byte) error {
+		}, nil, func(ctx context.Context, r *kgo.Record, _ domain.DecodedEnvelope) error {
 			seen = append(seen, r.Offset)
 			<-ctx.Done()
 			return ctx.Err()

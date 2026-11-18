@@ -68,7 +68,7 @@ type partitionProgress struct {
 // processKafkaBatch owns at most Concurrency workers and one bounded poll batch.
 // Each partition appears in one FIFO job. A handler must honor cancellation and
 // return nil only after its SQL transaction is confirmed committed.
-func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) (lasts []*kgo.Record, retErr error) {
+func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, metrics *observability.Registry) (lasts []*kgo.Record, retErr error) {
 	if len(records) == 0 {
 		return nil, nil
 	}
@@ -214,7 +214,7 @@ func validateKafkaRecord(r *kgo.Record, expected map[int32]int64) (int64, error)
 	return next, nil
 }
 
-func processPartition(ctx context.Context, part partitionBatch, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) (progress partitionProgress) {
+func processPartition(ctx context.Context, part partitionBatch, polledAt time.Time, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, metrics *observability.Registry) (progress partitionProgress) {
 	for _, r := range part.records {
 		if err := ctx.Err(); err != nil {
 			progress.err = err
@@ -224,11 +224,12 @@ func processPartition(ctx context.Context, part partitionBatch, polledAt time.Ti
 			progress.err = fmt.Errorf("unexpected result record position at %s/%d@%d: want %d", r.Topic, r.Partition, r.Offset, part.next)
 			return
 		}
-		e, err := domain.Decode(r.Value)
+		decoded, err := domain.DecodeEnvelope(r.Value)
 		if err != nil {
 			progress.err = fmt.Errorf("decode output %d@%d: %w", r.Partition, r.Offset, err)
 			return
 		}
+		e := decoded.Envelope()
 		p, err := topology.PartitionForGroup(e.GroupID)
 		if err != nil || p != int(r.Partition) || string(r.Key) != e.GroupID {
 			progress.err = fmt.Errorf("physical/logical output routing mismatch at %d@%d", r.Partition, r.Offset)
@@ -239,7 +240,7 @@ func processPartition(ctx context.Context, part partitionBatch, polledAt time.Ti
 		if !r.Timestamp.IsZero() && !polledAt.Before(r.Timestamp) {
 			metrics.Observe("results_kafka_create_to_poll", polledAt.Sub(r.Timestamp))
 		}
-		if err := handle(ctx, r, r.Value); err != nil {
+		if err := handle(ctx, r, decoded); err != nil {
 			progress.err = fmt.Errorf("handle output %d@%d: %w", r.Partition, r.Offset, err)
 			return
 		}

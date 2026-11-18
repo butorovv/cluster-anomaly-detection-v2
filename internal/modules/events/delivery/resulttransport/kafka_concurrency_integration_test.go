@@ -111,11 +111,11 @@ func newKafkaSQLRig(t *testing.T) *kafkaSQLRig {
 	r.master = usecase.Master{Store: r.store, Metrics: observability.New()}
 	return r
 }
-func (r *kafkaSQLRig) run(ctx context.Context, handle func(context.Context, *kgo.Record, []byte) error) error {
-	return ConsumeKafkaWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, func(ctx context.Context, p int32) (int64, error) { return r.store.ResultOffset(ctx, r.execution, p) }, handle, KafkaConsumerConfig{Concurrency: 4, MaxPollRecords: 128}, r.master.Metrics)
+func (r *kafkaSQLRig) run(ctx context.Context, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error) error {
+	return ConsumeKafkaEnvelopesWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, func(ctx context.Context, p int32) (int64, error) { return r.store.ResultOffset(ctx, r.execution, p) }, handle, KafkaConsumerConfig{Concurrency: 4, MaxPollRecords: 128}, r.master.Metrics)
 }
-func (r *kafkaSQLRig) accept(ctx context.Context, record *kgo.Record, b []byte) error {
-	return r.master.AcceptKafka(ctx, r.execution, r.sender.Identity.TopicID, record.Partition, record.Offset, b)
+func (r *kafkaSQLRig) accept(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
+	return r.master.AcceptKafkaEnvelope(ctx, r.execution, r.sender.Identity.TopicID, record.Partition, record.Offset, b)
 }
 func waitKafkaSQL(t *testing.T, condition func() bool) {
 	t.Helper()
@@ -183,7 +183,7 @@ func TestKafkaAuxCommitFailureRestartsAtDurableSQLPosition(t *testing.T) {
 	firstOffset := make(chan int64, 1)
 	var once sync.Once
 	go func() {
-		done <- r.run(restartCtx, func(ctx context.Context, record *kgo.Record, body []byte) error {
+		done <- r.run(restartCtx, func(ctx context.Context, record *kgo.Record, body domain.DecodedEnvelope) error {
 			once.Do(func() { firstOffset <- record.Offset })
 			return r.accept(ctx, record, body)
 		})
@@ -220,7 +220,7 @@ func TestKafkaPartitionsCommitBeforeSlowPartitionAndRestart(t *testing.T) {
 	defer releaseOnce.Do(func() { close(release) })
 	done := make(chan error, 1)
 	go func() {
-		done <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
+		done <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 			if record.Partition == 0 {
 				once.Do(func() { close(entered) })
 				select {
@@ -313,7 +313,7 @@ func TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes(t *testing.T)
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				done <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
+				done <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 					if record.Partition == 0 && record.Offset == r.starts[0] {
 						for r.offset(1) != r.starts[1]+3 || r.offset(2) != r.starts[2]+3 || r.offset(3) != r.starts[3]+3 {
 							select {
@@ -351,7 +351,7 @@ func TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes(t *testing.T)
 			first := make(chan int64, 1)
 			var once sync.Once
 			go func() {
-				done <- r.run(restart, func(ctx context.Context, record *kgo.Record, b []byte) error {
+				done <- r.run(restart, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 					if record.Partition == 0 {
 						once.Do(func() { first <- record.Offset })
 					}
@@ -392,7 +392,7 @@ func TestKafkaPipelineRealRebalanceRestoresSQLOffsets(t *testing.T) {
 	load := func(ctx context.Context, p int32) (int64, error) {
 		return r.store.ResultOffset(ctx, r.execution, p)
 	}
-	run := func(ctx context.Context, handle func(context.Context, *kgo.Record, []byte) error) error {
+	run := func(ctx context.Context, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error) error {
 		return consumeKafkaWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, load, handle,
 			KafkaConsumerConfig{IntakeMode: KafkaIntakePipeline, BatchTimeout: 15 * time.Second},
 			func(context.Context, ...*kgo.Record) error { return kerr.NotCoordinator }, r.master.Metrics)
@@ -414,7 +414,7 @@ func TestKafkaPipelineRealRebalanceRestoresSQLOffsets(t *testing.T) {
 	first := make(chan int64, 1)
 	var once sync.Once
 	go func() {
-		done <- run(restart, func(ctx context.Context, record *kgo.Record, b []byte) error {
+		done <- run(restart, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 			if record.Partition != 0 || record.Offset != boundary {
 				return fmt.Errorf("unexpected replay at %d@%d, want only 0@%d", record.Partition, record.Offset, boundary)
 			}
@@ -474,7 +474,7 @@ func TestKafkaPipelineRealRebalanceRestoresSQLOffsets(t *testing.T) {
 	t.Logf("no broker commits, SQL matches Kafka end offsets on all %d partitions, %d joins and %d results", len(r.starts), joins, finals)
 }
 
-func exerciseKafkaSQLRebalance(t *testing.T, ctx context.Context, r *kafkaSQLRig, run func(context.Context, func(context.Context, *kgo.Record, []byte) error) error) {
+func exerciseKafkaSQLRebalance(t *testing.T, ctx context.Context, r *kafkaSQLRig, run func(context.Context, func(context.Context, *kgo.Record, domain.DecodedEnvelope) error) error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -482,7 +482,7 @@ func exerciseKafkaSQLRebalance(t *testing.T, ctx context.Context, r *kafkaSQLRig
 	var once sync.Once
 	done := make(chan error, 2)
 	go func() {
-		done <- run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
+		done <- run(ctx, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 			if record.Partition == 0 {
 				once.Do(func() { close(entered) })
 				select {
@@ -538,7 +538,7 @@ func TestKafkaWaveDeadlineRollsBackActiveSQLAndRestarts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = ConsumeKafkaWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, func(ctx context.Context, p int32) (int64, error) { return r.store.ResultOffset(ctx, r.execution, p) }, r.accept, KafkaConsumerConfig{Concurrency: 4, MaxPollRecords: 128, BatchTimeout: 100 * time.Millisecond})
+	err = ConsumeKafkaEnvelopesWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, func(ctx context.Context, p int32) (int64, error) { return r.store.ResultOffset(ctx, r.execution, p) }, r.accept, KafkaConsumerConfig{Concurrency: 4, MaxPollRecords: 128, BatchTimeout: 100 * time.Millisecond})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("expected bounded SQL cancellation", err)
 	}
@@ -581,7 +581,7 @@ func TestKafkaLostMemberCannotCommitStaleOffset(t *testing.T) {
 	var once sync.Once
 	oldDone, newDone := make(chan error, 1), make(chan error, 1)
 	go func() {
-		oldDone <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
+		oldDone <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b domain.DecodedEnvelope) error {
 			if record.Partition == 0 {
 				once.Do(func() { close(entered) })
 				select {

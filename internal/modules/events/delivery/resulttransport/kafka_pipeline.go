@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/twmb/franz-go/pkg/kgo"
 )
@@ -30,7 +31,7 @@ type kafkaPipelineResult struct {
 // processKafkaPipeline holds the rebalance barrier across successive polls.
 // It drains all returned records before the caller can commit and release the
 // barrier. On error the caller must close the client and restore from SQL.
-func processKafkaPipeline(ctx context.Context, cfg KafkaConsumerConfig, first kafkaPoll, positions func() map[int32]int64, poll func(context.Context) kafkaPoll, rebalance <-chan struct{}, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) ([]*kgo.Record, error) {
+func processKafkaPipeline(ctx context.Context, cfg KafkaConsumerConfig, first kafkaPoll, positions func() map[int32]int64, poll func(context.Context) kafkaPoll, rebalance <-chan struct{}, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, metrics *observability.Registry) ([]*kgo.Record, error) {
 	// Stop admitting after a short interval even on continuous input, so
 	// auxiliary commits and rebalances get a regular drain point. Each poll
 	// still has the configured processing deadline, including queue time.

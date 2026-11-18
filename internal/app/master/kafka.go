@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -53,7 +54,7 @@ func RunKafka(ctx context.Context, seeds []string, consumer, execution string, c
 		stop := startKafkaDiagnostics(ctx, kadm.NewClient(adminClient), pin, store, execution)
 		defer stop()
 	}
-	return resulttransport.ConsumeKafkaWithConfig(ctx, seeds, consumer, pin, func(ctx context.Context, p int32) (int64, error) { return store.ResultOffset(ctx, execution, p) }, func(ctx context.Context, r *kgo.Record, b []byte) error {
-		return master.AcceptKafka(ctx, execution, pin.TopicID, r.Partition, r.Offset, b)
+	return resulttransport.ConsumeKafkaEnvelopesWithConfig(ctx, seeds, consumer, pin, func(ctx context.Context, p int32) (int64, error) { return store.ResultOffset(ctx, execution, p) }, func(ctx context.Context, r *kgo.Record, e domain.DecodedEnvelope) error {
+		return master.AcceptKafkaEnvelope(ctx, execution, pin.TopicID, r.Partition, r.Offset, e)
 	}, cfg, master.Metrics)
 }
