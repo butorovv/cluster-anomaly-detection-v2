@@ -176,9 +176,12 @@ func processKafkaPipeline(ctx context.Context, cfg KafkaConsumerConfig, first ka
 		}
 
 		if !draining && cancelPoll == nil && pending+cfg.MaxPollRecords <= maxRecords && pendingBytes+pollBytes <= maxBytes {
-			var pollCtx context.Context
-			pollCtx, cancelPoll = context.WithCancel(ctx)
-			go func(c context.Context) { polled <- poll(c) }(pollCtx)
+			pollCtx, stopPoll := context.WithCancel(ctx)
+			cancelPoll = stopPoll
+			go func() {
+				defer stopPoll()
+				polled <- poll(pollCtx)
+			}()
 		}
 
 		select {
