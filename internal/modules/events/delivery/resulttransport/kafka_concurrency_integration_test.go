@@ -382,13 +382,107 @@ func TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes(t *testing.T)
 
 func TestKafkaRebalanceWaitsForActiveSQLWave(t *testing.T) {
 	r := newKafkaSQLRig(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	exerciseKafkaSQLRebalance(t, context.Background(), r, r.run)
+}
+
+func TestKafkaPipelineRealRebalanceRestoresSQLOffsets(t *testing.T) {
+	r := newKafkaSQLRig(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	load := func(ctx context.Context, p int32) (int64, error) {
+		return r.store.ResultOffset(ctx, r.execution, p)
+	}
+	run := func(ctx context.Context, handle func(context.Context, *kgo.Record, []byte) error) error {
+		return consumeKafkaWithConfig(ctx, r.seeds, r.consumer, r.sender.Identity, load, handle,
+			KafkaConsumerConfig{IntakeMode: KafkaIntakePipeline, BatchTimeout: 15 * time.Second},
+			func(context.Context, ...*kgo.Record) error { return kerr.NotCoordinator }, r.master.Metrics)
+	}
+	exerciseKafkaSQLRebalance(t, ctx, r, run)
+
+	// The group has no broker commits. Append a duplicate at the durable SQL
+	// boundary so a fresh pipeline consumer must start there or expose a replay.
+	boundary, err := load(ctx, 0)
+	if err != nil || boundary != r.starts[0]+int64(len(r.raw[0])) {
+		t.Fatalf("partition 0 SQL boundary = %d: %v", boundary, err)
+	}
+	if err := r.sender.Send(ctx, r.raw[0][0], "a01"); err != nil {
+		t.Fatal(err)
+	}
+	restart, stop := context.WithCancel(ctx)
+	defer stop()
+	done := make(chan error, 1)
+	first := make(chan int64, 1)
+	var once sync.Once
+	go func() {
+		done <- run(restart, func(ctx context.Context, record *kgo.Record, b []byte) error {
+			if record.Partition != 0 || record.Offset != boundary {
+				return fmt.Errorf("unexpected replay at %d@%d, want only 0@%d", record.Partition, record.Offset, boundary)
+			}
+			if err := r.accept(ctx, record, b); err != nil {
+				return err
+			}
+			once.Do(func() { first <- record.Offset })
+			return nil
+		})
+	}()
+	select {
+	case offset := <-first:
+		t.Logf("fresh pipeline consumer resumed at SQL offset %d on partition 0", offset)
+	case err := <-done:
+		t.Fatalf("pipeline restart failed: %v", err)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	admin := kadm.NewClient(r.sender.client)
+	commits, err := admin.FetchOffsets(ctx, r.consumer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p, entry := range commits[ResultsTopic] {
+		if entry.Err != nil || entry.At >= 0 {
+			t.Fatalf("unexpected broker commit for partition %d: %v", p, entry)
+		}
+	}
+	ends, err := admin.ListEndOffsets(ctx, ResultsTopic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for p, start := range r.starts {
+		want := start + int64(len(r.raw[p]))
+		if p == 0 {
+			want++ // Boundary duplicate consumed after the restart.
+		}
+		sqlNext, sqlErr := load(ctx, p)
+		end, ok := ends.Lookup(ResultsTopic, p)
+		if sqlErr != nil || sqlNext != want || !ok || end.Err != nil || end.Offset != want {
+			t.Fatalf("partition %d: SQL next=%d (err=%v), Kafka end=%v, want=%d", p, sqlNext, sqlErr, end, want)
+		}
+	}
+	var joins, finals int
+	if err := r.store.DB.QueryRow(ctx, `SELECT (SELECT count(*) FROM cad_v2.master_tick_joins), (SELECT count(*) FROM cad_v2.master_results)`).Scan(&joins, &finals); err != nil || joins != 3 || finals != 12 {
+		t.Fatalf("joins=%d, finals=%d, expected 3 and 12: %v", joins, finals, err)
+	}
+	stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+	t.Logf("no broker commits, SQL matches Kafka end offsets on all %d partitions, %d joins and %d results", len(r.starts), joins, finals)
+}
+
+func exerciseKafkaSQLRebalance(t *testing.T, ctx context.Context, r *kafkaSQLRig, run func(context.Context, func(context.Context, *kgo.Record, []byte) error) error) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	done := make(chan error, 2)
 	go func() {
-		done <- r.run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
+		done <- run(ctx, func(ctx context.Context, record *kgo.Record, b []byte) error {
 			if record.Partition == 0 {
 				once.Do(func() { close(entered) })
 				select {
@@ -407,15 +501,16 @@ func TestKafkaRebalanceWaitsForActiveSQLWave(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("first consumer did not enter wave")
 	}
-	go func() { done <- r.run(ctx, r.accept) }()
+	go func() { done <- run(ctx, r.accept) }()
 	admin := kadm.NewClient(r.sender.client)
 	waitKafkaSQL(t, func() bool {
 		groups, err := admin.DescribeGroups(ctx, r.consumer)
 		return err == nil && groups[r.consumer].State == "PreparingRebalance"
 	})
 	if r.offset(0) != r.starts[0] {
-		t.Fatal("assignment moved while SQL wave was held")
+		t.Fatal("SQL offset advanced while the handler was held")
 	}
+	t.Log("Kafka entered PreparingRebalance while the partition 0 handler was held")
 	close(release)
 	waitKafkaSQL(t, func() bool { return r.finals() == 12 })
 	waitKafkaSQL(t, func() bool {

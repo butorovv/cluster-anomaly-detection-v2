@@ -65,18 +65,56 @@ Get-Content -LiteralPath $runnerBuild[1]
 `kafka_intake_mode` содержит режим, переданный Master. Значение участвует в
 `configuration_sha256`, поэтому `--resume` различает `wave` и `pipeline`.
 
-Конфиги [wave](../../experiments/configs/p16-aud008-wave.json) и
-[pipeline](../../experiments/configs/p16-aud008-pipeline.json) задают одинаковый
-полный сценарий D2 с четырьмя Worker, 16 группами, δ0 и cadence 1. Используйте
-один build bundle и одинаковый независимый golden на изолированном стенде.
+### Короткая проверка ребаланса и SQL offsets
+
+На отдельном Kafka broker и PostgreSQL cluster задайте `P07_TEST_KAFKA_BROKERS`
+и `SYSTEM_TEST_DATABASE_URL`. Тест использует синтетическую фикстуру из трёх
+timestamps и четырёх групп. Он пишет в `group.results` и создаёт собственную
+временную базу данных.
+
+```sh
+: "${P07_TEST_KAFKA_BROKERS:?}" "${SYSTEM_TEST_DATABASE_URL:?}"
+export P07_TEST_KAFKA_BROKERS SYSTEM_TEST_DATABASE_URL
+SYSTEM_KAFKA_INTEGRATION=1 SYSTEM_KAFKA_ISOLATED=1 \
+  go test -count=1 -v -timeout=2m ./internal/modules/events/delivery/resulttransport \
+  -run '^TestKafkaPipelineRealRebalanceRestoresSQLOffsets$'
+```
+
+В логе ищите `PreparingRebalance` при удерживаемом обработчике, восстановление
+с SQL offset после перезапуска при отсутствии Kafka commit и совпадение SQL
+next offsets с Kafka end offsets на всех партициях. Ожидаются 3 joins,
+12 результатов и `PASS` теста. Повтор с тем же MessageID продвигает offset,
+сохраняя число результатов.
+
+### Замеры W1 и W4
+
+Используйте один build bundle и одинаковый независимый golden на изолированном
+стенде. Все четыре конфига запускают полный D2 с 16 группами, δ0 и cadence 1.
+
+| Worker | wave | pipeline |
+| --- | --- | --- |
+| W1 | [p16-aud008-w1-wave.json](../../experiments/configs/p16-aud008-w1-wave.json) | [p16-aud008-w1-pipeline.json](../../experiments/configs/p16-aud008-w1-pipeline.json) |
+| W4 | [p16-aud008-wave.json](../../experiments/configs/p16-aud008-wave.json) | [p16-aud008-pipeline.json](../../experiments/configs/p16-aud008-pipeline.json) |
+
 Задайте `ASSETS_ROOT`, `P07_TEST_KAFKA_BROKERS`, `V1_GOLDEN_ROOT`,
 `V1_GOLDEN_MANIFEST`, `SYSTEM_TEST_DATABASE_URL` и `SYSTEM_KAFKA_ISOLATED=1`.
 
 ```powershell
 $trialRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('cad-aud008-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $trialRoot | Out-Null
-$env:P16_AUD008_WAVE_OUTPUT = Join-Path $trialRoot 'wave'
-$env:P16_AUD008_PIPELINE_OUTPUT = Join-Path $trialRoot 'pipeline'
+$env:CAD_MASTER_DIAGNOSTICS = '1'
+$env:P16_AUD008_W1_WAVE_OUTPUT = Join-Path $trialRoot 'w1-wave'
+$env:P16_AUD008_W1_PIPELINE_OUTPUT = Join-Path $trialRoot 'w1-pipeline'
+$env:P16_AUD008_WAVE_OUTPUT = Join-Path $trialRoot 'w4-wave'
+$env:P16_AUD008_PIPELINE_OUTPUT = Join-Path $trialRoot 'w4-pipeline'
+& $runner @runnerBuild --config experiments/configs/p16-aud008-w1-wave.json
+& $runner @runnerBuild --config experiments/configs/p16-aud008-w1-pipeline.json
 & $runner @runnerBuild --config experiments/configs/p16-aud008-wave.json
 & $runner @runnerBuild --config experiments/configs/p16-aud008-pipeline.json
 ```
+
+В каждом `output/aud008-kafka.json` смотрите `status`, `comparison.status`
+и `comparison.canonical_sha256` для сверки с golden, затем
+`measurements.status` и `measurements.group_ticks_per_second`. Режим указан
+в `kafka_intake_mode`. Диагностическая метка Master находится в
+`measurements.master_kafka_diagnostics.labels.results_kafka_intake_mode`.
