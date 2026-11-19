@@ -33,11 +33,29 @@ type positionedStore interface {
 
 func (m Master) AcceptAt(ctx context.Context, b []byte, c domain.Cursor) (receipt Receipt, retErr error) {
 	received := time.Now()
-	var envelope domain.Envelope
-	defer func() { m.observed(ctx, envelope, received, receipt.Accepted, retErr) }()
-	e, err := m.validated(ctx, b)
-	envelope = e
+	decoded, err := domain.DecodeEnvelope(b)
 	if err != nil {
+		err = fmt.Errorf("invalid envelope: %w", err)
+		m.observed(ctx, decoded.Envelope(), received, false, err)
+		return Receipt{}, err
+	}
+	return m.acceptAtEnvelope(ctx, decoded, c, received)
+}
+
+// AcceptAtEnvelope accepts a strictly decoded envelope without decoding its
+// wire bytes again. Transport adapters remain responsible for decoding bytes.
+func (m Master) AcceptAtEnvelope(ctx context.Context, decoded domain.DecodedEnvelope, c domain.Cursor) (receipt Receipt, retErr error) {
+	received := time.Now()
+	return m.acceptAtEnvelope(ctx, decoded, c, received)
+}
+
+func (m Master) acceptAtEnvelope(ctx context.Context, decoded domain.DecodedEnvelope, c domain.Cursor, received time.Time) (receipt Receipt, retErr error) {
+	e := decoded.Envelope()
+	defer func() { m.observed(ctx, e, received, receipt.Accepted, retErr) }()
+	if err := decoded.Header(); err != nil {
+		return Receipt{}, fmt.Errorf("invalid envelope: %w", err)
+	}
+	if err := m.validateEnvelope(ctx, e); err != nil {
 		return Receipt{}, err
 	}
 	store, ok := m.Store.(positionedStore)
