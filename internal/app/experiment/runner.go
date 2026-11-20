@@ -47,23 +47,24 @@ type RunSpec struct {
 	Fault       string  `json:"fault,omitempty"`
 }
 type Config struct {
-	Profile         bool      `json:"profile,omitempty"`
-	Measure         bool      `json:"measure"`
-	SchemaVersion   int       `json:"schema_version"`
-	Assets          string    `json:"assets"`
-	ProfileSHA      string    `json:"profile_sha256"`
-	InputSHA        string    `json:"input_sha256"`
-	Brokers         string    `json:"brokers"`
-	KafkaIntakeMode string    `json:"kafka_intake_mode,omitempty"`
-	GoldenRoot      string    `json:"golden_root"`
-	GoldenManifest  string    `json:"golden_manifest"`
-	Output          string    `json:"output"`
-	TimeoutSeconds  int       `json:"timeout_seconds"`
-	Runs            []RunSpec `json:"runs"`
+	Profile          bool      `json:"profile,omitempty"`
+	Measure          bool      `json:"measure"`
+	SchemaVersion    int       `json:"schema_version"`
+	Assets           string    `json:"assets"`
+	ProfileSHA       string    `json:"profile_sha256"`
+	InputSHA         string    `json:"input_sha256"`
+	Brokers          string    `json:"brokers"`
+	KafkaIntakeMode  string    `json:"kafka_intake_mode,omitempty"`
+	KafkaPollRecords int       `json:"kafka_poll_records,omitempty"`
+	GoldenRoot       string    `json:"golden_root"`
+	GoldenManifest   string    `json:"golden_manifest"`
+	Output           string    `json:"output"`
+	TimeoutSeconds   int       `json:"timeout_seconds"`
+	Runs             []RunSpec `json:"runs"`
 }
 
 func (cfg Config) kafkaIntake() resulttransport.KafkaConsumerConfig {
-	return (resulttransport.KafkaConsumerConfig{IntakeMode: cfg.KafkaIntakeMode}).WithDefaults()
+	return (resulttransport.KafkaConsumerConfig{IntakeMode: cfg.KafkaIntakeMode, MaxPollRecords: cfg.KafkaPollRecords}).WithDefaults()
 }
 
 type Result struct {
@@ -74,6 +75,7 @@ type Result struct {
 	Status           string            `json:"status"`
 	Spec             RunSpec           `json:"configuration"`
 	KafkaIntakeMode  string            `json:"kafka_intake_mode,omitempty"`
+	KafkaPollRecords int               `json:"kafka_poll_records,omitempty"`
 	ExecutionID      string            `json:"execution_id"`
 	RunID            string            `json:"run_id"`
 	ConfigID         string            `json:"config_id"`
@@ -274,6 +276,7 @@ func masterArguments(cfg Config, spec RunSpec, address, execution string) []stri
 	args = append(args, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
 	if spec.Mode == "kafka" {
 		args = append(args, "--kafka-intake-mode", cfg.kafkaIntake().IntakeMode)
+		args = append(args, "--kafka-poll-records", strconv.Itoa(cfg.kafkaIntake().MaxPollRecords))
 	}
 	if cfg.Measure {
 		args = append(args, "--measure=true")
@@ -317,6 +320,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, build verifiedBuild) 
 	report.Environment["source_archive_sha256"] = build.ArchiveSHA256
 	if spec.Mode == "kafka" {
 		report.KafkaIntakeMode = cfg.kafkaIntake().IntakeMode
+		report.KafkaPollRecords = cfg.kafkaIntake().MaxPollRecords
 	}
 	if build.OverlaySHA256 != "" {
 		report.Environment["overlay_sha256"] = build.OverlaySHA256

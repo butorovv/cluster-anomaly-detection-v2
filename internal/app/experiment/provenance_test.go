@@ -2,6 +2,8 @@ package experiment
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -121,6 +123,80 @@ func TestRunnerKafkaIntakeMasterArgsAndReport(t *testing.T) {
 			report, err := runOne(context.Background(), cfg, spec, verifiedBuild{})
 			if err == nil || report.KafkaIntakeMode != tt.effective {
 				t.Fatalf("recorded mode %q, want %q (run error: %v)", report.KafkaIntakeMode, tt.effective, err)
+			}
+		})
+	}
+}
+
+func TestRunnerKafkaPollRecordsFingerprint(t *testing.T) {
+	cfg, _ := configurationFixture(t)
+	cfg.KafkaIntakeMode = "pipeline"
+	defaultHash, err := configurationHash(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.KafkaPollRecords = 16
+	explicitHash, err := configurationHash(cfg)
+	if err != nil || explicitHash != defaultHash {
+		t.Fatalf("omitted and explicit default differ: %v", err)
+	}
+	cfg.KafkaPollRecords = 32
+	changedHash, err := configurationHash(cfg)
+	if err != nil || changedHash == defaultHash {
+		t.Fatalf("poll size change not fingerprinted: %v", err)
+	}
+	saved := Result{Status: "PASS", Spec: RunSpec{Mode: "kafka"}, KafkaIntakeMode: "pipeline", KafkaPollRecords: 16, Provenance: defaultHash}
+	if err := reusable(saved, cfg, changedHash); err == nil || !strings.Contains(err.Error(), "configuration differs") {
+		t.Fatalf("stale poll-size PASS reused: %v", err)
+	}
+	saved.Provenance = changedHash
+	if err := reusable(saved, cfg, changedHash); err == nil || err.Error() != "saved Kafka poll records differs" {
+		t.Fatalf("recorded poll size not checked: %v", err)
+	}
+	for _, invalid := range []int{-1, 129} {
+		cfg.KafkaPollRecords = invalid
+		if _, err := configurationHash(cfg); err == nil {
+			t.Fatalf("invalid poll size %d accepted", invalid)
+		}
+	}
+}
+
+func TestRunnerKafkaPollRecordsMasterArgsAndReport(t *testing.T) {
+	for _, tt := range []struct {
+		name, transport       string
+		configured, effective int
+	}{
+		{"default", "kafka", 0, 16},
+		{"explicit default", "kafka", 16, 16},
+		{"32", "kafka", 32, 32},
+		{"polling unaffected", "polling", 32, 0},
+		{"push unaffected", "http_push", 32, 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg Config
+			if err := json.Unmarshal([]byte(fmt.Sprintf(`{"kafka_intake_mode":"pipeline","kafka_poll_records":%d}`, tt.configured)), &cfg); err != nil {
+				t.Fatal(err)
+			}
+			spec := RunSpec{Mode: tt.transport}
+			args := masterArguments(cfg, spec, "127.0.0.1:8080", "test-execution")
+			index := slices.Index(args, "--kafka-poll-records")
+			if tt.effective == 0 && index != -1 || tt.effective != 0 &&
+				(index == -1 || index == len(args)-1 || args[index+1] != fmt.Sprint(tt.effective)) {
+				t.Fatalf("unexpected Master poll-size args: %v", args)
+			}
+			if cfg.kafkaIntake().Concurrency != 4 || cfg.kafkaIntake().IntakeMode != "pipeline" {
+				t.Fatal("unrelated Kafka defaults changed")
+			}
+			report, err := runOne(context.Background(), cfg, spec, verifiedBuild{})
+			if err == nil || report.KafkaPollRecords != tt.effective {
+				t.Fatalf("recorded size %d, want %d (run error: %v)", report.KafkaPollRecords, tt.effective, err)
+			}
+			data, err := json.Marshal(report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), `"kafka_poll_records"`) != (tt.effective != 0) {
+				t.Fatalf("unexpected report field: %s", data)
 			}
 		})
 	}

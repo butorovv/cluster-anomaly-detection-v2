@@ -54,7 +54,8 @@ func configurationHash(cfg Config) (string, error) {
 		Assets, Brokers, Profile, Input, GoldenManifest string
 		Measure                                         bool
 		KafkaIntakeMode                                 string
-	}{filepath.Clean(cfg.Assets), cfg.Brokers, cfg.ProfileSHA, cfg.InputSHA, manifest, cfg.Measure, intake.IntakeMode}
+		KafkaPollRecords                                int
+	}{filepath.Clean(cfg.Assets), cfg.Brokers, cfg.ProfileSHA, cfg.InputSHA, manifest, cfg.Measure, intake.IntakeMode, intake.MaxPollRecords}
 	b, err := json.Marshal(value)
 	if err != nil {
 		return "", err
@@ -74,6 +75,9 @@ func reusable(saved Result, cfg Config, provenance string) error {
 	}
 	if saved.Spec.Mode == "kafka" && saved.KafkaIntakeMode != cfg.kafkaIntake().IntakeMode {
 		return fmt.Errorf("saved Kafka intake mode differs")
+	}
+	if saved.Spec.Mode == "kafka" && (Config{KafkaPollRecords: saved.KafkaPollRecords}).kafkaIntake().MaxPollRecords != cfg.kafkaIntake().MaxPollRecords {
+		return fmt.Errorf("saved Kafka poll records differs")
 	}
 	reference := filepath.Join(cfg.GoldenRoot, fmt.Sprintf("g%d-d%d", saved.Spec.Groups, saved.Spec.Delta))
 	if err := verifyReference(cfg.GoldenManifest, reference, saved.Spec.Groups, saved.Spec.Delta); err != nil {
