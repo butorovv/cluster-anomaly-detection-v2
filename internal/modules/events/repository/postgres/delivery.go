@@ -10,6 +10,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"time"
 )
 
 type OutboxStore struct{ DB *pgxpool.Pool }
@@ -90,7 +91,19 @@ func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.C
 	if _, err := tx.Exec(ctx, `SELECT cad_v2.advance_poll_cursor($1::uuid,$2,$3,$4)`, e.ExecutionID, e.GroupID, c.Revision, c.Ordinal); err != nil {
 		return false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	// Cancellation before the commit decision still rolls back both the result
+	// and cursor. Once COMMIT is sent, the page's deadline must not close the
+	// connection while PostgreSQL's durable acknowledgement is in flight: the
+	// next page resumes at that cursor and cannot recover the original timing.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	// This is a bounded transaction-completion budget, not a longer Poller/page
+	// deadline. A missing/broken ACK still returns an error; never infer its time
+	// from a retry or a later cursor read. Kafka and HTTP Push do not use AcceptAt.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return false, err
 	}
 	return ok, nil
