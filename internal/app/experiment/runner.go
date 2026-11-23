@@ -28,7 +28,6 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -48,41 +47,52 @@ type RunSpec struct {
 	Fault       string  `json:"fault,omitempty"`
 }
 type Config struct {
-	Profile        bool      `json:"profile,omitempty"`
-	Measure        bool      `json:"measure"`
-	SchemaVersion  int       `json:"schema_version"`
-	Assets         string    `json:"assets"`
-	ProfileSHA     string    `json:"profile_sha256"`
-	InputSHA       string    `json:"input_sha256"`
-	Brokers        string    `json:"brokers"`
-	GoldenRoot     string    `json:"golden_root"`
-	GoldenManifest string    `json:"golden_manifest"`
-	Output         string    `json:"output"`
-	TimeoutSeconds int       `json:"timeout_seconds"`
-	Runs           []RunSpec `json:"runs"`
+	Profile          bool      `json:"profile,omitempty"`
+	Measure          bool      `json:"measure"`
+	SchemaVersion    int       `json:"schema_version"`
+	Assets           string    `json:"assets"`
+	ProfileSHA       string    `json:"profile_sha256"`
+	InputSHA         string    `json:"input_sha256"`
+	Brokers          string    `json:"brokers"`
+	KafkaIntakeMode  string    `json:"kafka_intake_mode,omitempty"`
+	KafkaPollRecords int       `json:"kafka_poll_records,omitempty"`
+	GoldenRoot       string    `json:"golden_root"`
+	GoldenManifest   string    `json:"golden_manifest"`
+	Output           string    `json:"output"`
+	TimeoutSeconds   int       `json:"timeout_seconds"`
+	Runs             []RunSpec `json:"runs"`
 }
+
+func (cfg Config) kafkaIntake() resulttransport.KafkaConsumerConfig {
+	return (resulttransport.KafkaConsumerConfig{IntakeMode: cfg.KafkaIntakeMode, MaxPollRecords: cfg.KafkaPollRecords}).WithDefaults()
+}
+
 type Result struct {
-	Provenance     string            `json:"configuration_sha256,omitempty"`
-	SchemaVersion  int               `json:"schema_version"`
-	Status         string            `json:"status"`
-	Spec           RunSpec           `json:"configuration"`
-	ExecutionID    string            `json:"execution_id"`
-	RunID          string            `json:"run_id"`
-	ConfigID       string            `json:"config_id"`
-	Started        time.Time         `json:"started_at"`
-	Finished       time.Time         `json:"finished_at"`
-	ElapsedSeconds float64           `json:"elapsed_seconds"`
-	ReplaySeconds  float64           `json:"replay_seconds"`
-	Comparison     Comparison        `json:"comparison"`
-	Assignment     map[string]string `json:"initial_assignment"`
-	NextOffsets    map[string]int64  `json:"next_offsets"`
-	BinarySHA256   map[string]string `json:"binary_sha256"`
-	BinaryPaths    map[string]string `json:"binary_paths,omitempty"`
-	Environment    map[string]any    `json:"environment"`
-	LogDirectory   string            `json:"log_directory,omitempty"`
-	Fault          map[string]any    `json:"fault,omitempty"`
-	Measurements   *Measurements     `json:"measurements,omitempty"`
-	Error          string            `json:"error,omitempty"`
+	Provenance       string            `json:"configuration_sha256,omitempty"`
+	BuildManifestSHA string            `json:"build_manifest_sha256,omitempty"`
+	ShutdownVerified bool              `json:"shutdown_verified,omitempty"`
+	SchemaVersion    int               `json:"schema_version"`
+	Status           string            `json:"status"`
+	Spec             RunSpec           `json:"configuration"`
+	KafkaIntakeMode  string            `json:"kafka_intake_mode,omitempty"`
+	KafkaPollRecords int               `json:"kafka_poll_records,omitempty"`
+	ExecutionID      string            `json:"execution_id"`
+	RunID            string            `json:"run_id"`
+	ConfigID         string            `json:"config_id"`
+	Started          time.Time         `json:"started_at"`
+	Finished         time.Time         `json:"finished_at"`
+	ElapsedSeconds   float64           `json:"elapsed_seconds"`
+	ReplaySeconds    float64           `json:"replay_seconds"`
+	Comparison       Comparison        `json:"comparison"`
+	Assignment       map[string]string `json:"initial_assignment"`
+	NextOffsets      map[string]int64  `json:"next_offsets"`
+	BinarySHA256     map[string]string `json:"binary_sha256"`
+	BinaryPaths      map[string]string `json:"binary_paths,omitempty"`
+	Environment      map[string]any    `json:"environment"`
+	LogDirectory     string            `json:"log_directory,omitempty"`
+	Fault            map[string]any    `json:"fault,omitempty"`
+	Measurements     *Measurements     `json:"measurements,omitempty"`
+	Error            string            `json:"error,omitempty"`
 }
 
 func saveJSON(path string, value any) error {
@@ -102,6 +112,12 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	auditManifest := flags.String("golden-manifest", "", "independent golden manifest for audit")
 	auditOutput := flags.String("audit-output", "", "new machine-readable audit output")
 	path := flags.String("config", "", "JSON experiment configuration")
+	buildSource := flags.String("build-source", "", "uncompressed git archive of a commit")
+	sourceSHA := flags.String("source-sha256", "", "pinned SHA-256 of the source archive")
+	sourceOverlay := flags.String("source-overlay", "", "overlay directory with source-relative files")
+	buildOutput := flags.String("build-output", "", "new verified build bundle directory")
+	manifestPath := flags.String("build-manifest", "", "manifest of the bundle used for this run")
+	manifestSHA := flags.String("build-manifest-sha256", "", "SHA-256 emitted when building the bundle")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -111,8 +127,30 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if *audit != "" {
 		return AuditSaved(*audit, *auditGolden, *auditManifest, *auditOutput)
 	}
+	if *buildSource != "" {
+		if *buildOutput == "" || *path != "" || *manifestPath != "" || *manifestSHA != "" || *resume || flags.NArg() != 0 {
+			return fmt.Errorf("--build-source requires --build-output and is a separate invocation from running an experiment")
+		}
+		digest, err := buildFromArchive(ctx, *buildSource, *sourceSHA, *sourceOverlay, *buildOutput)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(stdout, digest)
+		return err
+	}
 	if *path == "" || flags.NArg() != 0 {
 		return fmt.Errorf("--config required")
+	}
+	if *buildOutput != "" || *sourceSHA != "" || *sourceOverlay != "" {
+		return fmt.Errorf("source options require --build-source")
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	build, err := loadBuild(*manifestPath, *manifestSHA, self)
+	if err != nil {
+		return err
 	}
 	b, err := os.ReadFile(*path)
 	if err != nil {
@@ -136,14 +174,23 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	if cfg.TimeoutSeconds < 1 {
 		cfg.TimeoutSeconds = 900
 	}
-	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
-		return fmt.Errorf("new artifact output directory required: %w", err)
+	for _, spec := range cfg.Runs {
+		if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") {
+			return fmt.Errorf("invalid run name")
+		}
 	}
 	provenance, err := configurationHash(cfg)
 	if err != nil {
 		return err
 	}
-	var binaries, hashes map[string]string
+	if *resume {
+		if err := checkResumeBuild(cfg, build); err != nil {
+			return err
+		}
+	}
+	if err := os.Mkdir(cfg.Output, 0700); err != nil && !(*resume && os.IsExist(err)) {
+		return fmt.Errorf("new artifact output directory required: %w", err)
+	}
 	results := []Result{}
 	for _, spec := range cfg.Runs {
 		if *resume {
@@ -152,6 +199,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 				var previous Result
 				if json.Unmarshal(b, &previous) != nil {
 					return fmt.Errorf("invalid saved result %s", spec.Name)
+				}
+				if err := build.verifySaved(previous); err != nil {
+					return err
 				}
 				a, _ := json.Marshal(previous.Spec)
 				b, _ := json.Marshal(spec)
@@ -167,6 +217,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 					}
 				}
 				if previous.Status == "PASS" && previous.Comparison.Status == "PASS" {
+					if !previous.ShutdownVerified {
+						return fmt.Errorf("saved PASS lacks verified child shutdown: use a new output directory for %s", spec.Name)
+					}
 					if err := reusable(previous, cfg, provenance); err != nil {
 						return fmt.Errorf("cannot resume %s: %w", spec.Name, err)
 					}
@@ -182,15 +235,9 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 				return err
 			}
 		}
-		if binaries == nil {
-			binaries, hashes, err = build(ctx, cfg.Output)
-			if err != nil {
-				return err
-			}
-		}
 		fmt.Fprintf(stdout, "RUN %s workers=%d groups=%d delta=%d mode=%s cadence=%d\n", spec.Name, spec.Workers, spec.Groups, spec.Delta, spec.Mode, spec.Cadence)
 		bounded, cancel := context.WithTimeout(ctx, time.Duration(cfg.TimeoutSeconds)*time.Second)
-		result, err := runOne(bounded, cfg, spec, binaries, hashes)
+		result, err := runOne(bounded, cfg, spec, build)
 		result.Provenance = provenance
 		cancel()
 		if err != nil {
@@ -211,88 +258,6 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) error 
 	}
 	return nil
 }
-func build(ctx context.Context, out string) (map[string]string, map[string]string, error) {
-	binaries, hashes := map[string]string{}, map[string]string{}
-	suffix := ""
-	if runtime.GOOS == "windows" {
-		suffix = ".exe"
-	}
-	binRoot := filepath.Join(out, "bin")
-	if err := os.MkdirAll(binRoot, 0700); err != nil {
-		return nil, nil, err
-	}
-	// Never overwrite a binary used by an earlier saved experiment.
-	binDir, err := os.MkdirTemp(binRoot, "build-")
-	if err != nil {
-		return nil, nil, err
-	}
-	for _, name := range []string{"worker", "master", "replayer"} {
-		binary, err := filepath.Abs(filepath.Join(binDir, name+suffix))
-		if err != nil {
-			return nil, nil, err
-		}
-		cmd := exec.CommandContext(ctx, "go", "build", "-mod=readonly", "-o", binary, "./cmd/"+name)
-		if b, err := cmd.CombinedOutput(); err != nil {
-			return nil, nil, fmt.Errorf("build %s: %w %s", name, err, b)
-		}
-		b, err := os.ReadFile(binary)
-		if err != nil {
-			return nil, nil, err
-		}
-		hashes[name] = domain.Hash(b)
-		binaries[name] = binary
-	}
-	return binaries, hashes, nil
-}
-
-type process struct {
-	cmd             *exec.Cmd
-	log             *os.File
-	done            chan struct{}
-	err             error
-	owner, endpoint string
-}
-
-func startProcess(ctx context.Context, binary, logPath string, args []string, env []string) (*process, error) {
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.CommandContext(ctx, binary, args...)
-	cmd.Env = append(os.Environ(), env...)
-	cmd.Stdout = f
-	cmd.Stderr = f
-	p := &process{cmd: cmd, log: f, done: make(chan struct{})}
-	if err := cmd.Start(); err != nil {
-		_ = f.Close()
-		return nil, err
-	}
-	go func() { p.err = cmd.Wait(); _ = f.Close(); close(p.done) }()
-	return p, nil
-}
-func (p *process) stop() {
-	if p == nil {
-		return
-	}
-	select {
-	case <-p.done:
-		return
-	default:
-	}
-	_ = p.cmd.Process.Kill()
-	<-p.done
-}
-func (p *process) failure() error {
-	select {
-	case <-p.done:
-		if p.err != nil {
-			return fmt.Errorf("process pid=%d: %w", p.cmd.Process.Pid, p.err)
-		}
-		return fmt.Errorf("process exited before completion pid=%d", p.cmd.Process.Pid)
-	default:
-		return nil
-	}
-}
 func freeEndpoint() (string, string, error) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -302,6 +267,23 @@ func freeEndpoint() (string, string, error) {
 	_ = l.Close()
 	return address, "http://" + address, nil
 }
+
+func masterArguments(cfg Config, spec RunSpec, address, execution string) []string {
+	args := []string{"--listen", address, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
+	if spec.PollMS < 1 {
+		spec.PollMS = 100
+	}
+	args = append(args, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
+	if spec.Mode == "kafka" {
+		args = append(args, "--kafka-intake-mode", cfg.kafkaIntake().IntakeMode)
+		args = append(args, "--kafka-poll-records", strconv.Itoa(cfg.kafkaIntake().MaxPollRecords))
+	}
+	if cfg.Measure {
+		args = append(args, "--measure=true")
+	}
+	return args
+}
+
 func wait(ctx context.Context, condition func() (bool, error), processes func() []*process) error {
 	ticker := time.NewTicker(150 * time.Millisecond)
 	defer ticker.Stop()
@@ -310,13 +292,13 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 		if err != nil {
 			return err
 		}
-		if ok {
-			return nil
-		}
 		for _, p := range processes() {
 			if err := p.failure(); err != nil {
 				return err
 			}
+		}
+		if ok {
+			return ctx.Err()
 		}
 		select {
 		case <-ctx.Done():
@@ -325,12 +307,23 @@ func wait(ctx context.Context, condition func() (bool, error), processes func() 
 		}
 	}
 }
-func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[string]string) (report Result, retErr error) {
-	defer func() { report.BinaryPaths = binaries }()
-	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinarySHA256: hashes, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
+func runOne(ctx context.Context, cfg Config, spec RunSpec, build verifiedBuild) (report Result, retErr error) {
+	defer func() { finishRun(ctx, &report, &retErr) }()
+	defer func() {
+		if retErr == nil {
+			_, retErr = loadBuild(build.manifestPath, build.manifestSHA, build.paths["runner"])
+		}
+	}()
+	report = Result{SchemaVersion: 1, Status: "FAIL", Spec: spec, Started: time.Now().UTC(), Assignment: map[string]string{}, NextOffsets: map[string]int64{}, BinaryPaths: build.paths, BinarySHA256: build.BinarySHA256, BuildManifestSHA: build.manifestSHA, Environment: map[string]any{"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH, "logical_cpus": runtime.NumCPU(), "host_cpu_identifier": os.Getenv("PROCESSOR_IDENTIFIER"), "worker_gomaxprocs": 1, "result_compression": "none (HTTP and Kafka); unchanged input Snappy", "master_gomaxprocs": 2, "reference_source_commit": "c6de846b05330a0eb3c1f67dae19dc14a4a2e9cc", "latency_clock": "same-host processing wall/monotonic; no historical event_time subtraction"}}
 	start := time.Now()
-	if commit, err := exec.CommandContext(ctx, "git", "rev-parse", "HEAD").Output(); err == nil {
-		report.Environment["source_commit"] = strings.TrimSpace(string(commit))
+	report.Environment["source_commit"] = build.SourceCommit
+	report.Environment["source_archive_sha256"] = build.ArchiveSHA256
+	if spec.Mode == "kafka" {
+		report.KafkaIntakeMode = cfg.kafkaIntake().IntakeMode
+		report.KafkaPollRecords = cfg.kafkaIntake().MaxPollRecords
+	}
+	if build.OverlaySHA256 != "" {
+		report.Environment["overlay_sha256"] = build.OverlaySHA256
 	}
 	defer func() { report.Finished = time.Now().UTC(); report.ElapsedSeconds = time.Since(start).Seconds() }()
 	if spec.Name == "" || strings.ContainsAny(spec.Name, "/\\:") || spec.Workers < 1 || spec.Workers > 16 || (spec.Groups != 4 && spec.Groups != 8 && spec.Groups != 16) || (spec.Delta != 0 && spec.Delta != 10 && spec.Delta != 30 && spec.Delta != 60) || (spec.Cadence != 1 && spec.Cadence != 3 && spec.Cadence != 6) || (spec.Mode != "polling" && spec.Mode != "http_push" && spec.Mode != "kafka") {
@@ -507,28 +500,35 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 	if cfg.Measure {
 		defer sampler.Stop()
 	}
-	masterArgs := []string{"--listen", masterAddress, "--mode", spec.Mode, "--execution-id", execution, "--kafka-brokers", cfg.Brokers, "--create-results-topic"}
-	if spec.PollMS < 1 {
-		spec.PollMS = 100
+	var children []*process
+	var replayStart time.Time
+	defer func() {
+		err := shutdownProcesses(children)
+		report.ShutdownVerified = retErr == nil && err == nil
+		retErr = errors.Join(retErr, err)
+	}()
+	startChild := func(role, logName string, args, env []string) (*process, error) {
+		if err := build.verifyBinary(role); err != nil {
+			return nil, err
+		}
+		if role == "replayer" {
+			replayStart = time.Now()
+		}
+		p, err := startProcess(ctx, role, build.paths[role], filepath.Join(logDir, logName), args, env)
+		if err == nil {
+			children = append(children, p)
+		}
+		return p, err
 	}
-	masterArgs = append(masterArgs, "--poll-interval", fmt.Sprintf("%dms", spec.PollMS))
-	if cfg.Measure {
-		masterArgs = append(masterArgs, "--measure=true")
-	}
-	master, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+	masterArgs := masterArguments(cfg, spec, masterAddress, execution)
+	master, err := startChild("master", "master.log", masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 	if err != nil {
 		return report, err
 	}
-	defer func() { master.stop() }()
 	if cfg.Measure {
 		sampler.Add("master", masterURL)
 	}
 	workers := []*process{}
-	defer func() {
-		for _, p := range workers {
-			p.stop()
-		}
-	}()
 	startWorker := func(index int) (*process, error) {
 		address, endpoint, err := freeEndpoint()
 		if err != nil {
@@ -542,7 +542,7 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 		if cfg.Measure {
 			args = append(args, "--measure=true")
 		}
-		p, err := startProcess(ctx, binaries["worker"], filepath.Join(logDir, fmt.Sprintf("worker-%02d.log", index)), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+		p, err := startChild("worker", fmt.Sprintf("worker-%02d.log", index), args, []string{"WORKER_DATABASE_URL=" + dsn, "GOMAXPROCS=1", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 		if err == nil {
 			p.owner, p.endpoint = owner, endpoint
 			if cfg.Measure {
@@ -603,12 +603,10 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			}
 		}()
 	}
-	replayStart := time.Now()
-	replayer, err := startProcess(ctx, binaries["replayer"], filepath.Join(logDir, "replayer.log"), replayArgs, []string{"GOMAXPROCS=1"})
+	replayer, err := startChild("replayer", "replayer.log", replayArgs, []string{"GOMAXPROCS=1"})
 	if err != nil {
 		return report, err
 	}
-	defer replayer.stop()
 	if spec.Fault != "" {
 		faultStart := time.Now()
 		switch spec.Fault {
@@ -637,8 +635,11 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 					return false, fmt.Errorf("open event owner process absent")
 				}
 				killedAt = time.Now()
-				victim.stop()
+				killErr := victim.killForFault(ctx)
 				_ = tx.Rollback(context.Background())
+				if killErr != nil {
+					return false, killErr
+				}
 				replacement, err := startWorker(len(workers))
 				if err != nil {
 					return false, err
@@ -698,8 +699,10 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			}, active); err != nil {
 				return report, err
 			}
-			master.stop()
-			replacement, err := startProcess(ctx, binaries["master"], filepath.Join(logDir, "master-restart.log"), masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
+			if err := master.killForFault(ctx); err != nil {
+				return report, err
+			}
+			replacement, err := startChild("master", "master-restart.log", masterArgs, []string{"MASTER_DATABASE_URL=" + dsn, "GOMAXPROCS=2", fmt.Sprintf("CAD_PPROF=%d", boolInt(cfg.Profile))})
 			if err != nil {
 				return report, err
 			}
@@ -785,7 +788,6 @@ func runOne(ctx context.Context, cfg Config, spec RunSpec, binaries, hashes map[
 			return report, fmt.Errorf("measurement: %w", err)
 		}
 	}
-	report.Status = "PASS"
 	return report, nil
 }
 func verifyReference(manifestPath, directory string, groups, delta int) error {

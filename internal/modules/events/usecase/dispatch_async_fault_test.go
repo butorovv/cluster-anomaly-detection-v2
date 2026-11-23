@@ -45,6 +45,44 @@ func startAsyncCase(t *testing.T, d *Dispatcher) context.CancelFunc {
 	return cancel
 }
 
+func TestAsyncUnresolvedPublishStopsAndRestartPreservesMessage(t *testing.T) {
+	store := newAsyncFakeOutbox()
+	store.put("a01", resultDelivery(t, "a01", "unknown-id", 0))
+	sender := newHeldAsyncSender()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := &Dispatcher{Store: store, ExecutionID: testExecution, Mode: "kafka", AsyncSender: sender,
+		AsyncConfig: AsyncConfig{PublishTimeout: 50 * time.Millisecond, DrainTimeout: 25 * time.Millisecond}}
+	trackOwner(t, first, "a01", "old", 1)
+	done := make(chan error, 1)
+	go func() { done <- first.Run(ctx) }()
+	started := sender.call(t, 0)
+	select {
+	case err := <-done:
+		if err == nil || !strings.Contains(err.Error(), "Kafka publish outcome unknown") {
+			t.Fatalf("unexpected stop: %v", err)
+		}
+	case <-time.After(750 * time.Millisecond):
+		cancel()
+		<-done
+		t.Fatal("dispatcher did not stop with unresolved callback")
+	}
+	started.cb(nil) // A late successful reply cannot clear the timed-out attempt.
+	if store.ackCount() != 0 || sender.count() != 1 {
+		t.Fatal("unresolved record was ACKed or retried in the same sender")
+	}
+	restarted := newHeldAsyncSender()
+	second := &Dispatcher{Store: store, ExecutionID: testExecution, Mode: "kafka", AsyncSender: restarted}
+	trackOwner(t, second, "a01", "new", 2)
+	startAsyncCase(t, second)
+	replayed := restarted.call(t, 0)
+	if string(replayed.data) != string(started.data) {
+		t.Fatal("restart changed the pending message or its identity")
+	}
+	replayed.cb(nil)
+	awaitAck(t, store, 1)
+}
+
 func TestAsyncImmediateDuplicateCallbackIsNotSQLExecution(t *testing.T) {
 	o := newAsyncFakeOutbox()
 	o.put("a01", resultDelivery(t, "a01", "once", 0))

@@ -154,6 +154,9 @@ func TestV10FreshAndRuntimePagePrivileges(t *testing.T) {
 	if err := c.QueryRow(ctx, `SELECT count(*) FROM cad_v2.read_outbox_page($1::uuid,'a01',$2::uuid,1,0,0,64,true)`, ownershipExecution, ownershipOwner).Scan(&count); err != nil || count != 1 {
 		t.Fatal("Worker role owner page", count, err)
 	}
+	if _, err := c.Exec(ctx, `SELECT cluster_id,topic_id FROM cad_v2.result_topic_bindings WHERE execution_id=$1::uuid`, ownershipExecution); err != nil {
+		t.Fatal("Worker cannot read its result source pin", err)
+	}
 	if _, err := c.Exec(ctx, `RESET ROLE`); err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +194,8 @@ func TestV10FreshAndRuntimePagePrivileges(t *testing.T) {
 		{"unknown_group", worker, fmt.Sprintf(`SELECT count(*) FROM cad_v2.read_outbox_page('%s','a17','%s',1,0,0,64,true)`, ownershipExecution, ownershipOwner), "P0002"},
 		{"master_cannot_page", master, fmt.Sprintf(`SELECT count(*) FROM cad_v2.read_outbox_page('%s','a01','%s',1,0,0,64,true)`, ownershipExecution, ownershipOwner), "42501"},
 		{"worker_direct_dml", worker, `INSERT INTO cad_v2.outbox_messages DEFAULT VALUES`, "42501"},
+		{"worker_cannot_rebind_results", worker, `UPDATE cad_v2.result_topic_bindings SET topic_id='other'`, "42501"},
+		{"worker_cannot_read_result_consumer_group", worker, `SELECT consumer_group FROM cad_v2.result_topic_bindings`, "42501"},
 		{"worker_writer_helper", worker, `SELECT cad_v2.assert_owner('00000000-0000-0000-0000-000000000001','a01','00000000-0000-0000-0000-000000000011',1)`, "42501"},
 	} {
 		t.Run(test.name, func(t *testing.T) {

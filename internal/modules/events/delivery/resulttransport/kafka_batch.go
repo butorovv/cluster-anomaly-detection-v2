@@ -14,14 +14,24 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 )
 
-// KafkaConsumerConfig bounds one poll wave; there is no persistent record queue.
+const (
+	KafkaIntakeWave     = "wave"
+	KafkaIntakePipeline = "pipeline"
+)
+
+// KafkaConsumerConfig bounds result processing within a rebalance barrier.
 type KafkaConsumerConfig struct {
+	IntakeMode     string
 	Concurrency    int
 	MaxPollRecords int
 	BatchTimeout   time.Duration
+	Diagnostics    bool
 }
 
 func (c KafkaConsumerConfig) WithDefaults() KafkaConsumerConfig {
+	if c.IntakeMode == "" {
+		c.IntakeMode = KafkaIntakeWave
+	}
 	if c.Concurrency == 0 {
 		c.Concurrency = 4
 	}
@@ -34,6 +44,9 @@ func (c KafkaConsumerConfig) WithDefaults() KafkaConsumerConfig {
 	return c
 }
 func (c KafkaConsumerConfig) Validate() error {
+	if c.IntakeMode != KafkaIntakeWave && c.IntakeMode != KafkaIntakePipeline {
+		return fmt.Errorf("invalid Kafka intake mode %q: want wave or pipeline", c.IntakeMode)
+	}
 	if c.Concurrency < 1 || c.Concurrency > 16 || c.MaxPollRecords < 1 || c.MaxPollRecords > 128 || c.BatchTimeout < time.Millisecond || c.BatchTimeout > 15*time.Second {
 		return fmt.Errorf("invalid Kafka intake limits")
 	}
@@ -48,14 +61,30 @@ type partitionBatch struct {
 type partitionProgress struct {
 	last *kgo.Record
 	err  error
+	work time.Duration
+	ran  bool
 }
 
 // processKafkaBatch owns at most Concurrency workers and one bounded poll batch.
 // Each partition appears in one FIFO job. A handler must honor cancellation and
 // return nil only after its SQL transaction is confirmed committed.
-func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) ([]*kgo.Record, error) {
+func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*kgo.Record, expected map[int32]int64, polledAt time.Time, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, metrics *observability.Registry) (lasts []*kgo.Record, retErr error) {
 	if len(records) == 0 {
 		return nil, nil
+	}
+	if cfg.Diagnostics {
+		defer func() {
+			metrics.Observe("results_kafka_poll_wave_duration", time.Since(polledAt))
+			if retErr != nil {
+				metrics.Add("results_kafka_poll_wave_errors", 1)
+			}
+			// Include a successfully committed prefix of a failed wave.
+			var confirmed int64
+			for _, last := range lasts {
+				confirmed += last.Offset - expected[last.Partition] + 1
+			}
+			metrics.Add("results_kafka_durable_confirmations", confirmed)
+		}()
 	}
 	if len(records) > cfg.MaxPollRecords {
 		return nil, fmt.Errorf("Kafka poll exceeded record bound")
@@ -63,15 +92,9 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 	parts := map[int32]*partitionBatch{}
 	var batchBytes int64
 	for _, r := range records {
-		if r == nil {
-			return nil, fmt.Errorf("nil Kafka result record")
-		}
-		next, ok := expected[r.Partition]
-		if r.Topic != ResultsTopic || !ok || r.Partition < 0 || r.Partition >= resultPartitions {
-			return nil, fmt.Errorf("unexpected result assignment at %s/%d", r.Topic, r.Partition)
-		}
-		if len(r.Value) == 0 || len(r.Value) > domain.MaxMessageBytes || len(r.Key) == 0 || len(r.Key) > 256 {
-			return nil, fmt.Errorf("result record exceeds message/key limit")
+		next, err := validateKafkaRecord(r, expected)
+		if err != nil {
+			return nil, err
 		}
 		batchBytes += int64(len(r.Value) + len(r.Key))
 		part := parts[r.Partition]
@@ -82,6 +105,10 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 		part.records = append(part.records, r)
 	}
 	metrics.Set("results_kafka_batch_bytes", float64(batchBytes))
+	if cfg.Diagnostics {
+		metrics.Set("results_kafka_distinct_partitions_per_poll", float64(len(parts)))
+		metrics.Add("results_kafka_polled_partitions", int64(len(parts)))
+	}
 	ctx, cancel := context.WithTimeout(ctx, cfg.BatchTimeout)
 	defer cancel()
 	jobs := make(chan *partitionBatch)
@@ -107,7 +134,15 @@ func processKafkaBatch(ctx context.Context, cfg KafkaConsumerConfig, records []*
 					}
 				}
 				metrics.Set("results_kafka_active_partitions", float64(n))
+				var started time.Time
+				if cfg.Diagnostics {
+					started = time.Now()
+				}
 				progress := processPartition(ctx, *part, polledAt, handle, metrics)
+				if cfg.Diagnostics {
+					progress.work = time.Since(started)
+					progress.ran = true
+				}
 				metrics.Set("results_kafka_active_partitions", float64(active.Add(-1)))
 				if progress.err != nil {
 					fail(progress.err)
@@ -138,12 +173,23 @@ admission:
 	workers.Wait() // callbacks/SQL have returned before the caller releases assignment
 	metrics.Set("results_kafka_active_partitions", 0)
 	metrics.Set("results_kafka_peak_partitions", float64(peak.Load()))
-	lasts := make([]*kgo.Record, 0, admitted)
+	lasts = make([]*kgo.Record, 0, admitted)
+	var slowest, work time.Duration
+	var ran bool
 	for i := 0; i < admitted; i++ {
 		r := <-results
+		if r.ran {
+			slowest = max(slowest, r.work)
+			work += r.work
+			ran = true
+		}
 		if r.last != nil {
 			lasts = append(lasts, r.last)
 		}
+	}
+	if ran {
+		metrics.Observe("results_kafka_slowest_partition_job_duration", slowest)
+		metrics.Observe("results_kafka_partition_handler_work", work)
 	}
 	if firstError != nil {
 		return lasts, firstError
@@ -154,7 +200,21 @@ admission:
 	return lasts, nil
 }
 
-func processPartition(ctx context.Context, part partitionBatch, polledAt time.Time, handle func(context.Context, *kgo.Record, []byte) error, metrics *observability.Registry) (progress partitionProgress) {
+func validateKafkaRecord(r *kgo.Record, expected map[int32]int64) (int64, error) {
+	if r == nil {
+		return 0, fmt.Errorf("nil Kafka result record")
+	}
+	next, ok := expected[r.Partition]
+	if r.Topic != ResultsTopic || !ok || r.Partition < 0 || r.Partition >= resultPartitions {
+		return 0, fmt.Errorf("unexpected result assignment at %s/%d", r.Topic, r.Partition)
+	}
+	if len(r.Value) == 0 || len(r.Value) > domain.MaxMessageBytes || len(r.Key) == 0 || len(r.Key) > 256 {
+		return 0, fmt.Errorf("result record exceeds message/key limit")
+	}
+	return next, nil
+}
+
+func processPartition(ctx context.Context, part partitionBatch, polledAt time.Time, handle func(context.Context, *kgo.Record, domain.DecodedEnvelope) error, metrics *observability.Registry) (progress partitionProgress) {
 	for _, r := range part.records {
 		if err := ctx.Err(); err != nil {
 			progress.err = err
@@ -164,11 +224,12 @@ func processPartition(ctx context.Context, part partitionBatch, polledAt time.Ti
 			progress.err = fmt.Errorf("unexpected result record position at %s/%d@%d: want %d", r.Topic, r.Partition, r.Offset, part.next)
 			return
 		}
-		e, err := domain.Decode(r.Value)
+		decoded, err := domain.DecodeEnvelope(r.Value)
 		if err != nil {
 			progress.err = fmt.Errorf("decode output %d@%d: %w", r.Partition, r.Offset, err)
 			return
 		}
+		e := decoded.Envelope()
 		p, err := topology.PartitionForGroup(e.GroupID)
 		if err != nil || p != int(r.Partition) || string(r.Key) != e.GroupID {
 			progress.err = fmt.Errorf("physical/logical output routing mismatch at %d@%d", r.Partition, r.Offset)
@@ -179,7 +240,7 @@ func processPartition(ctx context.Context, part partitionBatch, polledAt time.Ti
 		if !r.Timestamp.IsZero() && !polledAt.Before(r.Timestamp) {
 			metrics.Observe("results_kafka_create_to_poll", polledAt.Sub(r.Timestamp))
 		}
-		if err := handle(ctx, r, r.Value); err != nil {
+		if err := handle(ctx, r, decoded); err != nil {
 			progress.err = fmt.Errorf("handle output %d@%d: %w", r.Partition, r.Offset, err)
 			return
 		}

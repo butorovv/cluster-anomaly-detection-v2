@@ -50,31 +50,73 @@ func profileHandler(next http.Handler) http.Handler {
 // QueryTracer records wire round trips, including BEGIN/COMMIT, without values
 // or SQL arguments. QueryRows ends only after rows have been consumed/closed.
 // Sums overlap application stages; they must not be added to those stages.
-type QueryTracer struct{ Metrics *Registry }
+type QueryTracer struct {
+	Metrics     *Registry
+	SummaryOnly bool // collect scoped calls and pool wait without per-statement histograms
+}
 type queryClock struct {
 	start time.Time
 	sql   string
 }
 type queryClockKey struct{}
 type acquireClockKey struct{}
+type intakeAcquireKey struct{}
+type querySummaryKey struct{}
+
+// QuerySummary is scoped to one synchronously used pgx transaction path.
+// Calls count pgx query operations, including failed ones, not protocol packets.
+type QuerySummary struct {
+	Calls    int64
+	Duration time.Duration
+}
+
+func WithQuerySummary(ctx context.Context, summary *QuerySummary) context.Context {
+	return context.WithValue(ctx, querySummaryKey{}, summary)
+}
+
+func WithIntakeAcquireTiming(ctx context.Context) context.Context {
+	return context.WithValue(ctx, intakeAcquireKey{}, true)
+}
 
 func (t QueryTracer) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
+	if t.SummaryOnly && ctx.Value(querySummaryKey{}) == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, queryClockKey{}, queryClock{time.Now(), d.SQL})
 }
 func (t QueryTracer) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryEndData) {
 	if c, ok := ctx.Value(queryClockKey{}).(queryClock); ok {
-		t.Metrics.Observe("sql/"+c.sql, time.Since(c.start))
-		if d.Err != nil {
-			t.Metrics.Add("sql_errors", 1)
+		elapsed := time.Since(c.start)
+		if summary, ok := ctx.Value(querySummaryKey{}).(*QuerySummary); ok {
+			summary.Calls++
+			summary.Duration += elapsed
+		}
+		if !t.SummaryOnly {
+			t.Metrics.Observe("sql/"+c.sql, elapsed)
+			if d.Err != nil {
+				t.Metrics.Add("sql_errors", 1)
+			}
 		}
 	}
 }
 func (t QueryTracer) TraceAcquireStart(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireStartData) context.Context {
+	if t.SummaryOnly && ctx.Value(intakeAcquireKey{}) == nil {
+		return ctx
+	}
 	return context.WithValue(ctx, acquireClockKey{}, time.Now())
 }
-func (t QueryTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, _ pgxpool.TraceAcquireEndData) {
+func (t QueryTracer) TraceAcquireEnd(ctx context.Context, _ *pgxpool.Pool, d pgxpool.TraceAcquireEndData) {
 	if start, ok := ctx.Value(acquireClockKey{}).(time.Time); ok {
-		t.Metrics.Observe("sql_pool_acquire", time.Since(start))
+		elapsed := time.Since(start)
+		if !t.SummaryOnly {
+			t.Metrics.Observe("sql_pool_acquire", elapsed)
+		}
+		if ctx.Value(intakeAcquireKey{}) != nil {
+			t.Metrics.Observe("master_pg_pool_acquire_duration", elapsed)
+			if d.Err != nil {
+				t.Metrics.Add("master_pg_pool_acquire_errors", 1)
+			}
+		}
 	}
 }
 

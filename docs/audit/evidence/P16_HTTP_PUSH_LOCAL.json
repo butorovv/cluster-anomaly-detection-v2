@@ -1,0 +1,309 @@
+{
+  "schema_version": 1,
+  "date": "2026-11-20",
+  "base_commit": "249dc0bb5890785c2821c252d5acfb8196f60751",
+  "go": "go version go1.27.2 windows/amd64",
+  "platform": "windows/amd64",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12650H",
+  "gomaxprocs": 4,
+  "benchtime": "300ms",
+  "sample_count": 5,
+  "aggregation": "median of five Go benchmark repetitions",
+  "isolated_change_race_check": {
+    "base_commit": "249dc0bb5890785c2821c252d5acfb8196f60751",
+    "changed_files_sha256": {
+      "internal/modules/events/usecase/dispatch.go": "61622c6657c6bef4b12db926c936a428e2c1bd0565b6148138776e056da7996e",
+      "internal/modules/events/usecase/dispatch_http.go": "8c25c70e1cac2340c5802dec8c67e22bf898e8ef5d475584ec82364698e635ad",
+      "internal/modules/events/usecase/dispatch_http_test.go": "d78745faa268040acc8dcbef11ecc58ff9105c193f2dbc9bdf9cf1a5bf380177",
+      "internal/modules/events/usecase/dispatch_http_benchmark_test.go": "b1e63483282882fce9a162bc967cf56252ced75422a1f0ee24e7d77315ea145a"
+    },
+    "command": [
+      "go",
+      "test",
+      "-race",
+      "-json",
+      "-count=1",
+      "-timeout=120s",
+      "-run",
+      "^(TestHTTPPush|TestSync|TestAsync)",
+      "./internal/modules/events/usecase"
+    ],
+    "exit": 0,
+    "pass": 32,
+    "skip": 0,
+    "fail": 0
+  },
+  "combined_tree_checks": {
+    "unit": {
+      "exit": 0,
+      "pass": 164,
+      "skip": 18,
+      "fail": 0,
+      "skipped_tests": [
+        "TestKafkaAsyncLostACKRetriesIdempotently",
+        "TestKafkaAsyncUnknownACKCancelFlushAndClose",
+        "TestKafkaAsyncDisconnectBeforeAdmissionAndRecovery",
+        "TestKafkaAsyncActualRecreationRejectsOldPin",
+        "TestKafkaAuxCommitFailureRestartsAtDurableSQLPosition",
+        "TestKafkaPartitionsCommitBeforeSlowPartitionAndRestart",
+        "TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes/false",
+        "TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes/true",
+        "TestKafkaRebalanceWaitsForActiveSQLWave",
+        "TestKafkaPipelineRealRebalanceRestoresSQLOffsets",
+        "TestKafkaWaveDeadlineRollsBackActiveSQLAndRestarts",
+        "TestKafkaLostMemberCannotCommitStaleOffset",
+        "TestKafkaSenderClusterAndTopicPins",
+        "TestProducerSourceRealTopicRecreation",
+        "TestKafkaSenderBoundedConnections",
+        "TestPayloadRealKafkaSyncAsyncBoundary",
+        "TestKafkaConsumerBatchQueueMeasurements",
+        "TestPollingSlowGroupAllowsDurableOtherGroupsAndRefreshesOwner"
+      ]
+    },
+    "race": {
+      "exit": 0,
+      "pass": 164,
+      "skip": 18,
+      "fail": 0,
+      "skipped_tests": [
+        "TestKafkaAsyncLostACKRetriesIdempotently",
+        "TestKafkaAsyncUnknownACKCancelFlushAndClose",
+        "TestKafkaAsyncDisconnectBeforeAdmissionAndRecovery",
+        "TestKafkaAsyncActualRecreationRejectsOldPin",
+        "TestKafkaAuxCommitFailureRestartsAtDurableSQLPosition",
+        "TestKafkaPartitionsCommitBeforeSlowPartitionAndRestart",
+        "TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes/false",
+        "TestKafkaSQLFailureAndLostCommitReceiptRestoreDurablePrefixes/true",
+        "TestKafkaRebalanceWaitsForActiveSQLWave",
+        "TestKafkaPipelineRealRebalanceRestoresSQLOffsets",
+        "TestKafkaWaveDeadlineRollsBackActiveSQLAndRestarts",
+        "TestKafkaLostMemberCannotCommitStaleOffset",
+        "TestKafkaSenderClusterAndTopicPins",
+        "TestProducerSourceRealTopicRecreation",
+        "TestKafkaSenderBoundedConnections",
+        "TestPollingSlowGroupAllowsDurableOtherGroupsAndRefreshesOwner",
+        "TestPayloadRealKafkaSyncAsyncBoundary",
+        "TestKafkaConsumerBatchQueueMeasurements"
+      ]
+    },
+    "vet": {
+      "exit": 0
+    }
+  },
+  "benchmarks": [
+    {
+      "name": "BenchmarkHTTPPushDispatcher/slow=false/after=false-4",
+      "samples": [
+        {
+          "ns_per_op": 53688450.0,
+          "bytes_per_op": 1141770.0,
+          "allocs_per_op": 18482.0,
+          "other_groups_ack_ns_per_batch": 53594500.0,
+          "records_per_second": 4768.0
+        },
+        {
+          "ns_per_op": 52470333.0,
+          "bytes_per_op": 1143528.0,
+          "allocs_per_op": 18483.0,
+          "other_groups_ack_ns_per_batch": 52106150.0,
+          "records_per_second": 4879.0
+        },
+        {
+          "ns_per_op": 52267383.0,
+          "bytes_per_op": 1142621.0,
+          "allocs_per_op": 18485.0,
+          "other_groups_ack_ns_per_batch": 52300117.0,
+          "records_per_second": 4898.0
+        },
+        {
+          "ns_per_op": 52477233.0,
+          "bytes_per_op": 1139874.0,
+          "allocs_per_op": 18474.0,
+          "other_groups_ack_ns_per_batch": 51818717.0,
+          "records_per_second": 4878.0
+        },
+        {
+          "ns_per_op": 51954633.0,
+          "bytes_per_op": 1142549.0,
+          "allocs_per_op": 18482.0,
+          "other_groups_ack_ns_per_batch": 51609250.0,
+          "records_per_second": 4927.0
+        }
+      ],
+      "median": {
+        "ns_per_op": 52470333.0,
+        "bytes_per_op": 1142549.0,
+        "allocs_per_op": 18482.0,
+        "other_groups_ack_ns_per_batch": 52106150.0,
+        "records_per_second": 4879.0
+      }
+    },
+    {
+      "name": "BenchmarkHTTPPushDispatcher/slow=false/after=true-4",
+      "samples": [
+        {
+          "ns_per_op": 51731600.0,
+          "bytes_per_op": 1150525.0,
+          "allocs_per_op": 18796.0,
+          "other_groups_ack_ns_per_batch": 51447317.0,
+          "records_per_second": 4949.0
+        },
+        {
+          "ns_per_op": 51706033.0,
+          "bytes_per_op": 1150696.0,
+          "allocs_per_op": 18810.0,
+          "other_groups_ack_ns_per_batch": 51552283.0,
+          "records_per_second": 4951.0
+        },
+        {
+          "ns_per_op": 51939283.0,
+          "bytes_per_op": 1150872.0,
+          "allocs_per_op": 18804.0,
+          "other_groups_ack_ns_per_batch": 51851450.0,
+          "records_per_second": 4929.0
+        },
+        {
+          "ns_per_op": 51519583.0,
+          "bytes_per_op": 1152342.0,
+          "allocs_per_op": 18805.0,
+          "other_groups_ack_ns_per_batch": 51577733.0,
+          "records_per_second": 4969.0
+        },
+        {
+          "ns_per_op": 51772817.0,
+          "bytes_per_op": 1151716.0,
+          "allocs_per_op": 18824.0,
+          "other_groups_ack_ns_per_batch": 51765300.0,
+          "records_per_second": 4945.0
+        }
+      ],
+      "median": {
+        "ns_per_op": 51731600.0,
+        "bytes_per_op": 1150872.0,
+        "allocs_per_op": 18805.0,
+        "other_groups_ack_ns_per_batch": 51577733.0,
+        "records_per_second": 4949.0
+      }
+    },
+    {
+      "name": "BenchmarkHTTPPushDispatcher/slow=true/after=false-4",
+      "samples": [
+        {
+          "ns_per_op": 93082625.0,
+          "bytes_per_op": 1146182.0,
+          "allocs_per_op": 18552.0,
+          "other_groups_ack_ns_per_batch": 92729100.0,
+          "records_per_second": 2750.0
+        },
+        {
+          "ns_per_op": 103565725.0,
+          "bytes_per_op": 1151462.0,
+          "allocs_per_op": 18591.0,
+          "other_groups_ack_ns_per_batch": 103636850.0,
+          "records_per_second": 2472.0
+        },
+        {
+          "ns_per_op": 93546125.0,
+          "bytes_per_op": 1148898.0,
+          "allocs_per_op": 18561.0,
+          "other_groups_ack_ns_per_batch": 93236875.0,
+          "records_per_second": 2737.0
+        },
+        {
+          "ns_per_op": 94361700.0,
+          "bytes_per_op": 1150270.0,
+          "allocs_per_op": 18564.0,
+          "other_groups_ack_ns_per_batch": 93880275.0,
+          "records_per_second": 2713.0
+        },
+        {
+          "ns_per_op": 92748075.0,
+          "bytes_per_op": 1149116.0,
+          "allocs_per_op": 18560.0,
+          "other_groups_ack_ns_per_batch": 92536425.0,
+          "records_per_second": 2760.0
+        }
+      ],
+      "median": {
+        "ns_per_op": 93546125.0,
+        "bytes_per_op": 1149116.0,
+        "allocs_per_op": 18561.0,
+        "other_groups_ack_ns_per_batch": 93236875.0,
+        "records_per_second": 2737.0
+      }
+    },
+    {
+      "name": "BenchmarkHTTPPushDispatcher/slow=true/after=true-4",
+      "samples": [
+        {
+          "ns_per_op": 93740975.0,
+          "bytes_per_op": 1158308.0,
+          "allocs_per_op": 18914.0,
+          "other_groups_ack_ns_per_batch": 52494200.0,
+          "records_per_second": 2731.0
+        },
+        {
+          "ns_per_op": 92194425.0,
+          "bytes_per_op": 1157950.0,
+          "allocs_per_op": 18911.0,
+          "other_groups_ack_ns_per_batch": 52377550.0,
+          "records_per_second": 2777.0
+        },
+        {
+          "ns_per_op": 97177900.0,
+          "bytes_per_op": 1161962.0,
+          "allocs_per_op": 18934.0,
+          "other_groups_ack_ns_per_batch": 51938675.0,
+          "records_per_second": 2634.0
+        },
+        {
+          "ns_per_op": 93492625.0,
+          "bytes_per_op": 1157910.0,
+          "allocs_per_op": 18901.0,
+          "other_groups_ack_ns_per_batch": 52269500.0,
+          "records_per_second": 2738.0
+        },
+        {
+          "ns_per_op": 103912767.0,
+          "bytes_per_op": 1169736.0,
+          "allocs_per_op": 18996.0,
+          "other_groups_ack_ns_per_batch": 52447167.0,
+          "records_per_second": 2464.0
+        }
+      ],
+      "median": {
+        "ns_per_op": 93740975.0,
+        "bytes_per_op": 1158308.0,
+        "allocs_per_op": 18914.0,
+        "other_groups_ack_ns_per_batch": 52377550.0,
+        "records_per_second": 2731.0
+      }
+    }
+  ],
+  "raw_log_sha256": {
+    "bench.exit": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "bench.log": "9d8272e229c9e3460accfe18a44a6dd795419f90d06bbf951951fbfa68c32555",
+    "bench.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "race.exit": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "race.log": "00d12401f5e403860f91e192dbe1245a62a1857eb9dad97b4fba7f716623be0e",
+    "race.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "unit.exit": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "unit.log": "42a18ab241d941a02a08bb5686b72a0157bb25195d6c634a2decf9c0a71cb6cb",
+    "unit.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "vet.exit": "13bf7b3039c63bf5a50491fa3cfd8eb4e699d1ba1436315aef9cbe5711530354",
+    "vet.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "vet.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "not_measured": [
+    "full D2",
+    "VM/cloud",
+    "real PostgreSQL durability",
+    "production HTTP throughput"
+  ],
+  "method": "whole Run and shutdown of identical 16 groups x16 records, including common initial50ms scan; fake outbox Page/ACK and no-op Sender; slow case injects2ms per a01 Send; fixtures and Track excluded",
+  "worker_concurrency_limit": 4,
+  "W2_max_HTTP_requests": 8,
+  "W4_max_HTTP_requests": 16,
+  "staging_bound": "one existing64-record/4MiB page per valid group, at most16 groups per Worker, unbuffered jobs, four result slots",
+  "conclusion": "No material whole-batch throughput gain shown. Other groups finish ACK earlier with a slow a01; the slow group still determines completion of the whole batch."
+}

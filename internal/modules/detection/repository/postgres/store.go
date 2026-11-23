@@ -11,6 +11,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/group"
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
 	events "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -59,7 +60,7 @@ func (s *Store) Acquire(ctx context.Context, groupID, owner string, ttl time.Dur
 	if err != nil {
 		return lease, nil, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	err = tx.QueryRow(ctx, `SELECT cad_v2.acquire_partition($1::uuid,$2,$3::uuid,$4::interval)`, s.Registration.Binding.ExecutionID, groupID, owner, fmt.Sprintf("%f seconds", ttl.Seconds())).Scan(&lease.Epoch)
 	var pgerr *pgconn.PgError
 	if errors.As(err, &pgerr) && pgerr.Code == "55000" {
@@ -194,7 +195,7 @@ func (s *Store) saveAttempt(ctx context.Context, l Lease, c core.Checkpoint, pay
 	if err != nil {
 		return 0, false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	var revision int64
 	err = tx.QueryRow(ctx, `SELECT cad_v2.commit_checkpoint($1::uuid,$2,$3::uuid,$4,$5,$6,$7,$8,'json-utf8',$9::bytea,$10::cad_v2.sha256_hex,$11,$12::jsonb)`, s.Registration.Binding.ExecutionID, l.Group, l.Owner, l.Epoch, c.Revision-1, c.NextOffset, c.LastTick, group.MathSnapshotSchemaVersion, c.Snapshot, c.SHA256, c.Finalized, payload).Scan(&revision)
 	if err != nil {

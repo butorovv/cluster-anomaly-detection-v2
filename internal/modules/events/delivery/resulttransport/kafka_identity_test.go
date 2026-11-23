@@ -55,6 +55,31 @@ func TestProducerSourceFreshMetadataAndPolicy(t *testing.T) {
 		t.Fatal("checks must be fresh and use exactly two RPCs", a.metadataCalls, a.configCalls)
 	}
 }
+
+func TestNewProducerKeepsRegisteredSource(t *testing.T) {
+	pin := SourceIdentity{ClusterID: "cluster", TopicID: (kadm.TopicID{1}).String()}
+	for _, test := range []struct {
+		name string
+		pin  SourceIdentity
+		ok   bool
+	}{
+		{"registered", pin, true},
+		{"missing", SourceIdentity{}, false},
+		{"recreated", SourceIdentity{ClusterID: pin.ClusterID, TopicID: (kadm.TopicID{2}).String()}, false},
+		{"other cluster", SourceIdentity{ClusterID: "other", TopicID: pin.TopicID}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := openProducerSource(context.Background(), validProducerAdmin(), &test.pin)
+			if test.ok {
+				if err != nil || got != pin {
+					t.Fatalf("registered source not retained: %+v, %v", got, err)
+				}
+			} else if err == nil || got != (SourceIdentity{}) {
+				t.Fatalf("unexpected adoption of broker identity: %+v, %v", got, err)
+			}
+		})
+	}
+}
 func TestProducerSourceFailClosed(t *testing.T) {
 	rpcErr := errors.New("RPC unavailable")
 	for _, tc := range []struct {

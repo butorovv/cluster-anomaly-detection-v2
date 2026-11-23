@@ -8,15 +8,42 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/jackc/pgx/v5"
+	"time"
 )
 
-func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.Envelope) (bool, error) {
+func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.Envelope) (accepted bool, retErr error) {
 	defer observability.Stage(s.Stages, "join_total")()
+	var summary observability.QuerySummary
+	var complete bool
+	var finalBuild time.Duration
+	if metrics := s.Diagnostics; metrics != nil {
+		started := time.Now()
+		ctx = observability.WithQuerySummary(ctx, &summary)
+		defer func() {
+			elapsed := time.Since(started)
+			metrics.Observe("master_pg_fragment_accept_duration", elapsed)
+			if retErr != nil {
+				metrics.Add("master_pg_fragment_errors", 1)
+			}
+			if !complete {
+				return
+			}
+			if retErr != nil {
+				metrics.Add("master_pg_join_body_errors", 1)
+				return
+			}
+			metrics.Observe("master_pg_join_total_duration", elapsed)
+			metrics.Observe("master_pg_join_build_finals_duration", finalBuild)
+			if summary.Calls > 0 {
+				metrics.Observe("master_pg_join_sql_duration", summary.Duration)
+				metrics.Add("master_pg_join_sql_round_trips", summary.Calls)
+			}
+		}()
+	}
 	raw, err := json.Marshal(e)
 	if err != nil {
 		return false, err
 	}
-	var accepted bool
 	if err := tx.QueryRow(ctx, `SELECT cad_v2.accept_tick_fragment($1::uuid,$2::jsonb)`, e.ExecutionID, raw).Scan(&accepted); err != nil {
 		return false, err
 	}
@@ -46,6 +73,7 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	if fragmentCount != id.Groups {
 		return false, fmt.Errorf("diagnostic join group cardinality mismatch")
 	}
+	complete = true
 	rows, err := tx.Query(ctx, `SELECT envelope FROM cad_v2.master_tick_fragments WHERE execution_id=$1::uuid AND event_time=$2 ORDER BY group_id`, e.ExecutionID, e.EventTime)
 	if err != nil {
 		return false, err
@@ -94,6 +122,10 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 	annotateDone()
 	finalDone := observability.Stage(s.Stages, "join_final_envelopes_and_sql")
 	for i, fragment := range envelopes {
+		var started time.Time
+		if s.Diagnostics != nil {
+			started = time.Now()
+		}
 		payload := payloads[i]
 		payload.Raw = rawRows[i]
 		if payload.Evidence != nil {
@@ -106,6 +138,9 @@ func (s MasterStore) acceptFragmentTx(ctx context.Context, tx pgx.Tx, e domain.E
 		final := domain.Envelope{SchemaVersion: 1, ExecutionID: e.ExecutionID, RunID: id.RunID, ConfigID: id.ConfigID, GroupID: fragment.GroupID, MessageID: domain.MessageID(id.RunID, fragment.GroupID, "group_result", e.EventTime.UTC().Format("2006-01-02T15:04:05Z07:00"), 1), Kind: "group_result", Revision: 1, EventTime: e.EventTime, Terminal: true, Payload: bytes}
 		if err := domain.Validate(final, id); err != nil {
 			return false, err
+		}
+		if s.Diagnostics != nil {
+			finalBuild += time.Since(started)
 		}
 		if _, err := s.acceptTx(ctx, tx, final); err != nil {
 			return false, err

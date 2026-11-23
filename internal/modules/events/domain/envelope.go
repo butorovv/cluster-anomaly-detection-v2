@@ -35,6 +35,28 @@ type Message[T any] struct {
 }
 
 type Envelope = Message[json.RawMessage]
+
+// DecodedEnvelope retains the strict wire validation performed by DecodeEnvelope.
+// Its zero value is invalid. Callers can inspect a copy with Envelope.
+type DecodedEnvelope struct {
+	envelope Envelope
+	decoded  bool
+}
+
+func (d DecodedEnvelope) Envelope() Envelope { return d.envelope }
+
+func (d DecodedEnvelope) Header() error {
+	if !d.decoded {
+		return fmt.Errorf("envelope was not strictly decoded")
+	}
+	return Header(d.envelope)
+}
+
+func DecodeEnvelope(b []byte) (DecodedEnvelope, error) {
+	e, err := Decode(b)
+	return DecodedEnvelope{envelope: e, decoded: err == nil}, err
+}
+
 type EventEnvelope = Message[group.RBI2Event]
 type GroupResult struct {
 	Raw      group.Raw                `json:"raw"`

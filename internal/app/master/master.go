@@ -28,9 +28,10 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	execution := flags.String("execution-id", "", "registered execution (required for polling/kafka)")
 	interval := flags.Duration("poll-interval", 100*time.Millisecond, "Worker HTTP polling period")
 	pollConcurrency := flags.Int("poll-concurrency", 4, "maximum independent polling operations (1..16)")
+	kafkaIntakeMode := flags.String("kafka-intake-mode", resulttransport.KafkaIntakeWave, "Kafka result intake scheduling: wave | pipeline")
 	kafkaConcurrency := flags.Int("kafka-intake-concurrency", 4, "maximum concurrent result partitions (1..16)")
-	kafkaRecords := flags.Int("kafka-poll-records", 16, "maximum result records per poll wave (1..128)")
-	kafkaTimeout := flags.Duration("kafka-batch-timeout", 8*time.Second, "bounded result poll processing deadline (1ms..15s)")
+	kafkaRecords := flags.Int("kafka-poll-records", 16, "maximum result records per poll (1..128)")
+	kafkaTimeout := flags.Duration("kafka-batch-timeout", 8*time.Second, "bounded Kafka intake processing deadline (1ms..15s)")
 	brokers := flags.String("kafka-brokers", "localhost:9092", "results Kafka seeds")
 	resultsGroup := flags.String("results-group", "", "Kafka results Consumer Group; default execution-scoped")
 	createResults := flags.Bool("create-results-topic", false, "explicitly initialize group.results")
@@ -40,7 +41,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	if flags.NArg() != 0 || *listen == "" {
 		return fmt.Errorf("listen address required; no positional arguments")
 	}
-	kafkaConfig := resulttransport.KafkaConsumerConfig{Concurrency: *kafkaConcurrency, MaxPollRecords: *kafkaRecords, BatchTimeout: *kafkaTimeout}
+	kafkaConfig := resulttransport.KafkaConsumerConfig{IntakeMode: *kafkaIntakeMode, Concurrency: *kafkaConcurrency, MaxPollRecords: *kafkaRecords, BatchTimeout: *kafkaTimeout}
 	if err := kafkaConfig.Validate(); err != nil {
 		return err
 	}
@@ -57,10 +58,18 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	cfg.MaxConns = 16
 	metrics := observability.New()
-	var stages *observability.Registry
-	if observability.ProfilingEnabled() {
-		cfg.ConnConfig.Tracer = observability.QueryTracer{Metrics: metrics}
-		stages = metrics
+	profile := observability.ProfilingEnabled()
+	diagnostics := *mode == "kafka" && os.Getenv("CAD_MASTER_DIAGNOSTICS") == "1"
+	store := repo.MasterStore{}
+	if profile || diagnostics {
+		cfg.ConnConfig.Tracer = observability.QueryTracer{Metrics: metrics, SummaryOnly: !profile}
+	}
+	if profile {
+		store.Stages = metrics
+	}
+	if diagnostics {
+		metrics.Label("master_kafka_diagnostics", "1")
+		store.Diagnostics = metrics
 	}
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = "5000"
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = "2000"
@@ -69,6 +78,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		return fmt.Errorf("PostgreSQL pool unavailable")
 	}
 	defer pool.Close()
+	store.DB = pool
 	bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
 	err = pool.Ping(bounded)
 	cancel()
@@ -92,7 +102,7 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 	}
 	metrics.Label("role", "master")
 	metrics.Label("execution_id", *execution)
-	service := usecase.Master{Store: repo.MasterStore{DB: pool, Stages: stages}, Metrics: metrics, Logger: log, Measure: *measure}
+	service := usecase.Master{Store: store, Metrics: metrics, Logger: log, Measure: *measure}
 	background := make(chan error, 1)
 	if *mode == "http_push" {
 		background <- nil
@@ -108,13 +118,13 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		go func() {
 			var err error
 			if *mode == "polling" {
-				err = (usecase.Poller{ExecutionID: *execution, Groups: id.Groups, Concurrency: *pollConcurrency, Interval: *interval, Store: repo.MasterStore{DB: pool, Stages: stages}, Master: service, Logger: log}).Run(ctx)
+				err = (usecase.Poller{ExecutionID: *execution, Groups: id.Groups, Concurrency: *pollConcurrency, Interval: *interval, Store: store, Master: service, Logger: log}).Run(ctx)
 			} else {
 				group := *resultsGroup
 				if group == "" {
 					group = "cad-results-" + *execution
 				}
-				err = RunKafka(ctx, strings.Split(*brokers, ","), group, *execution, *createResults, repo.MasterStore{DB: pool, Stages: stages}, service, kafkaConfig)
+				err = RunKafka(ctx, strings.Split(*brokers, ","), group, *execution, *createResults, store, service, kafkaConfig)
 			}
 			background <- err
 			if err != nil {

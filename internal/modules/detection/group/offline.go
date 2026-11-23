@@ -138,10 +138,15 @@ func Evaluate(p *Profile, t Tick, hw *Hardware, ld *local.Detector, groups int, 
 	return rows, nil
 }
 func AnnotateOutside(rows []Raw) {
+	var available, anomalous int
+	for i := range rows {
+		available += rows[i].IF.Available
+		anomalous += rows[i].IF.Anomalous
+	}
 	for i := range rows {
 		s := &rows[i].IF
-		s.OutsideAvailable = 0
-		s.OutsideAnomalous = 0
+		s.OutsideAvailable = available - s.Available
+		s.OutsideAnomalous = anomalous - s.Anomalous
 		s.OutsideGroups = nil
 		s.OutsideS = nil
 		s.E = nil
@@ -150,8 +155,6 @@ func AnnotateOutside(rows []Raw) {
 				continue
 			}
 			s.OutsideGroups = append(s.OutsideGroups, rows[j].Group)
-			s.OutsideAvailable += rows[j].IF.Available
-			s.OutsideAnomalous += rows[j].IF.Anomalous
 		}
 		if s.OutsideAvailable > 0 {
 			s.OutsideS = ptr(float64(s.OutsideAnomalous) / float64(s.OutsideAvailable))

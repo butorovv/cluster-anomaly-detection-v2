@@ -200,14 +200,15 @@ func (p Poller) poll(ctx context.Context, g string) error {
 		if !item.Cursor.After(cursor) {
 			return fmt.Errorf("non-increasing Worker page cursor")
 		}
-		e, err := domain.Decode(item.Envelope)
+		decoded, err := domain.DecodeEnvelope(item.Envelope)
 		if err != nil {
 			return err
 		}
+		e := decoded.Envelope()
 		if e.ExecutionID != p.ExecutionID || e.GroupID != g {
 			return fmt.Errorf("cross-execution/group polling result")
 		}
-		if _, err := p.Master.AcceptAt(ctx, item.Envelope, item.Cursor); err != nil {
+		if _, err := p.Master.AcceptAtEnvelope(ctx, decoded, item.Cursor); err != nil {
 			return err
 		}
 		cursor = item.Cursor

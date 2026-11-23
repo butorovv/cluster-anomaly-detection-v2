@@ -12,6 +12,7 @@ import (
 	core "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/detection/usecase"
 	telemetry "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	topology "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/topology/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -93,7 +94,7 @@ func Register(ctx context.Context, db DB, r Registration) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	bundle, topology, features := registrationHashes(r)
 	identity, _ := json.Marshal(r.Identity)
 	inputs, _ := json.Marshal(r.Identity.InputSHA256)

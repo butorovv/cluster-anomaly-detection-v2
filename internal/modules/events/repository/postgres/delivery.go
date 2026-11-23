@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/pgcleanup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"time"
 )
 
 type OutboxStore struct{ DB *pgxpool.Pool }
@@ -80,7 +83,7 @@ func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.C
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
 	ok, err := s.acceptTx(ctx, tx, e)
 	if err != nil {
 		return false, err
@@ -88,7 +91,19 @@ func (s MasterStore) AcceptAt(ctx context.Context, e domain.Envelope, c domain.C
 	if _, err := tx.Exec(ctx, `SELECT cad_v2.advance_poll_cursor($1::uuid,$2,$3,$4)`, e.ExecutionID, e.GroupID, c.Revision, c.Ordinal); err != nil {
 		return false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	// Cancellation before the commit decision still rolls back both the result
+	// and cursor. Once COMMIT is sent, the page's deadline must not close the
+	// connection while PostgreSQL's durable acknowledgement is in flight: the
+	// next page resumes at that cursor and cannot recover the original timing.
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	// This is a bounded transaction-completion budget, not a longer Poller/page
+	// deadline. A missing/broken ACK still returns an error; never infer its time
+	// from a retry or a later cursor read. Kafka and HTTP Push do not use AcceptAt.
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+	defer cancel()
+	if err := tx.Commit(commitCtx); err != nil {
 		return false, err
 	}
 	return ok, nil
@@ -106,12 +121,37 @@ func (s MasterStore) ResultOffset(ctx context.Context, execution string, p int32
 	err := s.DB.QueryRow(ctx, `SELECT next_offset FROM cad_v2.result_consumer_offsets WHERE execution_id=$1::uuid AND partition_id=$2`, execution, p).Scan(&next)
 	return next, err
 }
+
+// ResultOffsets reads an execution's durable positions in a single snapshot.
+func (s MasterStore) ResultOffsets(ctx context.Context, execution string) (map[int32]int64, error) {
+	rows, err := s.DB.Query(ctx, `SELECT partition_id,next_offset FROM cad_v2.result_consumer_offsets WHERE execution_id=$1::uuid`, execution)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	offsets := make(map[int32]int64, 16)
+	for rows.Next() {
+		var partition int32
+		var offset int64
+		if err := rows.Scan(&partition, &offset); err != nil {
+			return nil, err
+		}
+		offsets[partition] = offset
+	}
+	return offsets, rows.Err()
+}
+
 func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p int32, offset int64, e *domain.Envelope) (bool, error) {
-	tx, err := s.DB.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	beginCtx := ctx
+	if s.Diagnostics != nil {
+		beginCtx = observability.WithIntakeAcquireTiming(ctx)
+	}
+	tx, err := s.DB.BeginTx(beginCtx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(context.Background())
+	defer pgcleanup.Rollback(tx)
+	defer observability.Stage(s.Diagnostics, "master_pg_transaction_body_and_commit_duration")()
 	accepted := false
 	if e != nil {
 		accepted, err = s.acceptTx(ctx, tx, *e)
@@ -122,7 +162,12 @@ func (s MasterStore) AcceptKafka(ctx context.Context, execution, topic string, p
 	if _, err := tx.Exec(ctx, `SELECT cad_v2.advance_result_offset($1::uuid,$2,$3,$4,$5)`, execution, topic, p, offset, offset+1); err != nil {
 		return false, err
 	}
-	if err := tx.Commit(ctx); err != nil {
+	// Keep this separate from the join body: COMMIT includes durability waits.
+	finishCommitTiming := observability.Stage(s.Diagnostics, "master_pg_commit_duration")
+	err = tx.Commit(ctx)
+	finishCommitTiming()
+	if err != nil {
+		s.Diagnostics.Add("master_pg_commit_errors", 1)
 		return false, err
 	}
 	return accepted, nil

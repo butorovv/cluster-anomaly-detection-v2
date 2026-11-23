@@ -820,7 +820,9 @@ baseline/research artifacts; provenance и SHA записаны в
 Свежие эталоны из отдельного чистого LF checkout pinned V1 для 4/8/16 × δ0/10/30/60
 зарегистрированы в `experiments/artifacts/v1-generated-golden.json`. Большие
 NDJSON и manifest остаются вне Git; manifest содержит исходные пути, команды, pin, SHA и
-параметры. Воспроизведение создаёт **новую** директорию и не изменяет V1:
+параметры. Воспроизведение создаёт **новую** директорию и не изменяет V1.
+Перед свежим прогоном соберите проверяемый bundle и задайте `$runner` и
+`$runnerBuild` по [инструкции штатного runner](docs/audit/P16_RUNNER_VERIFICATION.md).
 
 ```powershell
 pwsh -File experiments/generate-golden.ps1 -V1Repository $env:V1_REPOSITORY -Assets $env:ASSETS_ROOT -Output .cache/golden-new -Manifest .cache/golden-new-manifest.json
@@ -829,11 +831,11 @@ $env:SYSTEM_TEST_DATABASE_URL = 'postgres://TEST_ADMIN@127.0.0.1:PGPORT/postgres
 $env:SYSTEM_KAFKA_ISOLATED = '1'
 $env:P07_TEST_KAFKA_BROKERS = '127.0.0.1:KAFKAPORT'
 $env:V1_GOLDEN_ROOT = (Resolve-Path .cache/golden-new).Path
-go run ./experiments/runner --config experiments/configs/p10-first-d2.json
+& $runner @runnerBuild --config experiments/configs/p10-first-d2.json
 ```
 
 В config также задать путь `golden_manifest` к новому manifest и новый `output`.
-Runner собирает реальные процессы Replayer/Worker/Master, создаёт отдельную
+Runner запускает проверенные бинарники Replayer/Worker/Master, создаёт отдельную
 случайную PostgreSQL database и Consumer Group, фиксирует input topic identity и
 start offsets, запускает полный D2 и сравнивает каждое поле Raw, Temporal,
 Evidence, parents, VoteSegments, RBSubspans и IDs с pinned V1. Comparator не
@@ -888,9 +890,9 @@ RBSubspans, отсутствие потерянных/дублированных
   одинаковых frozen inputs, δ0, 16 групп, speed=0; polling 10/100/500 ms.
 
 ```powershell
-go run ./experiments/runner --config experiments/configs/p10-full-matrix.json --resume
-go run ./experiments/runner --config experiments/configs/p11-batch-crash.json --resume
-go run ./experiments/runner --config experiments/configs/p11-measured.json --resume
+& $runner @runnerBuild --config experiments/configs/p10-full-matrix.json --resume
+& $runner @runnerBuild --config experiments/configs/p11-batch-crash.json --resume
+& $runner @runnerBuild --config experiments/configs/p11-measured.json --resume
 python experiments/summarize.py --matrix experiments/artifacts/p11-measured/matrix.json --matrix experiments/artifacts/p11-batch-crash/matrix.json --output experiments/artifacts/summary-new
 ```
 
@@ -1183,9 +1185,9 @@ $auditConfig = Get-Content experiments/configs/p13-repeated.json -Raw | ConvertF
 $auditConfig.output = '.cache/p13-runs-new'
 $auditConfig.golden_manifest = '.cache/golden-new-manifest.json'
 $auditConfig | ConvertTo-Json -Depth 20 | Set-Content .cache/p13-config-new.json -Encoding utf8NoBOM
-go run ./experiments/runner --config .cache/p13-config-new.json
+& $runner @runnerBuild --config .cache/p13-config-new.json
 # Только для продолжения ЭТОГО output с сохранёнными локальными binaries:
-go run ./experiments/runner --config .cache/p13-config-new.json --resume
+& $runner @runnerBuild --config .cache/p13-config-new.json --resume
 ```
 
 Все шесть контрольных запусков дали точное full-D2 совпадение с pinned V1:
@@ -1398,7 +1400,7 @@ $env:V1_GOLDEN_MANIFEST = '/path/to/v1-generated-golden.json'
 # Конфигурации отдельных P14-прогонов и Python-анализаторы хранятся локально/в
 # архиве исходников P14; в Git остаётся обвязка runner и архивирования.
 # Profiling отдельно от окончательных throughput trials; output должен быть новым.
-go run ./experiments/runner --config /path/to/local/p14-profile.json
+& $runner @runnerBuild --config /path/to/local/p14-profile.json
 # Все pprof endpoints выключены по умолчанию; CAD_PPROF=1 включает их только для
 # loopback clients. Runner задаёт это явно лишь в profile=true experiment.
 python experiments/archive_results.py verify --manifest /path/to/p14-archive/manifest.json

@@ -14,9 +14,11 @@ import (
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/usecase"
 	telemetry "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/platform/observability"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/postgrestest"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/testutil/workerfixture"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
@@ -72,6 +74,16 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 			t.Fatal("partial fragment not accepted", receipt, err)
 		}
 	}
+	metrics := observability.New()
+	cfg := pool.Config()
+	cfg.MaxConns = 1
+	cfg.ConnConfig.Tracer = observability.QueryTracer{Metrics: metrics, SummaryOnly: true}
+	diagnosticPool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer diagnosticPool.Close()
+	sqlStore = repo.MasterStore{DB: diagnosticPool, Diagnostics: metrics}
 	// Exercise the SQL side of Kafka intake without a broker: the last fragment,
 	// all finals, join marker and result offset must share the same transaction.
 	if err := sqlStore.BindResults(ctx, r.Binding.ExecutionID, "p14-atomic", "p14-results", "p14-master", r.StartOffsets); err != nil {
@@ -86,6 +98,13 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 	}
 	if _, err := sqlStore.AcceptKafka(ctx, r.Binding.ExecutionID, "p14-results", 0, 0, &last); err == nil {
 		t.Fatal("last fragment unexpectedly survived final materialization failure")
+	}
+	measured := metrics.Snapshot()
+	if measured.Counters["master_pg_join_body_errors"] != 1 || measured.Counters["master_pg_fragment_errors"] != 1 ||
+		measured.Histograms["master_pg_fragment_accept_duration"].Count != 1 ||
+		measured.Histograms["master_pg_join_total_duration"].Count != 0 ||
+		measured.Histograms["master_pg_commit_duration"].Count != 0 {
+		t.Fatal("failed join was reported as completed or committed", measured)
 	}
 	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 0 {
 		t.Fatal("failed join advanced durable result offset", offset, err)
@@ -108,6 +127,10 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 	}
 	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 1 {
 		t.Fatal("successful join did not commit result offset", offset, err)
+	}
+	offsets, err := sqlStore.ResultOffsets(ctx, r.Binding.ExecutionID)
+	if err != nil || len(offsets) != 16 || offsets[0] != 1 {
+		t.Fatal("backlog read did not see durable positions", offsets, err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM cad_v2.master_results WHERE execution_id=$1::uuid`, r.Binding.ExecutionID).Scan(&finals); err != nil || finals != 4 {
 		t.Fatal("retry did not materialize all final groups", finals, err)
@@ -162,6 +185,45 @@ func TestDiagnosticJoinRollsBackAndCanRetry(t *testing.T) {
 		if idsBefore[i] != idsAfter[i] {
 			t.Fatal("duplicate changed final message IDs", idsBefore, idsAfter)
 		}
+	}
+	// A deferred constraint fails at COMMIT, after advancing the offset in
+	// the transaction. A recorded COMMIT attempt must not imply durability.
+	if _, err := pool.Exec(ctx, `
+CREATE FUNCTION cad_v2.fail_offset_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'injected commit failure'; END $$;
+CREATE CONSTRAINT TRIGGER fail_offset_commit AFTER UPDATE ON cad_v2.result_consumer_offsets
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION cad_v2.fail_offset_commit()
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sqlStore.AcceptKafka(ctx, r.Binding.ExecutionID, "p14-results", 0, 2, nil); err == nil {
+		t.Fatal("injected COMMIT failure was accepted")
+	}
+	if offset, err := sqlStore.ResultOffset(ctx, r.Binding.ExecutionID, 0); err != nil || offset != 2 {
+		t.Fatal("failed COMMIT advanced durable position", offset, err)
+	}
+	// Saturate only the test pool to verify that an expired acquisition is
+	// measured separately from a transaction or COMMIT attempt.
+	held, err := diagnosticPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bounded, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	_, blocked := sqlStore.AcceptKafka(bounded, r.Binding.ExecutionID, "p14-results", 0, 2, &last)
+	cancel()
+	held.Release()
+	if !errors.Is(blocked, context.DeadlineExceeded) {
+		t.Fatal("expected pool acquire timeout", blocked)
+	}
+	measured = metrics.Snapshot()
+	if measured.Counters["master_pg_join_sql_round_trips"] != 8 ||
+		measured.Histograms["master_pg_join_sql_duration"].Count != 1 ||
+		measured.Histograms["master_pg_join_build_finals_duration"].Count != 1 ||
+		measured.Histograms["master_pg_commit_duration"].Count != 3 ||
+		measured.Counters["master_pg_commit_errors"] != 1 ||
+		measured.Histograms["master_pg_pool_acquire_duration"].Count != 5 ||
+		measured.Counters["master_pg_pool_acquire_errors"] != 1 {
+		t.Fatal("wrong metrics for join, duplicate, or acquire timeout", measured)
 	}
 }
 

@@ -45,7 +45,7 @@ func (d *Dispatcher) Track(ctx context.Context, o domain.Owner) error {
 	if o.ExecutionID != d.ExecutionID {
 		return fmt.Errorf("dispatcher execution mismatch")
 	}
-	if d.AsyncSender != nil {
+	if d.AsyncSender != nil || d.Mode == "http_push" {
 		if _, err := topology.PartitionForGroup(o.GroupID); err != nil {
 			return err
 		}
@@ -59,6 +59,9 @@ func (d *Dispatcher) Track(ctx context.Context, o domain.Owner) error {
 	defer d.mu.Unlock()
 	if d.AsyncSender != nil && d.closed {
 		return fmt.Errorf("async dispatcher closed")
+	}
+	if d.Mode == "http_push" && d.closed {
+		return fmt.Errorf("HTTP dispatcher closed")
 	}
 	if d.owners == nil {
 		d.owners = map[string]domain.Owner{}
@@ -109,6 +112,9 @@ func (d *Dispatcher) Run(ctx context.Context) error {
 	}
 	if d.Sender == nil {
 		return fmt.Errorf("output sender required")
+	}
+	if d.Mode == "http_push" {
+		return d.runHTTP(ctx)
 	}
 	defer d.Close()
 	if d.Logger == nil {
