@@ -16,6 +16,8 @@ class QVBoxLayout;
 class Dashboard;
 class Diagnostics;
 class HistoryBar;
+class NodeView;
+class QPushButton;
 class SystemView;
 
 class MainWindow : public QMainWindow {
@@ -23,9 +25,16 @@ class MainWindow : public QMainWindow {
 public:
     explicit MainWindow(const ConnectionSettings &settings, const QString &summitSpeed = {},
                         QList<ReviewRun> runs = {}, QWidget *parent = nullptr);
+    void configurePhysicalArchive(const QString &assets);
 private:
     enum Section { Home, Online, Archive, Catalog, System, Settings };
     enum Page { HomePage, RunPage, ArchivePage, CatalogPage, SystemPage, SettingsPage };
+    enum Level { Overview, Group, Journal, Node };
+    struct Route {
+        int level;
+        QString group;
+        int scroll;
+    };
     struct WorkspaceContext {
         QString group;
         QDateTime at;
@@ -36,6 +45,9 @@ private:
         int criterion = 0;
         int interval = 1;
         bool following = false;
+        QString node;
+        int nodeInterval = 1;
+        QList<Route> trail;
     };
     void navigate(Section section);
     void openRun(const ReviewRun &run, Section section);
@@ -43,6 +55,10 @@ private:
     void updateConnection();
     void refresh();
     void showTab(int index);
+    void enter(int index);
+    void back();
+    void showJournal(const QString &group = {});
+    void updateRoute();
     void selectGroup(const QString &group);
     void openHistory(const QString &group, const QDateTime &from, const QDateTime &to, const QDateTime &at);
     void updateHistory();
@@ -79,10 +95,15 @@ private:
     QStackedWidget *tabs_;
     QScrollArea *body_;
     QButtonGroup *navigation_;
-    QButtonGroup *tabButtons_;
+    QPushButton *back_;
+    QPushButton *clusterCrumb_;
+    QPushButton *groupCrumb_;
+    QLabel *leafCrumb_;
+    QList<Route> trail_;
     Dashboard *dashboard_;
     Diagnostics *diagnostics_;
     Events *events_;
+    NodeView *node_;
     HistoryBar *history_;
     SystemView *system_;
     QTimer refreshTimer_;

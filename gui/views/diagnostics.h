@@ -7,6 +7,8 @@ class QComboBox;
 class QLabel;
 class QPushButton;
 class QTableView;
+class QGridLayout;
+class QResizeEvent;
 class NodeTable;
 class ScoreChart;
 
@@ -19,14 +21,20 @@ public:
     QString selectedGroup() const { return selectedGroup_; }
     int criterion() const { return criterion_; }
     int interval() const;
+    QStringList hosts() const { return hosts_; }
     void refresh(const MonitorStore &store, const QDateTime &at, const QDateTime &from, const QDateTime &to,
                  const QString &execution = {});
 
 signals:
     void selectionChanged();
     void timeSelected(const QDateTime &time);
+    void nodeSelected(const QString &node);
+    void journalSelected(const QString &group);
 
 private:
+    void resizeEvent(QResizeEvent *event) override;
+    void showTopology(const GroupTick *tick, const GroupTick *inventory);
+    void arrangeNodes();
     void displayTick(const GroupTick *tick, const QString &execution);
     void refreshChart(const MonitorStore &store, const QDateTime &at, const QDateTime &from, const QDateTime &to);
     void chooseCriterion(int index);
@@ -44,7 +52,12 @@ private:
     QTableView *table_;
     NodeTable *nodes_;
     ScoreChart *chart_;
-    QPushButton *detailToggle_;
+    QLabel *detailHeading_;
+    QLabel *topologyCaption_;
+    QGridLayout *topology_;
+    QList<QPushButton *> nodeButtons_;
+    QStringList hosts_;
+    int columns_ = 0;
     QWidget *detailBody_;
     QWidget *localBlock_;
     QList<QPushButton *> criteria_;

@@ -63,11 +63,13 @@ GroupTick GroupTick::parse(const QJsonObject &object)
         const auto criterion = raw.value(key).toObject();
         QJsonObject compact{{"state", criterion.value("state")}, {"reason", criterion.value("reason")},
                             {"score", criterion.value("score")}, {"threshold", criterion.value("threshold")}};
-        if (key == "r" && criterion.value("defining_pair").isArray()) {
-            QJsonArray pair;
-            for (const auto &witness : criterion.value("defining_pair").toArray())
-                pair.append(QJsonObject{{"hostname", witness.toObject().value("hostname")}});
-            if (!pair.isEmpty()) compact.insert("defining_pair", pair);
+        if (key == "r") {
+            for (const auto &field : {QStringLiteral("defining_pair"), QStringLiteral("witnesses")}) {
+                QJsonArray hosts;
+                for (const auto &witness : criterion.value(field).toArray())
+                    hosts.append(QJsonObject{{"hostname", witness.toObject().value("hostname")}});
+                if (!hosts.isEmpty()) compact.insert(field, hosts);
+            }
         }
         raw.insert(key, compact);
     }

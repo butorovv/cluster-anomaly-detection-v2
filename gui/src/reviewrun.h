@@ -15,6 +15,7 @@ struct ReviewRun {
     QString duration;
     bool verified = false;
     bool onlineSimulation = false;
+    bool summitSource = false;
     bool online() const { return onlineSimulation; }
     QString period() const;
 };

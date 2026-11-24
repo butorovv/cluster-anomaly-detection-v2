@@ -54,6 +54,12 @@ QString v2::style()
         QPushButton#criterion:checked { background:#edf3fc; border-color:#85a7e2; }
         QPushButton#groupButton { padding:0; }
         QPushButton#groupButton[anomaly="true"] { background:#fff0f1; border-color:#efc4ca; }
+        QPushButton#nodeTile { font-size:12px; font-weight:bold; padding:3px 7px; }
+        QPushButton#nodeTile[witness="true"] { color:#c43648; background:#fff0f1; border-color:#efc4ca; }
+        QPushButton#routeBack { min-width:35px; max-width:35px; padding:0; font-size:18px; color:#295ec5; }
+        QPushButton#routeLink { color:#295ec5; background:transparent; border-color:transparent; padding:0 3px; }
+        QPushButton#routeLink:disabled, QLabel#routeLeaf { color:#192b40; font-weight:bold; }
+        QPushButton#routeLink:focus { border-color:#85a7e2; }
         QPushButton#disclosure { text-align:left; font-weight:bold; background:transparent; border-color:transparent; padding:4px 0; }
         QPushButton#disclosure:focus, QPushButton#disclosure:hover { border-color:#85a7e2; }
         QPushButton#technicalDisclosure { text-align:left; font-weight:bold; }

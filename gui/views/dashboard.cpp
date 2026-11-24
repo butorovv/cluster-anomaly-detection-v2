@@ -4,7 +4,9 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QHBoxLayout>
-#include <QListWidget>
+#include <QTableView>
+#include <QHeaderView>
+#include "models/eventtable.h"
 #include <QPushButton>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -54,28 +56,37 @@ Dashboard::Dashboard(QWidget *parent) : QWidget(parent)
     layout->addLayout(grid_);
     layout->addSpacing(16);
     auto *header = new QHBoxLayout;
-    recentTitle_ = sectionLabel({});
-    header->addWidget(recentTitle_);
+    header->addWidget(sectionLabel(tr("Последние завершённые события")));
     header->addStretch();
-    auto *journal = new QPushButton(tr("Журнал аномалий ›"));
-    journal->setObjectName("link");
-    header->addWidget(journal);
+    journal_ = new QPushButton(tr("Все события (0) ›"));
+    journal_->setObjectName("link");
+    journal_->setAccessibleName(tr("Все события"));
+    header->addWidget(journal_);
     layout->addLayout(header);
-    recent_ = new QListWidget;
-    recent_->setAccessibleName(tr("Аномальные состояния"));
-    recent_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    layout->addWidget(recent_);
+
+    auto *table = new QTableView;
+    table->setAccessibleName(tr("Последние завершённые события"));
+    table->setObjectName("journalTable");
+    recent_ = new EventTable(this);
+    table->setModel(recent_);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setShowGrid(false);
+    table->verticalHeader()->hide();
+    table->verticalHeader()->setDefaultSectionSize(42);
+    table->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
+    table->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    table->setFixedHeight(250);
+    layout->addWidget(table);
     layout->addStretch();
-    connect(journal, &QPushButton::clicked, this, &Dashboard::journalSelected);
-    const auto open = [this](QListWidgetItem *item) {
-        const auto at = item->data(Qt::UserRole + 1).toDateTime();
-        if (!at.isValid()) return;
-        const auto group = item->data(Qt::UserRole).toString();
-        if (historical_) emit groupSelected(group);
-        else emit historySelected(group, at);
+
+    connect(journal_, &QPushButton::clicked, this, &Dashboard::journalSelected);
+    const auto open = [this](const QModelIndex &index) {
+        if (const auto *event = recent_->at(index.row()))
+            emit eventSelected(event->group, event->detected, event->closed);
     };
-    connect(recent_, &QListWidget::itemClicked, this, open);
-    connect(recent_, &QListWidget::itemActivated, this, open);
+    connect(table, &QTableView::clicked, this, open);
+    connect(table, &QTableView::activated, this, open);
 }
 
 void Dashboard::rebuildCards(const QStringList &groups)
@@ -115,10 +126,8 @@ void Dashboard::rebuildCards(const QStringList &groups)
     }
 }
 
-void Dashboard::refresh(const MonitorStore &store, const QDateTime &at, bool historical)
+void Dashboard::refresh(const MonitorStore &store, const QDateTime &at)
 {
-    historical_ = historical;
-    recentTitle_->setText(historical ? tr("Аномалии в выбранный момент") : tr("Последние аномальные состояния"));
     const auto groups = store.groups();
     if (cards_.keys() != groups) rebuildCards(groups);
     std::array<int, 4> totals{};
@@ -150,54 +159,9 @@ void Dashboard::refresh(const MonitorStore &store, const QDateTime &at, bool his
     for (size_t i = 0; i < totals.size(); ++i)
         counts_[i + 1]->setText(groups.isEmpty() ? QStringLiteral("—") : QString::number(totals[i]));
 
-    QList<const GroupTick *> latest;
-    for (const auto *tick : store.recentAnomalies(at, historical ? qMax(1, int(groups.size())) : 5))
-        if (!historical || tick->time == at) latest << tick;
-    QStringList desired;
-    for (const auto *tick : latest)
-        desired << QString("%1    %2 UTC · %3").arg(tick->group, tick->time.toString("HH:mm:ss"),
-                                                   listText(tick->temporal.value("active_votes")).replace(", ", " · "));
-    if (desired.isEmpty()) desired << (at.isValid() ? tr("В доступных данных нет аномалий для этого просмотра.")
-                                                    : tr("Результаты для просмотра пока недоступны."));
-    QStringList shown;
-    for (int i = 0; i < recent_->count(); ++i)
-        shown << recent_->item(i)->data(Qt::AccessibleTextRole).toString();
-    if (shown == desired) return;
-    recent_->clear();
-    for (qsizetype i = 0; i < desired.size(); ++i) {
-        auto *row = new QListWidgetItem(recent_);
-        row->setData(Qt::AccessibleTextRole, desired[i]);
-        row->setSizeHint(QSize(0, latest.isEmpty() ? 54 : 62));
-        if (i < latest.size()) {
-            const auto *tick = latest[i];
-            row->setData(Qt::UserRole, tick->group);
-            row->setData(Qt::UserRole + 1, tick->time);
-            auto *content = new QWidget;
-            content->setAttribute(Qt::WA_TransparentForMouseEvents);
-            auto *line = new QHBoxLayout(content);
-            line->setContentsMargins(15, 7, 15, 7);
-            line->setSpacing(10);
-            auto *dot = new QLabel;
-            dot->setFixedSize(9, 9);
-            dot->setStyleSheet("background:#c43648; border-radius:4px");
-            line->addWidget(dot);
-            auto *identity = new QVBoxLayout;
-            identity->setSpacing(1);
-            auto *name = new QLabel(tick->group);
-            name->setStyleSheet("font-weight:bold");
-            identity->addWidget(name);
-            identity->addWidget(small(QString("%1 UTC · %2").arg(tick->time.toString("HH:mm:ss"),
-                listText(tick->temporal.value("active_votes")).replace(", ", " · "))));
-            line->addLayout(identity);
-            line->addStretch();
-            auto *more = small(tr("Подробнее ›"));
-            more->setStyleSheet("color:#295ec5; font-weight:bold");
-            line->addWidget(more);
-            recent_->setItemWidget(row, content);
-        } else {
-            row->setText(desired[i]);
-            row->setFlags(Qt::NoItemFlags);
-        }
-    }
-    recent_->setFixedHeight((latest.isEmpty() ? 54 : 62) * desired.size() + 2);
+    if (eventCount_ == store.events().size() && eventStore_ == &store) return;
+    eventStore_ = &store;
+    eventCount_ = store.events().size();
+    recent_->replace(store.events(), {}, {}, {}, {}, 5);
+    journal_->setText(tr("Все события (%1) ›").arg(eventCount_));
 }

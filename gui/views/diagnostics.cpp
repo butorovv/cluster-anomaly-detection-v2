@@ -6,9 +6,12 @@
 #include <QButtonGroup>
 #include <QComboBox>
 #include <QFrame>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QStyle>
 #include <QTableView>
 #include <QVBoxLayout>
 
@@ -84,6 +87,10 @@ Diagnostics::Diagnostics(QWidget *parent) : QWidget(parent)
     groups_->setAccessibleName(tr("Группа"));
     groups_->setFixedWidth(92);
     line->addWidget(groups_);
+    auto *journal = new QPushButton(tr("События группы ›"));
+    journal->setObjectName("link");
+    line->addWidget(journal);
+    connect(journal, &QPushButton::clicked, this, [this] { emit journalSelected(selectedGroup_); });
     layout->addWidget(header);
 
     auto *cards = new QHBoxLayout;
@@ -111,6 +118,17 @@ Diagnostics::Diagnostics(QWidget *parent) : QWidget(parent)
     }
     criteria_.first()->setChecked(true);
     layout->addLayout(cards);
+
+    auto *topologyPanel = card();
+    auto *topologyLayout = new QVBoxLayout(topologyPanel);
+    topologyLayout->setContentsMargins(16, 12, 16, 12);
+    topologyLayout->addWidget(sectionLabel(tr("Вычислительные узлы")));
+    topologyCaption_ = caption();
+    topologyLayout->addWidget(topologyCaption_);
+    topology_ = new QGridLayout;
+    topology_->setSpacing(7);
+    topologyLayout->addLayout(topology_);
+    layout->addWidget(topologyPanel);
 
     auto *chartPanel = card();
     auto *chartLayout = new QVBoxLayout(chartPanel);
@@ -154,9 +172,16 @@ Diagnostics::Diagnostics(QWidget *parent) : QWidget(parent)
     table_->setSelectionBehavior(QAbstractItemView::SelectRows);
     local->addWidget(table_);
     outside_ = plainLabel();
-    local->addWidget(disclosure(tr("Межгрупповые показатели и полнота"), outside_));
+    local->addWidget(sectionLabel(tr("Межгрупповые показатели и полнота")));
+    local->addWidget(outside_);
     detailLayout->addWidget(localBlock_);
-    layout->addWidget(disclosure({}, detailBody_, &detailToggle_));
+    auto *mainDetails = card();
+    auto *mainDetailLayout = new QVBoxLayout(mainDetails);
+    mainDetailLayout->setContentsMargins(16, 12, 16, 12);
+    detailHeading_ = sectionLabel({});
+    mainDetailLayout->addWidget(detailHeading_);
+    mainDetailLayout->addWidget(detailBody_);
+    layout->addWidget(mainDetails);
     evidence_ = plainLabel();
     evidence_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     layout->addWidget(disclosure(tr("Технические подробности и свидетельства"), evidence_));
@@ -193,13 +218,11 @@ int Diagnostics::interval() const { return interval_->currentIndex(); }
 
 void Diagnostics::chooseCriterion(int index)
 {
-    const bool changed = criterion_ != index;
     criterion_ = index;
     criteria_[index]->setChecked(true);
     chartTitle_->setText(tr("Динамика критерия %1").arg(names[index]));
-    detailToggle_->setText(tr("Подробные показатели критерия %1   ›").arg(names[index]));
+    detailHeading_->setText(tr("Подробные показатели критерия %1").arg(names[index]));
     localBlock_->setVisible(index == 2);
-    if (changed) detailToggle_->setChecked(index == 2);
 }
 
 void Diagnostics::refresh(const MonitorStore &store, const QDateTime &at, const QDateTime &from, const QDateTime &to,
@@ -215,8 +238,88 @@ void Diagnostics::refresh(const MonitorStore &store, const QDateTime &at, const 
         if (!desired.isEmpty() && !desired.contains(selectedGroup_)) selectedGroup_ = desired.first();
         groups_->setCurrentIndex(groups_->findText(selectedGroup_));
     }
-    displayTick(store.tickAt(selectedGroup_, at), execution);
+    const auto *tick = store.tickAt(selectedGroup_, at);
+    const auto &timeline = store.timeline(selectedGroup_);
+    displayTick(tick, execution);
+    showTopology(tick, timeline.isEmpty() ? nullptr : &timeline.last());
     refreshChart(store, at, from, to);
+}
+
+void Diagnostics::resizeEvent(QResizeEvent *event)
+{
+    QWidget::resizeEvent(event);
+    arrangeNodes();
+}
+
+void Diagnostics::arrangeNodes()
+{
+    const int columns = width() >= 1070 ? 9 : 6;
+    if (columns == columns_) return;
+    columns_ = columns;
+    for (int i = 0; i < 9; ++i) topology_->setColumnStretch(i, int(i < columns));
+    for (int i = 0; i < nodeButtons_.size(); ++i) {
+        topology_->removeWidget(nodeButtons_[i]);
+        topology_->addWidget(nodeButtons_[i], i / columns, i % columns);
+    }
+}
+
+void Diagnostics::showTopology(const GroupTick *tick, const GroupTick *inventory)
+{
+    QSet<QString> ids, r, local;
+    if (inventory) {
+        for (const auto &row : inventory->raw.value("local").toArray())
+            ids.insert(row.toObject().value("hostname").toString());
+        for (const auto &host : inventory->raw.value("missing_hosts").toArray()) ids.insert(host.toString());
+        ids.remove(QString{});
+    }
+    if (tick) {
+        const auto raw = tick->raw.value("r").toObject();
+        if (readState(raw.value("state")) == GroupState::Positive) {
+            for (const auto &key : {QStringLiteral("defining_pair"), QStringLiteral("witnesses")})
+                for (const auto &host : raw.value(key).toArray()) r.insert(host.toObject().value("hostname").toString());
+        }
+        for (const auto &row : tick->raw.value("local").toArray()) {
+            const auto result = row.toObject();
+            if (result.value("is_available").toBool() && result.value("is_anomaly").toBool())
+                local.insert(result.value("hostname").toString());
+        }
+    }
+    QStringList next = ids.values();
+    next.sort();
+    if (next != hosts_) {
+        qDeleteAll(nodeButtons_);
+        nodeButtons_.clear();
+        hosts_ = next;
+        for (const auto &host : hosts_) {
+            auto *tile = new QPushButton;
+            tile->setObjectName("nodeTile");
+            tile->setFixedHeight(45);
+            tile->setAccessibleName(host);
+            tile->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+            nodeButtons_ << tile;
+            connect(tile, &QPushButton::clicked, this, [this, host] { emit nodeSelected(host); });
+        }
+        columns_ = 0;
+        arrangeNodes();
+    }
+    topologyCaption_->setText(hosts_.isEmpty() ? tr("Состав группы пока недоступен")
+        : criterion_ == 1 ? tr("%1 узлов · локализация критерия B недоступна").arg(hosts_.size())
+        : tr("%1 узлов · %2").arg(hosts_.size()).arg(criterion_ == 2 ? tr("IF · локальное свидетельство")
+                                                                    : tr("R · определяющая пара и свидетели")));
+    for (int i = 0; i < nodeButtons_.size(); ++i) {
+        const auto &host = hosts_[i];
+        const bool hasR = r.contains(host), hasIf = local.contains(host);
+        auto *tile = nodeButtons_[i];
+        QStringList tags;
+        if (hasR) tags << "R";
+        if (hasIf) tags << "IF";
+        tile->setText(tags.isEmpty() ? host : host + QStringLiteral("\n") + tags.join(" · "));
+        const bool active = (criterion_ == 0 && hasR) || (criterion_ == 2 && hasIf);
+        if (tile->property("witness").toBool() != active) {
+            tile->setProperty("witness", active);
+            tile->style()->polish(tile);
+        }
+    }
 }
 
 void Diagnostics::displayTick(const GroupTick *tick, const QString &execution)

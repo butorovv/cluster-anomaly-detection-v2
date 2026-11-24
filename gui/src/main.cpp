@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
         {{"m", "master"}, QStringLiteral("Адрес Master API"), "url"},
         {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"},
         {"review-root", QStringLiteral("Метаданные сохранённых запусков для визуальной приёмки"), "path"},
+        {"summit-assets", QStringLiteral("Каталог проверенного архива Summit"), "path"},
         {"summit-speed", QStringLiteral("Заявленный темп исторического Summit Replayer (1, 5, 10, 0=MAX)"), "speed"}
     });
     parser.process(app);
@@ -40,6 +41,7 @@ int main(int argc, char *argv[])
         return 2;
     }
     MainWindow window(connection, speed, readReviewRuns(parser.value("review-root"), connection.intervalMs));
+    window.configurePhysicalArchive(parser.value("summit-assets"));
     window.show();
     return app.exec();
 }

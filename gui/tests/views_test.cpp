@@ -73,19 +73,18 @@ private slots:
         auto *workspace = window.findChild<QStackedWidget *>("workspaceTabs");
         QVERIFY(stack && workspace);
         QCOMPARE(stack->count(), 6);
-        QCOMPARE(workspace->count(), 3);
+        QCOMPARE(workspace->count(), 4);
         QCOMPARE(stack->currentIndex(), 0);
         for (auto *button : window.findChildren<QPushButton *>("navButton"))
             if (button->text() == QStringLiteral("Онлайн-мониторинг")) button->click();
         QCOMPARE(stack->currentIndex(), 1);
         QVERIFY(hasLabel(window, QStringLiteral("MAX")));
-        for (auto *button : window.findChildren<QPushButton *>()) {
-            if (button->text() == QStringLiteral("Журнал аномалий")) {
-                button->click();
-                break;
-            }
-        }
+        auto *dashboard = window.findChild<Dashboard *>();
+        QVERIFY(dashboard);
+        emit dashboard->journalSelected();
         QCOMPARE(workspace->currentIndex(), 2);
+        findButton(window, QStringLiteral("←"), "routeBack")->click();
+        QCOMPARE(workspace->currentIndex(), 0);
     }
 
     void fixedWorkspaceAndRunContext()
@@ -109,7 +108,7 @@ private slots:
         QVERIFY(open);
         open->click();
         auto *time = window.findChild<QWidget *>("workspaceTime");
-        auto *tabBar = window.findChild<QWidget *>("tabs");
+        auto *tabBar = window.findChild<QWidget *>("workspaceRoute");
         auto *body = window.findChild<QScrollArea *>("workspaceBody");
         auto *timeline = window.findChild<HistoryBar *>();
         auto *diagnostics = window.findChild<Diagnostics *>();
@@ -125,15 +124,20 @@ private slots:
         timeline->selectTime(readTime(last));
         diagnostics->selectGroup("a14");
         diagnostics->setOptions(2, 2);
-        for (const auto &tab : {QStringLiteral("Диагностика группы"), QStringLiteral("Журнал аномалий"),
-                                QStringLiteral("Обзор кластера")}) {
-            auto *target = findButton(window, tab, "tab");
-            QVERIFY(target);
-            target->click();
+        const auto checkGeometry = [&] {
             QCoreApplication::processEvents();
             QCOMPARE(frame(), before);
             QCOMPARE(timeline->at(), readTime(last));
-        }
+        };
+        emit window.findChild<Dashboard *>()->groupSelected("a14");
+        checkGeometry();
+        emit diagnostics->nodeSelected("a14n04");
+        checkGeometry();
+        findButton(window, QStringLiteral("←"), "routeBack")->click();
+        emit diagnostics->journalSelected("a14");
+        checkGeometry();
+        findButton(window, QStringLiteral("←"), "routeBack")->click();
+        checkGeometry();
         auto *live = findButton(window, QStringLiteral("Онлайн-мониторинг"), "navButton");
         QVERIFY(live);
         live->click();

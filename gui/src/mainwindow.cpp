@@ -4,6 +4,7 @@
 #include "views/diagnostics.h"
 #include "views/events.h"
 #include "views/historybar.h"
+#include "views/nodeview.h"
 #include "views/settings.h"
 #include "views/system.h"
 #include "views/viewhelpers.h"
@@ -98,7 +99,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     attached_.speed = summitSpeed;
     attached_.name = tr("Подключённый запуск");
     current_ = attached_;
-    setWindowTitle(tr("Cluster Monitor · V2"));
+    setWindowTitle(tr("Cluster Monitor · V3.2"));
     resize(1280, 900);
     setMinimumSize(1040, 690);
 
@@ -393,28 +394,33 @@ QWidget *MainWindow::buildWorkspace()
     layout->addWidget(runFacts_);
     layout->addSpacing(9);
 
-    auto *bar = new QFrame;
-    bar->setObjectName("tabs");
+    auto *bar = new QWidget;
+    bar->setObjectName("workspaceRoute");
+    bar->setFixedHeight(43);
     auto *navigation = new QHBoxLayout(bar);
-    navigation->setContentsMargins(4, 4, 4, 4);
-    navigation->setSpacing(4);
-    tabButtons_ = new QButtonGroup(this);
+    navigation->setContentsMargins(0, 0, 0, 0);
+    navigation->setSpacing(9);
+    back_ = button(QStringLiteral("←"), "routeBack");
+    back_->setAccessibleName(tr("Назад"));
+    back_->setToolTip(tr("Назад"));
+    navigation->addWidget(back_);
+    clusterCrumb_ = button(tr("Обзор кластера"), "routeLink");
+    navigation->addWidget(clusterCrumb_);
+    groupCrumb_ = button({}, "routeLink");
+    navigation->addWidget(groupCrumb_);
+    leafCrumb_ = label({}, "routeLeaf");
+    navigation->addWidget(leafCrumb_);
+    navigation->addStretch();
     tabs_ = new WorkspaceStack;
     tabs_->setObjectName("workspaceTabs");
     dashboard_ = new Dashboard;
     diagnostics_ = new Diagnostics;
     events_ = new Events;
-    const QList<QWidget *> views{dashboard_, diagnostics_, events_};
-    const QStringList names{tr("Обзор кластера"), tr("Диагностика группы"), tr("Журнал аномалий")};
-    for (int i = 0; i < views.size(); ++i) {
-        auto *item = button(names[i], "tab");
-        item->setCheckable(true);
-        item->setFixedHeight(35);
-        tabButtons_->addButton(item, i);
-        navigation->addWidget(item, 1);
-        tabs_->addWidget(views[i]);
-    }
-    tabButtons_->button(0)->setChecked(true);
+    node_ = new NodeView;
+    tabs_->addWidget(dashboard_);
+    tabs_->addWidget(diagnostics_);
+    tabs_->addWidget(events_);
+    tabs_->addWidget(node_);
     layout->addWidget(bar);
     layout->addSpacing(10);
     auto *time = panel();
@@ -435,7 +441,9 @@ QWidget *MainWindow::buildWorkspace()
     body_->setWidget(tabs_);
     body_->viewport()->setObjectName("workspaceViewport");
     layout->addWidget(body_, 1);
-    connect(tabButtons_, &QButtonGroup::idClicked, this, &MainWindow::showTab);
+    connect(back_, &QPushButton::clicked, this, &MainWindow::back);
+    connect(clusterCrumb_, &QPushButton::clicked, this, [this] { trail_.clear(); showTab(Overview); });
+    connect(groupCrumb_, &QPushButton::clicked, this, &MainWindow::back);
     connect(history_, &HistoryBar::changed, this, &MainWindow::refresh);
     connect(history_, &HistoryBar::followRequested, this, [this](bool following) {
         following_ = following;
@@ -445,14 +453,19 @@ QWidget *MainWindow::buildWorkspace()
         refresh();
     });
     connect(dashboard_, &Dashboard::groupSelected, this, &MainWindow::selectGroup);
-    connect(dashboard_, &Dashboard::historySelected, this, [this](const QString &group, const QDateTime &at) {
-        openHistory(group, {}, {}, at);
-    });
-    connect(events_, &Events::eventSelected, this, [this](const QString &group, const QDateTime &from, const QDateTime &to) {
+    const auto openEvent = [this](const QString &group, const QDateTime &from, const QDateTime &to) {
         diagnostics_->setOptions(diagnostics_->criterion(), 0);
         openHistory(group, from, to, from);
+    };
+    connect(dashboard_, &Dashboard::eventSelected, this, openEvent);
+    connect(events_, &Events::eventSelected, this, openEvent);
+    connect(dashboard_, &Dashboard::journalSelected, this, [this] { showJournal(); });
+    connect(diagnostics_, &Diagnostics::journalSelected, this, &MainWindow::showJournal);
+    connect(diagnostics_, &Diagnostics::nodeSelected, this, [this](const QString &node) {
+        node_->selectNode(node);
+        enter(Node);
     });
-    connect(dashboard_, &Dashboard::journalSelected, this, [this] { showTab(2); });
+    connect(node_, &NodeView::contextChanged, this, &MainWindow::refresh);
     connect(diagnostics_, &Diagnostics::timeSelected, this, [this](const QDateTime &at) {
         if (!following_) history_->selectTime(at);
         else openHistory({}, {}, {}, at);
@@ -460,6 +473,11 @@ QWidget *MainWindow::buildWorkspace()
     connect(diagnostics_, &Diagnostics::selectionChanged, this, &MainWindow::refresh);
     connect(events_, &Events::filterChanged, this, &MainWindow::refresh);
     return page;
+}
+
+void MainWindow::configurePhysicalArchive(const QString &assets)
+{
+    node_->configure(assets);
 }
 
 void MainWindow::navigate(Section section)
@@ -516,6 +534,10 @@ void MainWindow::openRun(const ReviewRun &run, Section section)
         diagnostics_->selectGroup(state.group);
         diagnostics_->setOptions(state.criterion, state.interval);
         events_->restore(state.events);
+        dashboard_->resetEvents();
+        node_->selectNode(state.node);
+        node_->setInterval(state.nodeInterval);
+        trail_ = state.trail;
         showTab(state.tab);
     }
     auto settings = run.connection;
@@ -529,17 +551,56 @@ MainWindow::WorkspaceContext MainWindow::workspaceContext() const
 {
     return {diagnostics_->selectedGroup(), history_->at(), history_->from(), history_->to(),
             events_->context(), tabs_->currentIndex(), diagnostics_->criterion(),
-            diagnostics_->interval(), following_};
+            diagnostics_->interval(), following_, node_->node(), node_->interval(), trail_};
 }
 
 void MainWindow::showTab(int index)
 {
-    tabButtons_->button(index)->setChecked(true);
     const bool changed = tabs_->currentIndex() != index;
     tabs_->setCurrentIndex(index);
     tabs_->updateGeometry();
     if (changed) body_->verticalScrollBar()->setValue(0);
     refresh();
+}
+
+void MainWindow::enter(int index)
+{
+    if (tabs_->currentIndex() != index)
+        trail_.append({tabs_->currentIndex(), diagnostics_->selectedGroup(), body_->verticalScrollBar()->value()});
+    showTab(index);
+}
+
+void MainWindow::back()
+{
+    if (trail_.isEmpty()) { showTab(Overview); return; }
+    const auto route = trail_.takeLast();
+    if (route.level == Group && tabs_->currentIndex() == Journal)
+        diagnostics_->selectGroup(route.group);
+    showTab(route.level);
+    body_->verticalScrollBar()->setValue(route.scroll);
+}
+
+void MainWindow::showJournal(const QString &group)
+{
+    auto state = events_->context();
+    if (!group.isEmpty() && state.group != group) {
+        state.group = group;
+        state.event.clear();
+        events_->restore(state);
+    }
+    enter(Journal);
+}
+
+void MainWindow::updateRoute()
+{
+    const int level = tabs_->currentIndex();
+    back_->setVisible(level != Overview);
+    clusterCrumb_->setEnabled(level != Overview);
+    groupCrumb_->setVisible(level == Group || level == Node);
+    groupCrumb_->setEnabled(level == Node);
+    groupCrumb_->setText(tr("›  Группа %1").arg(diagnostics_->selectedGroup()));
+    leafCrumb_->setText(level == Journal ? tr("›  Журнал аномалий")
+                      : level == Node ? tr("›  Узел %1").arg(node_->node()) : QString{});
 }
 
 void MainWindow::refresh()
@@ -570,8 +631,8 @@ void MainWindow::refresh()
     runFacts_->setText(facts.join(" · "));
     updateHistory();
     const auto at = following_ ? store.latestTime() : history_->at();
-    if (tabs_->currentIndex() == 0) dashboard_->refresh(store, at, !following_);
-    else if (tabs_->currentIndex() == 1) {
+    if (tabs_->currentIndex() == Overview) dashboard_->refresh(store, at);
+    else if (tabs_->currentIndex() == Group || tabs_->currentIndex() == Node) {
         const int interval = diagnostics_->interval();
         const int seconds = interval == 2 ? 300 : 60;
         const bool eventWindow = interval == 0 && history_->from().isValid() && history_->to().isValid();
@@ -579,6 +640,8 @@ void MainWindow::refresh()
         const auto to = eventWindow ? history_->to()
             : following_ ? at : qMin(store.latestTime(), at.addSecs(seconds));
         diagnostics_->refresh(store, at, from, to, current_.connection.execution);
+        if (tabs_->currentIndex() == Node)
+            node_->refresh(diagnostics_->hosts(), current_.start, at, current_.summitSource);
     } else {
         const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
         const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
@@ -587,6 +650,7 @@ void MainWindow::refresh()
                          end.isValid() && processedEnd.isValid() ? qMin(end, processedEnd) : processedEnd,
                          poller_.synchronized());
     }
+    updateRoute();
 }
 
 void MainWindow::updateHistory()
@@ -615,8 +679,10 @@ void MainWindow::restoreTimeline()
 
 void MainWindow::selectGroup(const QString &group)
 {
+    if (tabs_->currentIndex() != Group)
+        trail_.append({tabs_->currentIndex(), diagnostics_->selectedGroup(), body_->verticalScrollBar()->value()});
     diagnostics_->selectGroup(group);
-    showTab(1);
+    showTab(Group);
 }
 
 void MainWindow::openHistory(const QString &group, const QDateTime &from, const QDateTime &to, const QDateTime &at)

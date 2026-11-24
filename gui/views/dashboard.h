@@ -5,18 +5,20 @@
 
 class QGridLayout;
 class QLabel;
-class QListWidget;
+class EventTable;
+class QTableView;
 class QPushButton;
 
 class Dashboard final : public QWidget {
     Q_OBJECT
 public:
     explicit Dashboard(QWidget *parent = nullptr);
-    void refresh(const MonitorStore &store, const QDateTime &at, bool historical = false);
+    void refresh(const MonitorStore &store, const QDateTime &at);
+    void resetEvents() { eventCount_ = -1; }
 
 signals:
     void groupSelected(const QString &group);
-    void historySelected(const QString &group, const QDateTime &at);
+    void eventSelected(const QString &group, const QDateTime &at, const QDateTime &end);
     void journalSelected();
 
 private:
@@ -30,7 +32,8 @@ private:
     QGridLayout *grid_;
     QMap<QString, GroupCard> cards_;
     QList<QLabel *> counts_;
-    QListWidget *recent_;
-    QLabel *recentTitle_;
-    bool historical_ = false;
+    EventTable *recent_;
+    QPushButton *journal_;
+    qsizetype eventCount_ = -1;
+    const MonitorStore *eventStore_ = nullptr;
 };

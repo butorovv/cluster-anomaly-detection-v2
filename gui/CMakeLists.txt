@@ -26,6 +26,7 @@ qt_add_library(cluster_ui STATIC
     views/dashboard.cpp
     views/diagnostics.cpp
     views/events.cpp
+    views/nodeview.cpp
     views/historybar.cpp
     views/system.cpp
     models/nodetable.cpp
