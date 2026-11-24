@@ -39,6 +39,7 @@ QList<ReviewRun> readReviewRuns(const QString &root, int pollInterval)
         if (!MasterClient::validUrl(run.connection.masterUrl) || !MasterClient::validExecution(run.connection.execution))
             continue;
         run.speed = data.value("speed").toString();
+        run.onlineSimulation = name == "smoke-live";
         run.name = run.online() ? QStringLiteral("Summit — проверка онлайн-мониторинга") : QStringLiteral("Summit D2 — полный анализ");
         run.shortName = run.online() ? QStringLiteral("Summit · LIVE тест") : QStringLiteral("Summit D2 · MAX");
         run.start = readTime(data.value("start"));

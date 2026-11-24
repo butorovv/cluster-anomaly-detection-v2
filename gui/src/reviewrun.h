@@ -14,7 +14,8 @@ struct ReviewRun {
     QString ticks;
     QString duration;
     bool verified = false;
-    bool online() const { return speed == "1"; }
+    bool onlineSimulation = false;
+    bool online() const { return onlineSimulation; }
     QString period() const;
 };
 

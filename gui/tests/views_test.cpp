@@ -1,6 +1,7 @@
 #include "models/eventtable.h"
 #include "models/nodetable.h"
 #include "src/mainwindow.h"
+#include "src/style.h"
 #include "views/dashboard.h"
 #include "views/diagnostics.h"
 #include "views/historybar.h"
@@ -8,7 +9,10 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QStackedWidget>
+#include <QStyleFactory>
+#include <QTableView>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -38,12 +42,25 @@ bool hasLabel(const QWidget &widget, const QString &text)
     const auto labels = widget.findChildren<QLabel *>();
     return std::any_of(labels.begin(), labels.end(), [&text](auto *label) { return label->text().contains(text); });
 }
+
+QPushButton *findButton(const QWidget &widget, const QString &text, const QString &role = {})
+{
+    for (auto *button : widget.findChildren<QPushButton *>())
+        if (button->text() == text && (role.isEmpty() || button->objectName() == role)) return button;
+    return nullptr;
+}
 }
 
 class ViewsTest final : public QObject {
     Q_OBJECT
 
 private slots:
+    void initTestCase()
+    {
+        QApplication::setStyle(QStyleFactory::create("Fusion"));
+        qApp->setStyleSheet(v2::style());
+    }
+
     void viewNavigationAndModeLabel()
     {
         QTemporaryDir profile;
@@ -71,6 +88,68 @@ private slots:
         QCOMPARE(workspace->currentIndex(), 2);
     }
 
+    void fixedWorkspaceAndRunContext()
+    {
+        ReviewRun archive;
+        archive.connection = {QUrl("http://127.0.0.1:1"), execution, 1000};
+        archive.name = archive.shortName = "Archive";
+        archive.speed = "0";
+        archive.start = readTime(first);
+        archive.end = archive.start.addSecs(60);
+        archive.verified = true;
+        ReviewRun online = archive;
+        online.connection.execution = "22222222-2222-4222-8222-222222222222";
+        online.speed = "1";
+        online.onlineSimulation = true;
+        MainWindow window(archive.connection, {}, {archive, online});
+        window.show();
+        auto *pages = window.findChild<QStackedWidget *>("mainPages");
+        QVERIFY(pages);
+        auto *open = findButton(*pages->currentWidget(), QStringLiteral("Открыть ›"));
+        QVERIFY(open);
+        open->click();
+        auto *time = window.findChild<QWidget *>("workspaceTime");
+        auto *tabBar = window.findChild<QWidget *>("tabs");
+        auto *body = window.findChild<QScrollArea *>("workspaceBody");
+        auto *timeline = window.findChild<HistoryBar *>();
+        auto *diagnostics = window.findChild<Diagnostics *>();
+        QVERIFY(time && tabBar && body && timeline && diagnostics);
+        QCoreApplication::processEvents();
+        const auto frame = [&window, time, tabBar, body] {
+            QList<QRect> bounds;
+            for (auto *widget : {time, tabBar, static_cast<QWidget *>(body)})
+                bounds << QRect(widget->mapTo(&window, QPoint{}), widget->size());
+            return bounds;
+        };
+        const auto before = frame();
+        timeline->selectTime(readTime(last));
+        diagnostics->selectGroup("a14");
+        diagnostics->setOptions(2, 2);
+        for (const auto &tab : {QStringLiteral("Диагностика группы"), QStringLiteral("Журнал аномалий"),
+                                QStringLiteral("Обзор кластера")}) {
+            auto *target = findButton(window, tab, "tab");
+            QVERIFY(target);
+            target->click();
+            QCoreApplication::processEvents();
+            QCOMPARE(frame(), before);
+            QCOMPARE(timeline->at(), readTime(last));
+        }
+        auto *live = findButton(window, QStringLiteral("Онлайн-мониторинг"), "navButton");
+        QVERIFY(live);
+        live->click();
+        QVERIFY(findButton(window, QStringLiteral("Выбрать время"), "soft")->isVisible());
+        findButton(window, QStringLiteral("Выбрать время"), "soft")->click();
+        QVERIFY(findButton(window, QStringLiteral("К текущему"), "soft")->isVisible());
+        findButton(window, QStringLiteral("К текущему"), "soft")->click();
+        QVERIFY(findButton(window, QStringLiteral("Выбрать время"), "soft")->isVisible());
+        findButton(window, QStringLiteral("Главная"), "navButton")->click();
+        open->click();
+        QCOMPARE(timeline->at(), readTime(last));
+        QCOMPARE(diagnostics->selectedGroup(), QString("a14"));
+        QCOMPARE(diagnostics->criterion(), 2);
+        QCOMPARE(diagnostics->interval(), 2);
+    }
+
     void separatesCriteriaAndNodeAbsence()
     {
         MonitorStore store;
@@ -80,7 +159,7 @@ private slots:
         Dashboard dashboard;
         dashboard.refresh(store, at);
         QStringList cards;
-        for (const auto *button : dashboard.findChildren<QPushButton *>()) cards << button->text();
+        for (const auto *button : dashboard.findChildren<QPushButton *>("groupButton")) cards << button->accessibleName();
         QCOMPARE(cards.size(), 4);
         QVERIFY(cards.at(0).contains(QStringLiteral("Аномалия")));
         QVERIFY(cards.at(1).contains(QStringLiteral("Норма")));
@@ -89,9 +168,16 @@ private slots:
 
         Diagnostics diagnostics;
         diagnostics.refresh(store, at, at, readTime(last));
-        QVERIFY(hasLabel(diagnostics, QStringLiteral("R Норма")));
-        QVERIFY(hasLabel(diagnostics, QStringLiteral("R Аномалия")));
+        QVERIFY(hasLabel(diagnostics, QStringLiteral("Исходное состояние · Норма")));
+        QVERIFY(hasLabel(diagnostics, QStringLiteral("После временной обработки · Аномалия")));
         QVERIFY(hasLabel(diagnostics, QStringLiteral("δ 30 с")));
+        diagnostics.show();
+        auto *table = diagnostics.findChild<QTableView *>("ifTable");
+        QVERIFY(table && !table->isVisible());
+        diagnostics.setOptions(2, 1);
+        diagnostics.refresh(store, at, at, readTime(last));
+        QVERIFY(table->isVisible());
+        QVERIFY(hasLabel(diagnostics, QStringLiteral("Динамика критерия I2")));
         NodeTable nodes;
         nodes.setTick(store.tickAt("a01", at));
         QCOMPARE(nodes.rowCount(), 2);
@@ -120,6 +206,17 @@ private slots:
         QCOMPARE(events.rowCount(), 0);
         events.replace({{event.id, event}}, {}, end, end.addSecs(10));
         QCOMPARE(events.rowCount(), 0);
+
+        MonitorStore store;
+        store.insert(QList<AnomalyEvent>{event});
+        Events journal;
+        journal.refresh(store, start, end.addSecs(30));
+        QSignalSpy signal(&journal, &Events::eventSelected);
+        findButton(journal, QStringLiteral("Открыть в диагностике"), "primary")->click();
+        QCOMPARE(signal.size(), 1);
+        QCOMPARE(signal.first().at(0).toString(), QString("a01"));
+        QCOMPARE(signal.first().at(1).toDateTime(), start);
+        QCOMPARE(signal.first().at(2).toDateTime(), end);
     }
 };
 

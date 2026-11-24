@@ -61,8 +61,15 @@ GroupTick GroupTick::parse(const QJsonObject &object)
     raw.remove("y");
     for (const auto &key : {QStringLiteral("r"), QStringLiteral("b")}) {
         const auto criterion = raw.value(key).toObject();
-        raw.insert(key, QJsonObject{{"state", criterion.value("state")}, {"reason", criterion.value("reason")},
-                                    {"score", criterion.value("score")}, {"threshold", criterion.value("threshold")}});
+        QJsonObject compact{{"state", criterion.value("state")}, {"reason", criterion.value("reason")},
+                            {"score", criterion.value("score")}, {"threshold", criterion.value("threshold")}};
+        if (key == "r" && criterion.value("defining_pair").isArray()) {
+            QJsonArray pair;
+            for (const auto &witness : criterion.value("defining_pair").toArray())
+                pair.append(QJsonObject{{"hostname", witness.toObject().value("hostname")}});
+            if (!pair.isEmpty()) compact.insert("defining_pair", pair);
+        }
+        raw.insert(key, compact);
     }
     return {group, time, raw, temporal, QJsonObject{{"event_id", evidence.value("event_id")},
                                                    {"witness_refs", evidence.value("witness_refs")}}};

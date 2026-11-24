@@ -16,11 +16,18 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace {
+class WorkspaceStack final : public QStackedWidget {
+public:
+    QSize sizeHint() const override { return currentWidget() ? currentWidget()->sizeHint() : QSize{}; }
+    QSize minimumSizeHint() const override { return currentWidget() ? currentWidget()->minimumSizeHint() : QSize{}; }
+};
+
 QLabel *label(const QString &text, const char *role = "")
 {
     auto *value = new QLabel(text);
@@ -58,7 +65,7 @@ void heading(QVBoxLayout *layout, const QString &title, const QString &subtitle)
     content->addWidget(label(title, "title"));
     content->addWidget(label(subtitle, "muted"));
     layout->addWidget(header);
-    layout->addSpacing(12);
+    layout->addSpacing(18);
 }
 
 QWidget *scrollPage(QWidget *content)
@@ -75,6 +82,11 @@ QString pace(const QString &speed)
 {
     if (speed.isEmpty()) return {};
     return speed == "0" ? QStringLiteral("MAX") : QStringLiteral("×") + speed;
+}
+
+QString runKey(const ReviewRun &run)
+{
+    return run.connection.masterUrl.toString() + '|' + run.connection.execution;
 }
 }
 
@@ -99,7 +111,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     sidebar->setObjectName("sidebar");
     sidebar->setFixedWidth(220);
     auto *side = column(sidebar, 13, 3);
-    side->setContentsMargins(13, 25, 13, 18);
+    side->setContentsMargins(13, 29, 13, 18);
     auto *brand = new QWidget;
     auto *brandLayout = column(brand, 0, 4);
     brandLayout->setContentsMargins(12, 0, 0, 23);
@@ -112,7 +124,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     for (int i = 0; i < sections.size(); ++i) {
         if (i == Online || i == System) {
             auto *caption = label(i == Online ? tr("ДИАГНОСТИКА") : tr("СИСТЕМА"), "navHeading");
-            caption->setContentsMargins(12, 18, 0, 5);
+            caption->setContentsMargins(12, 21, 0, 5);
             side->addWidget(caption);
         }
         auto *item = button(sections[i], "navButton");
@@ -135,7 +147,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     auto *surface = new QWidget;
     surface->setObjectName("surface");
     auto *main = column(surface);
-    main->setContentsMargins(34, 22, 34, 15);
+    main->setContentsMargins(34, 22, 49, 15);
     pages_ = new QStackedWidget;
     pages_->setObjectName("mainPages");
     pages_->addWidget(scrollPage(buildHome()));
@@ -155,11 +167,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     connect(&poller_, &Poller::updated, this, [this] {
         if (!refreshTimer_.isActive()) refreshTimer_.start();
     });
-    connect(&poller_, &Poller::reset, this, [this] {
-        history_->setBounds({}, {});
-        events_->clear();
-        refresh();
-    });
+    connect(&poller_, &Poller::reset, this, &MainWindow::refresh);
     navigate(Home);
     poller_.configure(runs_.isEmpty() ? initial : runs_.first().connection);
 }
@@ -175,7 +183,7 @@ QWidget *MainWindow::buildHome()
     tiles->setSpacing(16);
     for (const bool online : {true, false}) {
         auto *tile = panel();
-        tile->setMinimumHeight(222);
+        tile->setFixedHeight(223);
         auto *body = column(tile, 20, 10);
         auto *badge = label({});
         badge->setPixmap(v2::icon(online ? 1 : 2, QColor(online ? "#16866b" : "#295ec5"), 23).pixmap(23));
@@ -366,10 +374,10 @@ QWidget *MainWindow::buildWorkspace()
     auto *layout = column(page, 0, 0);
     breadcrumb_ = label({}, "small");
     layout->addWidget(breadcrumb_);
-    layout->addSpacing(7);
+    layout->addSpacing(12);
     auto *header = new QHBoxLayout;
     auto *identity = new QWidget;
-    auto *identityLayout = column(identity, 0, 4);
+    auto *identityLayout = column(identity, 0, 8);
     runTitle_ = label({}, "workspaceTitle");
     runDescription_ = label({}, "muted");
     identityLayout->addWidget(runTitle_);
@@ -378,8 +386,10 @@ QWidget *MainWindow::buildWorkspace()
     runStatus_ = label({}, "small");
     header->addWidget(runStatus_);
     layout->addLayout(header);
+    layout->addSpacing(4);
     runFacts_ = label({}, "small");
     runFacts_->setFixedHeight(28);
+    runFacts_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Fixed);
     layout->addWidget(runFacts_);
     layout->addSpacing(9);
 
@@ -389,7 +399,7 @@ QWidget *MainWindow::buildWorkspace()
     navigation->setContentsMargins(4, 4, 4, 4);
     navigation->setSpacing(4);
     tabButtons_ = new QButtonGroup(this);
-    tabs_ = new QStackedWidget;
+    tabs_ = new WorkspaceStack;
     tabs_->setObjectName("workspaceTabs");
     dashboard_ = new Dashboard;
     diagnostics_ = new Diagnostics;
@@ -408,30 +418,42 @@ QWidget *MainWindow::buildWorkspace()
     layout->addWidget(bar);
     layout->addSpacing(10);
     auto *time = panel();
-    time->setFixedHeight(64);
+    time->setObjectName("workspaceTime");
+    time->setFixedHeight(62);
     auto *controls = new QHBoxLayout(time);
     controls->setContentsMargins(12, 8, 12, 8);
     history_ = new HistoryBar;
     controls->addWidget(history_, 1);
-    mode_ = new QComboBox;
-    mode_->addItems({tr("Текущее время"), tr("Выбор времени")});
-    controls->addWidget(mode_);
     layout->addWidget(time);
     layout->addSpacing(12);
-    layout->addWidget(tabs_, 1);
+    body_ = new QScrollArea;
+    body_->setObjectName("workspaceBody");
+    body_->setFrameShape(QFrame::NoFrame);
+    body_->setWidgetResizable(true);
+    body_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    body_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+    body_->setWidget(tabs_);
+    body_->viewport()->setObjectName("workspaceViewport");
+    layout->addWidget(body_, 1);
     connect(tabButtons_, &QButtonGroup::idClicked, this, &MainWindow::showTab);
     connect(history_, &HistoryBar::changed, this, &MainWindow::refresh);
-    connect(mode_, &QComboBox::currentIndexChanged, this, &MainWindow::refresh);
+    connect(history_, &HistoryBar::followRequested, this, [this](bool following) {
+        following_ = following;
+        if (!following_ && poller_.store().latestTime().isValid()) history_->selectTime(poller_.store().latestTime());
+        refresh();
+    });
     connect(dashboard_, &Dashboard::groupSelected, this, &MainWindow::selectGroup);
     connect(dashboard_, &Dashboard::historySelected, this, [this](const QString &group, const QDateTime &at) {
-        openHistory(group, at.addSecs(-60), at.addSecs(60), at);
+        openHistory(group, {}, {}, at);
     });
     connect(events_, &Events::eventSelected, this, [this](const QString &group, const QDateTime &from, const QDateTime &to) {
+        diagnostics_->setOptions(diagnostics_->criterion(), 0);
         openHistory(group, from, to, from);
     });
+    connect(dashboard_, &Dashboard::journalSelected, this, [this] { showTab(2); });
     connect(diagnostics_, &Diagnostics::timeSelected, this, [this](const QDateTime &at) {
-        if (mode_->currentIndex() == 1) history_->selectTime(at);
-        else openHistory({}, at.addSecs(-60), at.addSecs(60), at);
+        if (!following_) history_->selectTime(at);
+        else openHistory({}, {}, {}, at);
     });
     connect(diagnostics_, &Diagnostics::selectionChanged, this, &MainWindow::refresh);
     connect(events_, &Events::filterChanged, this, &MainWindow::refresh);
@@ -465,31 +487,62 @@ void MainWindow::navigate(Section section)
 
 void MainWindow::openRun(const ReviewRun &run, Section section)
 {
-    const bool different = run.connection.execution != current_.connection.execution;
+    const auto key = runKey(run);
+    const bool different = !hasRun_ || key != runKey(current_);
+    if (different && hasRun_) {
+        auto previous = workspaceContext();
+        if (!previous.at.isValid() && pendingTimeline_.at.isValid()) {
+            previous.at = pendingTimeline_.at;
+            previous.from = pendingTimeline_.from;
+            previous.to = pendingTimeline_.to;
+        }
+        contexts_.insert(runKey(current_), previous);
+    }
     current_ = run;
+    hasRun_ = true;
     section_ = section;
     navigation_->button(section)->setChecked(true);
     pages_->setCurrentIndex(RunPage);
     if (different) {
-        const QSignalBlocker blocker(mode_);
-        mode_->setCurrentIndex(section == Catalog || run.verified ? 1 : 0);
-        showTab(0);
+        restoring_ = true;
+        WorkspaceContext initial;
+        initial.following = section == Online;
+        const auto state = contexts_.value(key, initial);
+        following_ = state.following;
+        pendingTimeline_ = state;
+        history_->setBounds({}, {});
+        diagnostics_->selectGroup(state.group);
+        diagnostics_->setOptions(state.criterion, state.interval);
+        events_->restore(state.events);
+        showTab(state.tab);
     }
     auto settings = run.connection;
     settings.intervalMs = attached_.connection.intervalMs;
     poller_.configure(settings);
+    restoring_ = false;
     refresh();
+}
+
+MainWindow::WorkspaceContext MainWindow::workspaceContext() const
+{
+    return {diagnostics_->selectedGroup(), history_->at(), history_->from(), history_->to(),
+            events_->context(), tabs_->currentIndex(), diagnostics_->criterion(),
+            diagnostics_->interval(), following_};
 }
 
 void MainWindow::showTab(int index)
 {
     tabButtons_->button(index)->setChecked(true);
+    const bool changed = tabs_->currentIndex() != index;
     tabs_->setCurrentIndex(index);
+    tabs_->updateGeometry();
+    if (changed) body_->verticalScrollBar()->setValue(0);
     refresh();
 }
 
 void MainWindow::refresh()
 {
+    if (restoring_) return;
     updateConnection();
     if (pages_->currentIndex() == SystemPage) system_->refresh(poller_);
     if (pages_->currentIndex() != RunPage) return;
@@ -504,45 +557,68 @@ void MainWindow::refresh()
     if (!current_.ticks.isEmpty()) facts << tr("%1 результатов").arg(current_.ticks);
     if (!current_.events.isEmpty()) facts << tr("%1 событий").arg(current_.events);
     if (!current_.duration.isEmpty()) facts << current_.duration;
+    const auto &store = poller_.store();
+    if (current_.verified && !poller_.synchronized() && !poller_.stale())
+        facts << tr("Загрузка результатов…");
+    if (!current_.verified && store.summary.value("expected_ticks").toInteger() > 0) {
+        facts << tr("%1 из %2 результатов")
+            .arg(qMax(store.resultCount(), store.summary.value("group_ticks").toInteger()))
+            .arg(store.summary.value("expected_ticks").toInteger());
+    }
     runFacts_->setText(facts.join(" · "));
     updateHistory();
-    const auto &store = poller_.store();
-    const bool historical = mode_->currentIndex() == 1;
-    const auto at = historical ? history_->at() : store.latestTime();
-    if (tabs_->currentIndex() == 0) dashboard_->refresh(store, at);
-    else if (tabs_->currentIndex() == 1)
-        diagnostics_->refresh(store, at, historical ? history_->from() : qMax(store.earliestTime(), at.addSecs(-1800)),
-                              historical ? history_->to() : at);
-    else events_->refresh(store, {}, {});
+    const auto at = following_ ? store.latestTime() : history_->at();
+    if (tabs_->currentIndex() == 0) dashboard_->refresh(store, at, !following_);
+    else if (tabs_->currentIndex() == 1) {
+        const int interval = diagnostics_->interval();
+        const int seconds = interval == 2 ? 300 : 60;
+        const bool eventWindow = interval == 0 && history_->from().isValid() && history_->to().isValid();
+        const auto from = eventWindow ? history_->from() : qMax(store.earliestTime(), at.addSecs(-seconds));
+        const auto to = eventWindow ? history_->to()
+            : following_ ? at : qMin(store.latestTime(), at.addSecs(seconds));
+        diagnostics_->refresh(store, at, from, to, current_.connection.execution);
+    } else {
+        const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
+        const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
+        events_->refresh(store, start.isValid() ? start : store.earliestTime(),
+                         end.isValid() ? end : store.latestTime());
+    }
 }
 
 void MainWindow::updateHistory()
 {
-    history_->setVisible(mode_->currentIndex() == 1);
     const auto &store = poller_.store();
     const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
     const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
     history_->setBounds(start.isValid() ? start : store.earliestTime(), end.isValid() ? end.addSecs(-10) : store.latestTime());
-    if (!history_->hasSelection() && (start.isValid() || store.earliestTime().isValid())) {
+    restoreTimeline();
+    if (!history_->hasSelection() && (current_.verified || store.latestTime().isValid())) {
         const QSignalBlocker blocker(history_);
         const auto latest = current_.verified && end.isValid() ? end.addSecs(-10) : store.latestTime();
-        const auto first = start.isValid() ? start : store.earliestTime();
-        history_->setRange(first, end.isValid() ? end.addSecs(-10) : latest, latest.isValid() ? latest : first);
+        history_->setRange({}, {}, latest);
     }
+    history_->setPresentation(!following_, section_ == Online || !current_.verified, store.latestTime());
+}
+
+void MainWindow::restoreTimeline()
+{
+    if (!pendingTimeline_.at.isValid()) return;
+    const QSignalBlocker blocker(history_);
+    history_->setRange(pendingTimeline_.from, pendingTimeline_.to, pendingTimeline_.at);
+    history_->selectTime(pendingTimeline_.at);
+    if (history_->hasSelection()) pendingTimeline_ = {};
 }
 
 void MainWindow::selectGroup(const QString &group)
 {
-    showTab(1);
     diagnostics_->selectGroup(group);
-    refresh();
+    showTab(1);
 }
 
 void MainWindow::openHistory(const QString &group, const QDateTime &from, const QDateTime &to, const QDateTime &at)
 {
-    const QSignalBlocker blocker(mode_);
     const QSignalBlocker historyBlocker(history_);
-    mode_->setCurrentIndex(1);
+    following_ = false;
     updateHistory();
     history_->setRange(from, to, at);
     if (group.isEmpty()) refresh(); else selectGroup(group);

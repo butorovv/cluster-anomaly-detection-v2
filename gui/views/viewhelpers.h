@@ -23,10 +23,10 @@ inline QLabel *plainLabel()
 inline QString stateColor(GroupState state)
 {
     switch (state) {
-    case GroupState::Negative: return "#157149";
-    case GroupState::Positive: return "#ad2743";
-    case GroupState::Unknown: return "#9a4a0c";
-    case GroupState::Missing: return "#53657a";
+    case GroupState::Negative: return "#16866b";
+    case GroupState::Positive: return "#c43648";
+    case GroupState::Unknown: return "#b97826";
+    case GroupState::Missing: return "#8291a5";
     }
     return {};
 }

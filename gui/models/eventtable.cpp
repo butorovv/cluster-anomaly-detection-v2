@@ -4,7 +4,7 @@
 
 namespace {
 const QStringList headers{QStringLiteral("Группа"), QStringLiteral("Обнаружено (UTC)"),
-                          QStringLiteral("Длительность, с"), QStringLiteral("Активные критерии")};
+                          QStringLiteral("Длит."), QStringLiteral("Критерии")};
 }
 
 void EventTable::replace(const QMap<QString, AnomalyEvent> &events, const QString &group,
@@ -41,11 +41,16 @@ int EventTable::rowOf(const QString &id) const
 QVariant EventTable::data(const QModelIndex &index, int role) const
 {
     const auto *event = at(index.row());
-    if (!event || role != Qt::DisplayRole) return {};
+    if (!event || (role != Qt::DisplayRole && role != Qt::UserRole && role != Qt::ToolTipRole)) return {};
+    if (role == Qt::UserRole) {
+        if (index.column() == 1) return event->detected;
+        if (index.column() == 2) return event->payload.value("duration_seconds").toInteger();
+    }
+    if (role == Qt::ToolTipRole && index.column() == 1) return timeText(event->detected);
     switch (index.column()) {
     case 0: return event->group;
-    case 1: return timeText(event->detected);
-    case 2: return numberText(event->payload.value("duration_seconds"));
+    case 1: return event->detected.toString("dd.MM HH:mm:ss");
+    case 2: return numberText(event->payload.value("duration_seconds")) + QStringLiteral(" с");
     case 3: return event->votes();
     default: return {};
     }

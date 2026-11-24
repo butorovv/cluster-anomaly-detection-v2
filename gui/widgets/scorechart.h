@@ -9,6 +9,7 @@ struct ChartSeries {
     QString name;
     QColor color;
     QList<QPointF> points;
+    bool dashed = false;
 };
 
 class ScoreChart final : public QWidget {

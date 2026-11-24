@@ -1,101 +1,181 @@
 #include "historybar.h"
 
 #include <QDateTimeEdit>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QSlider>
+#include <QStackedWidget>
 #include <QTimeZone>
+#include <QVBoxLayout>
+
+namespace {
+QString clockText(const QDateTime &time, const char *format = "HH:mm:ss")
+{
+    return time.isValid() ? time.toUTC().toString(QString::fromLatin1(format)) : QStringLiteral("—");
+}
+}
 
 HistoryBar::HistoryBar(QWidget *parent) : QWidget(parent)
 {
-    auto *layout = new QHBoxLayout(this);
-    layout->setContentsMargins(0, 0, 0, 0);
-    from_ = new QDateTimeEdit;
-    to_ = new QDateTimeEdit;
-    at_ = new QDateTimeEdit;
-    for (auto *edit : {from_, to_, at_}) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-        edit->setTimeZone(QTimeZone::utc());
-#else
-        edit->setTimeSpec(Qt::UTC);
-#endif
-        edit->setDisplayFormat("dd.MM.yyyy HH:mm:ss");
-        edit->setCalendarPopup(true);
-        edit->setKeyboardTracking(false);
+    setObjectName("historyBar");
+    auto *row = new QHBoxLayout(this);
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(13);
+    auto *left = new QWidget;
+    left->setFixedWidth(186);
+    auto *moment = new QVBoxLayout(left);
+    moment->setContentsMargins(0, 0, 0, 0);
+    moment->setSpacing(1);
+    caption_ = new QLabel;
+    caption_->setObjectName("small");
+    selectedTime_ = new QPushButton;
+    selectedTime_->setObjectName("timeValue");
+    selectedTime_->setFixedHeight(23);
+    selectedTime_->setToolTip(tr("Выбрать точные дату и время UTC"));
+    moment->addWidget(caption_);
+    moment->addWidget(selectedTime_);
+    row->addWidget(left);
+
+    range_ = new QStackedWidget;
+    auto *scale = new QWidget;
+    auto *scaleLayout = new QVBoxLayout(scale);
+    scaleLayout->setContentsMargins(0, 0, 0, 0);
+    scaleLayout->setSpacing(1);
+    slider_ = new QSlider(Qt::Horizontal);
+    slider_->setAccessibleName(tr("Момент диагностики"));
+    slider_->setObjectName("momentSlider");
+    slider_->setFixedHeight(21);
+    scaleLayout->addWidget(slider_);
+    auto *labels = new QHBoxLayout;
+    first_ = new QLabel;
+    middle_ = new QLabel;
+    last_ = new QLabel;
+    for (auto *label : {first_, middle_, last_}) label->setObjectName("small");
+    labels->addWidget(first_, 1);
+    labels->addWidget(middle_, 1, Qt::AlignCenter);
+    labels->addWidget(last_, 1, Qt::AlignRight);
+    scaleLayout->addLayout(labels);
+    range_->addWidget(scale);
+    auto *note = new QLabel(tr("Наблюдение за поступающими результатами"));
+    note->setObjectName("small");
+    range_->addWidget(note);
+    row->addWidget(range_, 1);
+    previous_ = new QPushButton(tr("−10 с"));
+    next_ = new QPushButton(tr("+10 с"));
+    previous_->setObjectName("timeStep");
+    next_->setObjectName("timeStep");
+    follow_ = new QPushButton;
+    follow_->setObjectName("soft");
+    for (auto *item : {previous_, next_, follow_}) {
+        item->setFixedHeight(32);
+        row->addWidget(item);
     }
-    from_->setAccessibleName(tr("Начало интервала истории, UTC"));
-    to_->setAccessibleName(tr("Конец интервала истории, UTC"));
-    at_->setAccessibleName(tr("Срез телеметрии, UTC"));
-    layout->addWidget(new QLabel(tr("С (UTC)")));
-    layout->addWidget(from_);
-    layout->addWidget(new QLabel(tr("По")));
-    layout->addWidget(to_);
-    layout->addWidget(new QLabel(tr("Срез")));
-    layout->addWidget(at_);
-    auto *previous = new QPushButton(tr("−10 с"));
-    auto *next = new QPushButton(tr("+10 с"));
-    layout->addWidget(previous);
-    layout->addWidget(next);
-    layout->addStretch();
-    connect(from_, &QDateTimeEdit::dateTimeChanged, this, [this](const QDateTime &value) {
-        setRange(value, qMax(value, to()), at());
-    });
-    connect(to_, &QDateTimeEdit::dateTimeChanged, this, [this](const QDateTime &value) {
-        setRange(qMin(value, from()), value, at());
-    });
-    connect(at_, &QDateTimeEdit::dateTimeChanged, this, &HistoryBar::selectTime);
-    connect(previous, &QPushButton::clicked, this, [this] { selectTime(at().addSecs(-10)); });
-    connect(next, &QPushButton::clicked, this, [this] { selectTime(at().addSecs(10)); });
-    setEnabled(false);
+    connect(previous_, &QPushButton::clicked, this, [this] { selectTime(at_.addSecs(-10)); });
+    connect(next_, &QPushButton::clicked, this, [this] { selectTime(at_.addSecs(10)); });
+    connect(slider_, &QSlider::valueChanged, this, [this](int step) { selectTime(minimum_.addSecs(step * 10LL)); });
+    connect(follow_, &QPushButton::clicked, this, [this] { emit followRequested(historical_); });
+    connect(selectedTime_, &QPushButton::clicked, this, &HistoryBar::openTimePicker);
+    render();
 }
 
 void HistoryBar::setBounds(const QDateTime &start, const QDateTime &end)
 {
     if (start == minimum_ && end == maximum_) return;
-    const bool wasSelected = hasSelection();
-    const auto oldFrom = from(), oldTo = to(), oldAt = at();
     minimum_ = start;
     maximum_ = end;
-    const bool valid = start.isValid() && end.isValid() && start <= end;
-    setEnabled(valid);
-    selected_ = false;
-    if (!valid) return;
-    const QSignalBlocker b1(from_), b2(to_), b3(at_);
-    for (auto *edit : {from_, to_, at_}) edit->setDateTimeRange(start, end);
-    if (wasSelected) apply(oldFrom, oldTo, oldAt);
+    if (!start.isValid() || !end.isValid() || start > end) {
+        at_ = from_ = to_ = {};
+    } else if (at_.isValid()) {
+        if (from_.isValid()) from_ = normalized(from_);
+        if (to_.isValid()) to_ = normalized(to_);
+        at_ = normalized(at_);
+    }
+    render();
 }
-
-bool HistoryBar::hasSelection() const { return selected_; }
-QDateTime HistoryBar::from() const { return selected_ ? from_->dateTime() : QDateTime{}; }
-QDateTime HistoryBar::to() const { return selected_ ? to_->dateTime() : QDateTime{}; }
-QDateTime HistoryBar::at() const { return selected_ ? at_->dateTime() : QDateTime{}; }
 
 QDateTime HistoryBar::normalized(const QDateTime &value) const
 {
-    const auto bounded = qBound(minimum_, value.isValid() ? value : minimum_, maximum_);
-    return minimum_.addSecs(minimum_.secsTo(bounded) / 10 * 10);
-}
-
-void HistoryBar::apply(const QDateTime &from, const QDateTime &to, const QDateTime &at)
-{
-    if (!isEnabled()) return;
-    const QSignalBlocker b1(from_), b2(to_), b3(at_);
-    const auto first = normalized(from);
-    const auto last = qMax(first, normalized(to));
-    from_->setDateTime(first);
-    to_->setDateTime(last);
-    at_->setDateTime(qBound(first, normalized(at), last));
-    selected_ = true;
+    if (!minimum_.isValid() || !maximum_.isValid() || minimum_ > maximum_) return {};
+    const auto selected = qBound(minimum_, value.isValid() ? value : minimum_, maximum_);
+    return minimum_.addSecs(minimum_.secsTo(selected) / 10 * 10);
 }
 
 void HistoryBar::setRange(const QDateTime &from, const QDateTime &to, const QDateTime &at)
 {
-    apply(from, to, at);
-    emit changed();
+    from_ = from.isValid() ? normalized(from) : QDateTime{};
+    to_ = to.isValid() ? normalized(to) : QDateTime{};
+    at_ = normalized(at);
+    if (from_.isValid() && to_.isValid() && from_ <= to_) at_ = qBound(from_, at_, to_);
+    render();
 }
 
 void HistoryBar::selectTime(const QDateTime &at)
 {
-    setRange(from(), to(), at);
+    const auto selected = normalized(at);
+    if (!selected.isValid() || selected == at_) return;
+    at_ = selected;
+    render();
+    emit changed();
+}
+
+void HistoryBar::setPresentation(bool history, bool canFollow, const QDateTime &latest)
+{
+    historical_ = history;
+    canFollow_ = canFollow;
+    latest_ = latest;
+    render();
+}
+
+void HistoryBar::render()
+{
+    const auto hasBounds = minimum_.isValid() && maximum_.isValid() && minimum_ <= maximum_;
+    const auto time = historical_ ? at_ : latest_;
+    caption_->setText(historical_ ? tr("Момент диагностики") : tr("Текущее время телеметрии"));
+    selectedTime_->setText(time.isValid() ? clockText(time) + " UTC" : QStringLiteral("—"));
+    selectedTime_->setEnabled(historical_ && hasBounds);
+    range_->setCurrentIndex(historical_ ? 0 : 1);
+    const auto scale = hasBounds ? int(minimum_.secsTo(maximum_) / 10) : 0;
+    const QSignalBlocker blocker(slider_);
+    slider_->setRange(0, scale);
+    slider_->setValue(at_.isValid() ? int(minimum_.secsTo(at_) / 10) : 0);
+    slider_->setEnabled(scale > 0);
+    first_->setText(clockText(minimum_, "HH:mm"));
+    middle_->setText(hasBounds ? clockText(minimum_.addSecs(scale * 5LL), "HH:mm") : QString{});
+    last_->setText(clockText(maximum_));
+    previous_->setVisible(historical_);
+    next_->setVisible(historical_);
+    previous_->setEnabled(at_.isValid() && at_ > minimum_);
+    next_->setEnabled(at_.isValid() && at_ < maximum_);
+    follow_->setVisible(canFollow_);
+    follow_->setEnabled(historical_ || hasBounds);
+    follow_->setText(historical_ ? tr("К текущему") : tr("Выбрать время"));
+}
+
+void HistoryBar::openTimePicker()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Момент диагностики (UTC)"));
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *time = new QDateTimeEdit;
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+    time->setTimeZone(QTimeZone::utc());
+#else
+    time->setTimeSpec(Qt::UTC);
+#endif
+    time->setDisplayFormat("dd.MM.yyyy HH:mm:ss");
+    time->setCalendarPopup(true);
+    time->setDateTimeRange(minimum_, maximum_);
+    time->setDateTime(at_);
+    layout->addWidget(time);
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+    buttons->button(QDialogButtonBox::Ok)->setText(tr("Выбрать"));
+    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Отмена"));
+    layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() == QDialog::Accepted) selectTime(time->dateTime());
 }

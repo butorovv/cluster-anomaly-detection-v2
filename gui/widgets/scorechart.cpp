@@ -10,7 +10,7 @@
 
 ScoreChart::ScoreChart(QWidget *parent) : QWidget(parent)
 {
-    setMinimumHeight(232);
+    setFixedHeight(208);
     setAccessibleName(tr("График показателей по времени телеметрии"));
 }
 
@@ -26,16 +26,17 @@ void ScoreChart::setSeries(QList<ChartSeries> series, const QDateTime &from, con
 
 QRectF ScoreChart::plotRect() const
 {
-    return QRectF(rect()).adjusted(74, 32, -48, -36);
+    const auto gutter = qMax(48.0, width() * 0.12);
+    return QRectF(rect()).adjusted(gutter + 24, 30, -gutter, -27);
 }
 
 void ScoreChart::paintEvent(QPaintEvent *)
 {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
-    painter.setPen(QColor("#dce4ee"));
-    painter.setBrush(Qt::white);
-    painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), 8, 8);
+    auto font = painter.font();
+    font.setPixelSize(11);
+    painter.setFont(font);
     double yMin = std::numeric_limits<double>::infinity();
     double yMax = -yMin;
     for (const auto &series : series_)
@@ -53,7 +54,8 @@ void ScoreChart::paintEvent(QPaintEvent *)
     yMin -= spare;
     yMax += spare;
     const auto start = from_.toMSecsSinceEpoch();
-    const auto span = qMax<qint64>(10000, from_.msecsTo(to_));
+    const auto duration = from_.msecsTo(to_);
+    const auto span = qMax<qint64>(10000, duration);
     const auto x = [plot, start, span](double ms) { return plot.left() + (ms - start) * plot.width() / span; };
     const auto y = [plot, yMin, yMax](double value) {
         return plot.bottom() - (value - yMin) * plot.height() / (yMax - yMin);
@@ -63,16 +65,18 @@ void ScoreChart::paintEvent(QPaintEvent *)
         painter.setPen(QColor("#e6ebf1"));
         painter.drawLine(QPointF(plot.left(), level), QPointF(plot.right(), level));
         painter.setPen(QColor("#52647a"));
-        painter.drawText(QRectF(4, level - 10, 65, 20), Qt::AlignRight | Qt::AlignVCenter,
+        painter.drawText(QRectF(plot.left() - 66, level - 10, 59, 20), Qt::AlignRight | Qt::AlignVCenter,
                          QString::number(yMin + (yMax - yMin) * i / 4, 'g', 5));
         const double column = plot.left() + i * plot.width() / 4;
         const auto time = QDateTime::fromMSecsSinceEpoch(start + span * i / 4, QTimeZone(0));
-        painter.drawText(QRectF(column - 45, plot.bottom() + 5, 90, 20), Qt::AlignCenter, time.toString("HH:mm:ss"));
+        if (i == 0 || (duration > 0 && (span > 10000 || i == 4)))
+            painter.drawText(QRectF(column - 45, plot.bottom() + 4, 90, 18), Qt::AlignCenter,
+                             time.toString(i == 4 || duration == 0 ? "HH:mm:ss 'UTC'" : "HH:mm:ss"));
     }
-    painter.drawText(QRectF(0, height() - 18, width() - 9, 16), Qt::AlignRight, QStringLiteral("UTC"));
-    qsizetype left = 14;
+    qsizetype left = width() - 4;
+    for (const auto &series : series_) left -= painter.fontMetrics().horizontalAdvance(series.name) + 44;
     for (const auto &series : series_) {
-        painter.setPen(QPen(series.color, 2));
+        painter.setPen(QPen(series.color, 2, series.dashed ? Qt::DashLine : Qt::SolidLine));
         painter.drawLine(QPointF(left, 16), QPointF(left + 18, 16));
         painter.setPen(QColor("#32475e"));
         painter.drawText(QPointF(left + 24, 20), series.name);
@@ -88,15 +92,17 @@ void ScoreChart::paintEvent(QPaintEvent *)
     painter.setRenderHint(QPainter::Antialiasing, false);
     for (const auto &series : series_) {
         QPainterPath path;
-        painter.setPen(QPen(series.color, 1));
+        painter.setPen(QPen(series.color, 1.5, series.dashed ? Qt::DashLine : Qt::SolidLine));
         for (qsizetype i = 0; i < series.points.size(); ++i) {
             const auto &current = series.points[i];
             const QPointF pixel(x(current.x()), y(current.y()));
             const bool joinsPrevious = i > 0 && current.x() - series.points[i - 1].x() == 10000;
-            const bool joinsNext = i + 1 < series.points.size() && series.points[i + 1].x() - current.x() == 10000;
             if (joinsPrevious) path.lineTo(pixel);
             else path.moveTo(pixel);
-            if (!joinsPrevious && !joinsNext) painter.drawEllipse(pixel, 2.0, 2.0);
+            if (!series.dashed && series.points.size() <= 72) {
+                painter.setBrush(series.color);
+                painter.drawEllipse(pixel, 2.0, 2.0);
+            }
         }
         painter.drawPath(path);
     }
