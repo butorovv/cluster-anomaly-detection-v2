@@ -73,6 +73,11 @@ func registerSource(ctx context.Context, conn *pgx.Conn, sha string) error {
 }
 
 func ImportSummit(ctx context.Context, conn *pgx.Conn, path string) (Manifest, error) {
+	reader, _, err := parquet.OpenVerifiedParquet(ctx, path, SummitSHA)
+	if err != nil {
+		return Manifest{}, err
+	}
+	defer reader.Close()
 	if _, err := db.ApplyArchive(ctx, conn); err != nil {
 		return Manifest{}, err
 	}
@@ -91,7 +96,7 @@ func ImportSummit(ctx context.Context, conn *pgx.Conn, path string) (Manifest, e
 	}
 	manifest := Manifest{SourceSHA: SummitSHA, FeatureSchema: parquet.PreparedSchemaVersion,
 		TopologySHA: TopologySHA(), Step: 10, Start: summitWindow.Start, End: summitWindow.End}
-	err := conn.QueryRow(ctx, `SELECT groups,hosts,observations,measurements,verified_at
+	err = conn.QueryRow(ctx, `SELECT groups,hosts,observations,measurements,verified_at
  FROM cad_archive.imports WHERE source_sha256=$1 AND window_start=$2 AND window_end=$3`,
 		SummitSHA, summitWindow.Start, summitWindow.End).
 		Scan(&manifest.Groups, &manifest.Hosts, &manifest.Observations, &manifest.Measurements, &manifest.VerifiedAt)
@@ -103,18 +108,14 @@ func ImportSummit(ctx context.Context, conn *pgx.Conn, path string) (Manifest, e
 		return Manifest{}, err
 	}
 
-	reader, _, err := parquet.OpenVerifiedParquet(ctx, path, SummitSHA)
-	if err != nil {
-		return Manifest{}, err
-	}
 	writer, err := archive.New(ctx, conn, 1024)
 	if err != nil {
-		return Manifest{}, errors.Join(err, reader.Close())
+		return Manifest{}, err
 	}
 	batches := &importBatches{writer: writer, rows: make([]domain.TelemetryRecord, 0, 1024)}
 	window := &usecase.WindowReader{Source: reader, Start: summitWindow.Start, End: summitWindow.End}
 	stats, err := usecase.ReplayFullGrid(ctx, window, batches, batches, usecase.RealClock{}, 0, summitWindow.Start, summitWindow.End)
-	if err = errors.Join(err, reader.Close()); err != nil {
+	if err != nil {
 		return Manifest{}, err
 	}
 	if err := batches.flush(ctx); err != nil {
