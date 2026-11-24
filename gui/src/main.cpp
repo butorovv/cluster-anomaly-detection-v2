@@ -22,7 +22,7 @@ int main(int argc, char *argv[])
             padding:6px 10px; background:white; border:1px solid #cad6e4; border-radius:6px;
         }
         QPushButton:hover { border-color:#376db1; background:#edf5ff; }
-        QPushButton:checked { color:#144e91; background:#e2eeff; border-color:#abc8f2; font-weight:bold; }
+        QPushButton:checked { color:#144e91; background:#e2eeff; border-color:#abc8f2; }
         QPushButton:disabled { color:#778594; }
         QHeaderView::section { background:#eaf0f7; color:#334960; padding:7px; border:0; font-weight:bold; }
         QTableView { selection-background-color:#dbeaff; selection-color:#152537; gridline-color:#edf1f5; }

@@ -34,6 +34,47 @@ ssh -N -T -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -i $key -L 12
 
 Закрытие Viewer завершает только локальный туннель. Повторный запуск подключения открывает ту же удалённую сессию.
 
+На развёрнутой ВМ исходники и артефакты приёмки лежат в `~/cad-gui-qt-4f4b7ad`. Сборка и ручной запуск из терминала XFCE.
+
+```bash
+cad="$HOME/cad-gui-qt-4f4b7ad"
+cd "$cad/repo"
+cmake -S gui -B build/linux-qt -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build/linux-qt --parallel 8
+ctest --test-dir build/linux-qt --output-on-failure
+run="$cad/d2-max"
+build/linux-qt/cluster-monitor --master "$(jq -r .master "$run/demo.json")" \
+  --execution "$(jq -r .execution "$run/demo.json")" --summit-speed "$(jq -r .speed "$run/demo.json")"
+```
+
+Для запуска из SSH используются те же аргументы приложения и окружение `DISPLAY=:11 XAUTHORITY="$HOME/.Xauthority"`. Если графическую сессию штатно остановили, возобновите её под пользователем ВМ.
+
+```bash
+cad="$HOME/cad-gui-qt-4f4b7ad"
+tigervncserver :11 -localhost yes -rfbport 5911 -SecurityTypes VncAuth \
+  -PasswordFile "$HOME/.config/cad-gui-vnc/passwd" -geometry 1920x1080 -depth 24 \
+  -nolisten tcp -xstartup "$cad/xfce-start"
+```
+
+Остановить только этот рабочий стол можно командой `tigervncserver -kill :11`. Контейнеры от этого продолжают работать.
+
+Для нового запуска на ВМ используйте новый каталог. Режим `-PrivateDataPorts` исключает публикацию PostgreSQL и Kafka на хосте; Master по-прежнему публикуется только на loopback. На Linux контейнеры Bootstrap, Worker и Replayer работают с UID и GID владельца закрытых входных файлов; каталог монтируется только для чтения.
+
+```bash
+cad="$HOME/cad-gui-qt-4f4b7ad"
+export PATH="$cad/docker-bin:$cad/pwsh:$PATH"
+cd "$cad/repo"
+run="$cad/d2-video"
+assets="$HOME/p16-d2-c3-matrix.bd4c292002/assets"
+pwsh -NoProfile -File gui/demo.ps1 -Action Init -RunDirectory "$run" \
+  -AssetsRoot "$assets" -MasterPort 18086 -Speed 0 -Workers 4 -PrivateDataPorts
+pwsh -NoProfile -File gui/demo.ps1 -Action Replay -RunDirectory "$run"
+# После просмотра остановить только выбранный проект. Тома сохраняются.
+pwsh -NoProfile -File gui/demo.ps1 -Action Stop -RunDirectory "$run"
+```
+
+Короткие функциональные прогоны задаются `-WindowStart` и `-WindowEnd` при Init, на десятисекундной сетке UTC. Для повторной проверки остановки или запуска используйте каталог именно своей демонстрации.
+
 ## Режимы просмотра
 
 | Режим | Действие оператора | Настройка Replayer |
