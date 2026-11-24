@@ -1,0 +1,147 @@
+# Requires PowerShell 7 and Docker Compose.
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][ValidateSet('Init','Replay','Verify','Stop')][string]$Action,
+    [Parameter(Mandatory)][string]$RunDirectory,
+    [string]$AssetsRoot,
+    [ValidateSet('1','5','10','0')][string]$Speed = '0',
+    [ValidateRange(1,65535)][int]$MasterPort = 18080,
+    [ValidateRange(1,65535)][int]$PostgresPort = 55482,
+    [ValidateRange(1,65535)][int]$KafkaPort = 29182,
+    [ValidateRange(1,16)][int]$Workers = 4,
+    [ValidateRange(1,7200)][int]$DrainTimeoutSeconds = 900
+)
+$ErrorActionPreference = 'Stop'
+$root = Split-Path $PSScriptRoot -Parent
+$runPath = [IO.Path]::GetFullPath($RunDirectory)
+$metadata = Join-Path $runPath 'demo.json'
+$envPath = Join-Path $runPath 'compose.env'
+$composePath = Join-Path $root 'deploy/compose.yaml'
+
+function Compose([string[]]$Arguments) {
+    & docker compose --env-file $envPath --project-name $run.project -f $composePath @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "Docker Compose завершился с кодом $LASTEXITCODE" }
+}
+function Summary {
+    Invoke-RestMethod "$($run.master)/v1/summary?execution_id=$($run.execution)" -TimeoutSec 10
+}
+function SaveJson($Value, [string]$Name) {
+    $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $runPath $Name) -Encoding utf8NoBOM
+}
+
+if ($Action -eq 'Init') {
+    if (Test-Path -LiteralPath $runPath) { throw 'Укажите новый каталог демонстрации.' }
+    if (!$AssetsRoot) { throw 'Укажите -AssetsRoot с исходным набором Summit.' }
+    $assets = (Resolve-Path -LiteralPath $AssetsRoot).Path.Replace('\','/')
+    if ($assets -match "['\r\n]") { throw 'Путь к assets содержит неподдерживаемый символ.' }
+    $file = Join-Path $assets 'data/prepared/summit-D1-pilot/D1.parquet'
+    $expected = 'cf3fa634448b7147209bebf3b1c20a1a031be5c047678083adda10581ff562e7'
+    if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
+        throw 'SHA256 исходного Summit Parquet не совпадает с зарегистрированным.'
+    }
+    $execution = [guid]::NewGuid().ToString()
+    $project = "cad-gui-$($execution.Replace('-',''))"
+    $run = [ordered]@{
+        project = $project; execution = $execution; speed = $Speed
+        master = "http://127.0.0.1:$MasterPort"
+        start = '2022-01-18T08:00:00Z'; end = '2022-01-18T16:00:00Z'; expectedTicks = 46080
+        workers = $Workers
+    }
+    $null = New-Item -ItemType Directory -Path $runPath
+    SaveJson $run 'demo.json'
+    $lines = @(
+        "ASSETS_ROOT='$assets'", "EXECUTION_ID=$execution", "CAD_IMAGE=$($project):local",
+        "POSTGRES_PASSWORD=$([guid]::NewGuid().ToString('N'))",
+        "WORKER_DB_PASSWORD=$([guid]::NewGuid().ToString('N'))",
+        "MASTER_DB_PASSWORD=$([guid]::NewGuid().ToString('N'))",
+        "MASTER_PORT=$MasterPort", "PG_PORT=$PostgresPort", "KAFKA_PORT=$KafkaPort",
+        "RUN_START=$($run.start)", "RUN_END=$($run.end)", "REPLAY_SPEED=$Speed",
+        'OUTPUT_TRANSPORT=http_push', 'GROUPS_COUNT=16', 'DELTA_SECONDS=0',
+        'CHECKPOINT_INTERVAL_TICKS=3', 'MEASURE=false'
+    )
+    Set-Content -LiteralPath $envPath -Value $lines -Encoding utf8NoBOM
+    Compose @('up','-d','--build','--wait','--scale',"worker=$Workers",'master','worker')
+    Write-Host "Master $($run.master)"
+    Write-Host "Execution ID $execution"
+    Write-Host "Аргументы GUI --master $($run.master) --execution $execution --summit-speed $Speed"
+    return
+}
+
+$run = Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json
+if ($Action -eq 'Stop') {
+    Compose @('stop')
+    return
+}
+if ($Action -eq 'Replay') {
+    $statusFile = Join-Path $runPath 'replay-start.json'
+    $lock = [IO.File]::Open($statusFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
+    $lock.Dispose()
+    $started = [datetimeoffset]::UtcNow
+    SaveJson @{ startedUtc = $started } 'replay-start.json'
+    $elapsed = [Diagnostics.Stopwatch]::StartNew()
+    Compose @('run','--rm','--no-deps','replayer')
+    SaveJson @{
+        startedUtc = $started; finishedUtc = [datetimeoffset]::UtcNow
+        replaySeconds = $elapsed.Elapsed.TotalSeconds
+    } 'replay.json'
+}
+if (!(Test-Path -LiteralPath (Join-Path $runPath 'replay.json'))) {
+    throw 'Завершение Replayer не зафиксировано в этом каталоге.'
+}
+
+# Read-only drain check for the dedicated demo DB. The application uses HTTP exclusively.
+$query = @"
+SELECT (SELECT count(*) FROM cad_v2.group_checkpoints
+        WHERE execution_id='$($run.execution)'::uuid AND finalized),
+       (SELECT count(*) FROM cad_v2.outbox_messages WHERE execution_id='$($run.execution)'::uuid AND delivered_at IS NULL)
+       + (SELECT count(*) FROM cad_v2.worker_tick_fragments WHERE execution_id='$($run.execution)'::uuid AND delivered_at IS NULL);
+"@
+$drain = [Diagnostics.Stopwatch]::StartNew()
+do {
+    $summary = Summary
+    $pending = Compose @('exec','-T','postgres','psql','-U','cad_admin','-d','cad','-At','-v','ON_ERROR_STOP=1','-c',$query)
+    if ($summary.complete -and $pending -eq '16|0') { break }
+    Start-Sleep -Seconds 1
+} while ($drain.Elapsed.TotalSeconds -lt $DrainTimeoutSeconds)
+if (!$summary.complete -or $pending -ne '16|0') { throw 'Master или Worker не завершили обработку.' }
+
+# After drain, compare an independent full API traversal with the fixed Summit grid.
+$tick = [datetimeoffset]::Parse($run.start)
+$group = 1
+$results = 0
+$after = ''
+while ($true) {
+    $page = Invoke-RestMethod "$($run.master)/v1/results?execution_id=$($run.execution)&limit=128$after" -TimeoutSec 20
+    if ($page.items.Count -eq 0) { break }
+    foreach ($item in $page.items) {
+        if ($item.raw.group -ne ('a{0:00}' -f $group) -or [datetimeoffset]$item.raw.timestamp -ne $tick) {
+            throw 'Нарушена непрерывность сетки D2.'
+        }
+        $results++
+        if ($group -eq 16) { $group = 1; $tick = $tick.AddSeconds(10) } else { $group++ }
+    }
+    $next = '&after_tick=' + [uri]::EscapeDataString(([datetimeoffset]$page.next.tick).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')) + '&after_group=' + [uri]::EscapeDataString($page.next.group_id)
+    if ($next -eq $after) { throw 'Курсор результатов не продвинулся.' }
+    $after = $next
+}
+$events = [Collections.Generic.HashSet[string]]::new()
+$after = ''
+while ($true) {
+    $page = @(Invoke-RestMethod "$($run.master)/v1/events?execution_id=$($run.execution)&limit=100&after=$after")
+    if ($page.Count -eq 0) { break }
+    foreach ($event in $page) {
+        if (!$event.id -or !$events.Add($event.id)) { throw 'Некорректный ID или повтор события.' }
+    }
+    $after = $page[-1].id
+}
+$summary = Summary
+if ($results -ne $run.expectedTicks -or $results -ne $summary.group_ticks -or $events.Count -ne $summary.parent_events) {
+    throw 'Содержимое REST-страниц расходится со сводкой.'
+}
+$report = [ordered]@{
+    observedAtUtc = [datetimeoffset]::UtcNow; groupTicks = $results; terminalEvents = $events.Count
+    replay = (Get-Content -LiteralPath (Join-Path $runPath 'replay.json') -Raw | ConvertFrom-Json)
+    summary = $summary
+}
+SaveJson $report 'verification.json'
+$report | ConvertTo-Json -Depth 12
