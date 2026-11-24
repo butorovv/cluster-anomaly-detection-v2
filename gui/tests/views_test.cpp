@@ -129,7 +129,7 @@ private slots:
         const auto checkGeometry = [&] {
             QCoreApplication::processEvents();
             QCOMPARE(frame(), before);
-            QCOMPARE(timeline->at(), readTime(last));
+            QVERIFY(!timeline->at().isValid());
         };
         emit window.findChild<Dashboard *>()->groupSelected("a14");
         checkGeometry();
@@ -144,7 +144,8 @@ private slots:
         QVERIFY(live);
         live->click();
         QVERIFY(findButton(window, QStringLiteral("Выбрать время"), "soft")->isVisible());
-        findButton(window, QStringLiteral("Выбрать время"), "soft")->click();
+        QVERIFY(!findButton(window, QStringLiteral("Выбрать время"), "soft")->isEnabled());
+        emit timeline->followRequested(false);
         QVERIFY(findButton(window, QStringLiteral("К текущему"), "soft")->isVisible());
         diagnostics->setOptions(2, 0);
         findButton(window, QStringLiteral("К текущему"), "soft")->click();
@@ -152,7 +153,7 @@ private slots:
         QCOMPARE(diagnostics->interval(), 1);
         findButton(window, QStringLiteral("Главная"), "navButton")->click();
         open->click();
-        QCOMPARE(timeline->at(), readTime(last));
+        QVERIFY(!timeline->at().isValid());
         QCOMPARE(diagnostics->selectedGroup(), QString("a14"));
         QCOMPARE(diagnostics->criterion(), 2);
         QCOMPARE(diagnostics->interval(), 2);

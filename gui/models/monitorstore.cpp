@@ -198,7 +198,7 @@ QList<const GroupTick *> MonitorStore::recentAnomalies(const QDateTime &until, i
     return result;
 }
 
-ResultCursor MonitorStore::confirmedCursor()
+ResultCursor MonitorStore::confirmedCursor() const
 {
     const int count = summary.value("group_count").toInt();
     const auto start = readTime(summary.value("window_start"));

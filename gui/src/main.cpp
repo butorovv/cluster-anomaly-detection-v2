@@ -21,6 +21,7 @@ int main(int argc, char *argv[])
         {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"},
         {"review-root", QStringLiteral("Метаданные сохранённых запусков для визуальной приёмки"), "path"},
         {"summit-assets", QStringLiteral("Каталог проверенного архива Summit"), "path"},
+        {"archive-api", QStringLiteral("Локальный REST сервиса физической телеметрии"), "url", "http://127.0.0.1:18087"},
         {"managed-root", QStringLiteral("Каталог управляемых запусков"), "path"},
         {"demo-pwsh", QStringLiteral("Путь к установленному PowerShell 7 на ВМ"), "path"},
         {"summit-speed", QStringLiteral("Заявленный темп исторического Summit Replayer (1, 5, 10, 0=MAX)"), "speed"}
@@ -44,6 +45,9 @@ int main(int argc, char *argv[])
     }
     MainWindow window(connection, speed, readReviewRuns(parser.value("review-root"), connection.intervalMs));
     window.configurePhysicalArchive(parser.value("summit-assets"));
+    const QUrl archiveApi(parser.value("archive-api"));
+    if (!MasterClient::validUrl(archiveApi) || archiveApi.host() != "127.0.0.1") return 2;
+    window.configureArchiveApi(archiveApi);
     window.configureManagedRuns(parser.value("managed-root"), parser.value("demo-pwsh"));
     window.show();
     return app.exec();

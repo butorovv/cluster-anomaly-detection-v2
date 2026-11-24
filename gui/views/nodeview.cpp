@@ -9,7 +9,7 @@
 #include <QJsonDocument>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QProcess>
+#include <QUrlQuery>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QTimer>
@@ -116,7 +116,7 @@ private:
     std::function<void(int)> hover;
 };
 
-NodeView::NodeView(QWidget *parent) : QWidget(parent), process_(new QProcess(this)), delay_(new QTimer(this))
+NodeView::NodeView(QWidget *parent) : QWidget(parent), delay_(new QTimer(this))
 {
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -218,16 +218,10 @@ NodeView::NodeView(QWidget *parent) : QWidget(parent), process_(new QProcess(thi
         emit contextChanged();
     });
     connect(interval_, &QComboBox::currentIndexChanged, this, &NodeView::contextChanged);
-    connect(process_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus status) {
-        finish(code == 0 && status == QProcess::NormalExit, process_->readAllStandardOutput());
-    });
-    connect(process_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-        if (error == QProcess::FailedToStart) finish(false, {});
-    });
     display();
 }
 
-void NodeView::configure(const QString &assets) { assets_ = assets; }
+void NodeView::configure(const QUrl &url) { archiveUrl_ = url; }
 
 void NodeView::selectNode(const QString &node)
 {
@@ -244,7 +238,7 @@ void NodeView::setInterval(int index)
     interval_->setCurrentIndex(qBound(0, index, 2));
 }
 
-void NodeView::refresh(const QStringList &hosts, const QDateTime &minimum, const QDateTime &at, bool sourceKnown)
+void NodeView::refresh(const QStringList &hosts, const QDateTime &minimum, const QDateTime &at, const QString &execution)
 {
     QStringList shown;
     for (int i = 0; i < nodes_->count(); ++i) shown << nodes_->itemText(i);
@@ -258,56 +252,105 @@ void NodeView::refresh(const QStringList &hosts, const QDateTime &minimum, const
     title_->setText(tr("Узел %1").arg(node_));
     moment_->setText(at.isValid() ? timeText(at) : tr("Нет данных"));
     const int seconds[]{120, 300, 600};
-    const bool enabled = sourceKnown && !assets_.isEmpty() && !node_.isEmpty() && minimum.isValid() && at >= minimum;
-    const Request next = enabled ? Request{node_, qMax(minimum, at.addSecs(-seconds[interval()])), at} : Request{};
+    const bool enabled = MasterClient::validUrl(archiveUrl_) && MasterClient::validExecution(execution) &&
+        !node_.isEmpty() && minimum.isValid() && at >= minimum;
+    const Request next = enabled ? Request{node_, execution, qMax(minimum, at.addSecs(-seconds[interval()])), at} : Request{};
     if (next == desired_) {
-        if (!enabled && process_->state() == QProcess::NotRunning)
-            status_->setText(tr("Исходная телеметрия этого запуска недоступна."));
+        if (!enabled) status_->setText(tr("Ожидание доступного момента телеметрии."));
+        else if (!busy_ && !delay_->isActive() && !samples_.contains(at)) retry();
         return;
     }
-    desired_ = next;
-    if (process_->state() != QProcess::NotRunning) process_->kill();
-    if (desired_ != loaded_) {
-        samples_.clear();
-        loaded_ = {};
+    if (cursor_ >= 0) {
+        const auto hover = desired_.from.addSecs(cursor_ * 10);
+        cursor_ = next.from.isValid() && hover >= next.from && hover <= next.to
+            ? int(next.from.secsTo(hover) / 10) : -1;
     }
-    status_->setText(enabled ? tr("Загрузка исходных отсчётов…") : tr("Исходная телеметрия этого запуска недоступна."));
+    desired_ = next;
+    ++generation_;
+    busy_ = false;
+    client_.cancel();
+    const auto scope = execution + '|' + node_;
+    if (scope != sampleScope_) {
+        sampleScope_ = scope;
+        samples_.clear();
+        source_.clear();
+        profile_.clear();
+    }
+    status_->setText(enabled ? tr("Загрузка исходных отсчётов…") : tr("Ожидание доступного момента телеметрии."));
     display();
-    delay_->start();
+    if (enabled) delay_->start(170);
 }
 
 void NodeView::request()
 {
-    if (desired_.node.isEmpty() || desired_ == loaded_ || process_->state() != QProcess::NotRunning) return;
-    busy_ = desired_;
-    process_->start(QCoreApplication::applicationDirPath() + "/cad-gui-physical",
-        {"--assets", assets_, "--node", busy_.node, "--from", busy_.from.toUTC().toString(Qt::ISODate),
-         "--to", busy_.to.toUTC().toString(Qt::ISODate)});
-}
-
-void NodeView::finish(bool success, const QByteArray &data)
-{
-    if (busy_ != desired_) { delay_->start(); return; }
-    QJsonParseError error;
-    const auto document = QJsonDocument::fromJson(data, &error);
-    if (!success || error.error != QJsonParseError::NoError || !document.isArray()) {
-        status_->setText(tr("Не удалось прочитать исходную телеметрию."));
+    if (desired_.node.isEmpty() || busy_ || !isVisible()) return;
+    auto requested = desired_;
+    while (requested.from <= requested.to && samples_.contains(requested.from))
+        requested.from = requested.from.addSecs(10);
+    while (requested.to >= requested.from && samples_.contains(requested.to))
+        requested.to = requested.to.addSecs(-10);
+    if (requested.from > requested.to) {
+        status_->setText(tr("Физическая телеметрия · подтверждённые отсчёты"));
         return;
     }
-    loaded_ = busy_;
-    samples_.clear();
-    for (const auto &row : document.array()) {
-        const auto object = row.toObject();
-        const auto at = readTime(object.value("time"));
-        const auto values = object.value("values").toArray();
-        if (at < loaded_.from || at > loaded_.to || values.size() != 18) continue;
+    busy_ = true;
+    QUrlQuery query;
+    query.addQueryItem("execution_id", requested.execution);
+    query.addQueryItem("group_id", requested.node.left(3));
+    query.addQueryItem("host_id", requested.node);
+    query.addQueryItem("from", requested.from.toUTC().toString(Qt::ISODate));
+    query.addQueryItem("to", requested.to.addSecs(10).toUTC().toString(Qt::ISODate));
+    client_.get(archiveUrl_, "/v1/telemetry", query, true,
+        [this, requested, generation = generation_](HttpResult result) { finish(requested, generation, result); });
+}
+
+void NodeView::retry()
+{
+    if (isVisible()) delay_->start(1200);
+}
+
+void NodeView::finish(const Request &request, quint64 generation, const HttpResult &result)
+{
+    if (generation != generation_) return;
+    busy_ = false;
+    const auto object = result.json.object();
+    const auto source = object.value("source_sha256").toString();
+    const auto profile = object.value("profile_sha256").toString();
+    if (!result.ok() || !object.value("items").isArray() || source.isEmpty() || profile.isEmpty() ||
+        object.value("execution_id").toString() != request.execution) {
+        status_->setText(tr("Сервис физической телеметрии недоступен."));
+        retry();
+        return;
+    }
+    if ((!source_.isEmpty() && source != source_) || (!profile_.isEmpty() && profile != profile_)) {
+        samples_.clear();
+    }
+    source_ = source;
+    profile_ = profile;
+    for (const auto &row : object.value("items").toArray()) {
+        const auto sampleObject = row.toObject();
+        const auto at = readTime(sampleObject.value("time"));
+        const auto values = sampleObject.value("values").toArray();
+        if (at < request.from || at > request.to) continue;
+        const auto status = sampleObject.value("status").toString();
+        if (status == "missing_observation") { samples_.insert(at, {}); continue; }
+        if (status != "available" || values.size() != 18) continue;
         QList<double> sample;
         for (const auto &value : values) sample << (value.isDouble() ? value.toDouble() : missing);
         samples_.insert(at, sample);
     }
-    status_->setText(samples_.isEmpty() ? tr("Нет отсчётов в выбранном окне.")
-        : tr("Исходный архив Summit D2 · %1 отсчётов").arg(samples_.size()));
+    while (samples_.size() > 320) {
+        if (samples_.lastKey() > desired_.to) samples_.remove(samples_.lastKey());
+        else samples_.remove(samples_.firstKey());
+    }
+    bool pending = false;
+    for (auto t = desired_.from; t.isValid() && t <= desired_.to; t = t.addSecs(10))
+        pending = pending || !samples_.contains(t);
+    status_->setText(pending ? tr("Ожидание подтверждения физической телеметрии")
+        : object.value("provenance").toString() == "verified_import"
+            ? tr("Проверенный архив Summit D2") : tr("Физическая телеметрия · подтверждённые отсчёты"));
     display();
+    if (pending) retry();
 }
 
 void NodeView::display()
@@ -340,7 +383,7 @@ void NodeView::display()
         plot->low = std::isfinite(lo) ? lo - margin : 0;
         plot->high = std::isfinite(hi) ? hi + margin : 1;
     }
-    setCursor(-1);
+    setCursor(cursor_ >= 0 && !plots_.isEmpty() && cursor_ < plots_.first()->values.size() ? cursor_ : -1);
 }
 
 void NodeView::setCursor(int index)

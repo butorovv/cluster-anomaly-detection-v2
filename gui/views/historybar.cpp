@@ -134,7 +134,8 @@ void HistoryBar::render()
 {
     const auto hasBounds = minimum_.isValid() && maximum_.isValid() && minimum_ <= maximum_;
     const auto time = historical_ ? at_ : latest_;
-    caption_->setText(historical_ ? tr("Момент диагностики") : tr("Текущее время телеметрии"));
+    caption_->setText(!hasBounds ? tr("Ожидание полного среза")
+        : historical_ ? tr("Момент диагностики") : tr("Текущее время телеметрии"));
     selectedTime_->setText(time.isValid() ? clockText(time) + " UTC" : QStringLiteral("—"));
     selectedTime_->setEnabled(historical_ && hasBounds);
     range_->setCurrentIndex(historical_ ? 0 : 1);
