@@ -38,6 +38,7 @@ bool ReviewRun::active() const
 QString ReviewRun::status() const
 {
     if (phase == "error") return QStringLiteral("Ошибка запуска");
+    if (phase == "incomplete") return QStringLiteral("Архив неполон · окружение сохранено");
     if (phase == "preparing") return QStringLiteral("Подготовка окружения");
     if (phase == "processing") return QStringLiteral("Обработка телеметрии");
     if (phase == "draining") return QStringLiteral("Финализация и доставка");
