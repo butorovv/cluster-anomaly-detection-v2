@@ -2,7 +2,10 @@ package telemetryarchive
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	archive "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/archive/postgres"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -84,5 +88,53 @@ func TestStreamArchiveTransaction(t *testing.T) {
 	masks, err := reader.StreamMasks(ctx, cfg.Binding.ExecutionID, SummitSHA, summitProfile, 0, 1, tick.Timestamp, recovered.next)
 	if err != nil || masks[tick.Timestamp.Unix()] != -1 {
 		t.Fatalf("empty tick mask = %v, %v", masks, err)
+	}
+
+	tick = &domain.GroupTick{Timestamp: recovered.next, Records: map[string]domain.TelemetryRecord{}}
+	record := domain.TelemetryRecord{Timestamp: tick.Timestamp, Hostname: "a01n01", GroupID: "a01", NodeIndex: 1, AvailabilityMask: 1}
+	var features [domain.FeatureCount]float64
+	for i := 1; i < len(features); i++ {
+		features[i] = math.NaN()
+	}
+	record.SetFeatures(features)
+	tick.Records[record.Hostname] = record
+	beforeCommit := store
+	beforeCommit.commit = func(context.Context, pgx.Tx) error { return io.EOF }
+	if _, err := beforeCommit.save(ctx, 0, *recovered, 2, tick); !errors.Is(err, io.EOF) {
+		t.Fatalf("expected failure before COMMIT: %v", err)
+	}
+	replayed, err := store.acquire(ctx, id)
+	if err != nil || replayed.offset != 1 || !replayed.next.Equal(tick.Timestamp) {
+		t.Fatalf("rollback lost replay position: %+v, %v", replayed, err)
+	}
+	masks, err = reader.StreamMasks(ctx, cfg.Binding.ExecutionID, SummitSHA, summitProfile, 0, 1, tick.Timestamp, cfg.Window.End)
+	if err != nil || len(masks) != 0 {
+		t.Fatalf("rollback published coverage: %v %v", masks, err)
+	}
+	afterCommit := store
+	afterCommit.commit = func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.Commit(ctx); err != nil {
+			return err
+		}
+		return io.ErrUnexpectedEOF
+	}
+	if _, err := afterCommit.save(ctx, 0, *replayed, 2, tick); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatalf("expected lost COMMIT response: %v", err)
+	}
+	done, err := store.acquire(ctx, id)
+	if err != nil || done.offset != 3 || !done.next.Equal(cfg.Window.End) {
+		t.Fatalf("committed response loss did not resume: %+v, %v", done, err)
+	}
+	if _, err := store.save(ctx, 0, *replayed, 2, tick); err == nil {
+		t.Fatal("repeated delivery from the stale owner advanced the archive")
+	}
+	masks, err = reader.StreamMasks(ctx, cfg.Binding.ExecutionID, SummitSHA, summitProfile, 0, 1, tick.Timestamp, cfg.Window.End)
+	if err != nil || len(masks) != 1 || masks[tick.Timestamp.Unix()] != 1 {
+		t.Fatalf("committed coverage mismatch: %v %v", masks, err)
+	}
+	samples, err := reader.Samples(ctx, record.Hostname, []time.Time{tick.Timestamp})
+	values := samples[tick.Timestamp.Unix()]
+	if err != nil || len(samples) != 1 || values[0] == nil || *values[0] != 0 || values[1] != nil {
+		t.Fatalf("partial record was lost or changed: %v %v", samples, err)
 	}
 }

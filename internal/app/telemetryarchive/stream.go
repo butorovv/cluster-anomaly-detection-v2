@@ -51,6 +51,7 @@ type streamStore struct {
 	writer         *archive.Writer
 	config         StreamConfig
 	cluster, topic string
+	commit         func(context.Context, pgx.Tx) error
 }
 
 func (s streamStore) register(ctx context.Context) error {
@@ -133,7 +134,11 @@ func (s streamStore) save(ctx context.Context, partition int32, owner streamPart
 	}
 	// On any uncertain COMMIT, leave the in-memory position unchanged and
 	// restart via acquire; PostgreSQL determines whether this tick committed.
-	if err = tx.Commit(ctx); err != nil {
+	commit := s.commit
+	if commit == nil {
+		commit = func(ctx context.Context, tx pgx.Tx) error { return tx.Commit(ctx) }
+	}
+	if err = commit(ctx, tx); err != nil {
 		return archive.Result{}, err
 	}
 	return result, nil
