@@ -13,6 +13,7 @@ class Dashboard;
 class Diagnostics;
 class Events;
 class HistoryBar;
+class SystemView;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -39,6 +40,7 @@ private:
     Diagnostics *diagnostics_;
     Events *events_;
     HistoryBar *history_;
+    SystemView *system_;
     QTimer refreshTimer_;
     QString summitSpeed_;
 };

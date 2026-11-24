@@ -26,6 +26,7 @@ qt_add_executable(cluster-monitor WIN32
     views/diagnostics.cpp
     views/events.cpp
     views/historybar.cpp
+    views/system.cpp
     models/nodetable.cpp
     models/eventtable.cpp
     widgets/scorechart.cpp

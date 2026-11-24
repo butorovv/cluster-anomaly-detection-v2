@@ -4,6 +4,7 @@
 #include "views/events.h"
 #include "views/historybar.h"
 #include "views/settings.h"
+#include "views/system.h"
 
 #include <QButtonGroup>
 #include <QComboBox>
@@ -14,6 +15,7 @@
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <array>
 
 MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitSpeed, QWidget *parent)
     : QMainWindow(parent), summitSpeed_(summitSpeed)
@@ -73,21 +75,14 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     dashboard_ = new Dashboard;
     diagnostics_ = new Diagnostics;
     events_ = new Events;
+    system_ = new SystemView;
     const QStringList names{QStringLiteral("Обзор кластера"), QStringLiteral("Диагностика группы"),
                             QStringLiteral("Журнал аномалий"), QStringLiteral("Состояние системы")};
-    for (const auto &name : names) {
-        auto *button = new QPushButton(name);
+    const std::array<QWidget *, 4> views{dashboard_, diagnostics_, events_, system_};
+    for (size_t i = 0; i < views.size(); ++i) {
+        auto *button = new QPushButton(names.at(i));
         button->setCheckable(true);
-        QWidget *page = dashboard_;
-        if (pages_->count() == 1) page = diagnostics_;
-        if (pages_->count() == 2) page = events_;
-        if (pages_->count() == 3) {
-            page = new QWidget;
-            auto *pageLayout = new QVBoxLayout(page);
-            pageLayout->addWidget(new QLabel(name));
-            pageLayout->addStretch();
-        }
-        navigation_->addButton(button, pages_->addWidget(page));
+        navigation_->addButton(button, pages_->addWidget(views[i]));
         navigation->addWidget(button);
     }
     navigation_->button(0)->setChecked(true);
@@ -154,6 +149,8 @@ void MainWindow::refresh()
                               history ? history_->to() : at);
     else if (pages_->currentWidget() == events_)
         events_->refresh(store, history ? history_->from() : QDateTime{}, history ? history_->to() : QDateTime{});
+    else if (pages_->currentWidget() == system_)
+        system_->refresh(poller_);
 }
 
 void MainWindow::updateHistory()
