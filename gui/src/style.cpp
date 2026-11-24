@@ -41,6 +41,9 @@ QString v2::style()
         QPushButton#primary:hover { background:#214fae; }
         QPushButton#primary:disabled { background:#5479c3; border-color:#5479c3; }
         QPushButton#soft { background:#edf3fc; color:#295ec5; border-color:#edf3fc; font-weight:bold; }
+        QPushButton#speedChoice { text-align:left; color:#192b40; }
+        QPushButton#speedChoice:checked { background:#edf3fc; border-color:#85a7e2; color:#295ec5; }
+        QLabel#runNotice { background:#edf3fc; color:#405c7d; border-radius:7px; padding:9px 11px; }
         QPushButton#link { color:#295ec5; background:transparent; border:1px solid transparent; padding:0 2px; }
         QPushButton#link:focus { border-color:#85a7e2; }
         QPushButton#navButton { color:#c5d1df; background:transparent; border:1px solid transparent; padding:0 11px; min-height:41px; max-height:41px; text-align:left; font-size:13px; }

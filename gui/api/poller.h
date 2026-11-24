@@ -10,6 +10,8 @@ class Poller final : public QObject {
 public:
     explicit Poller(QObject *parent = nullptr);
     void configure(const ConnectionSettings &settings);
+    void openSnapshot(const ConnectionSettings &settings, const QString &directory);
+    bool offline() const { return !snapshot_.isEmpty(); }
     const MonitorStore &store() const { return store_; }
     const ConnectionSettings &settings() const { return settings_; }
     const QMap<QString, QString> &errors() const { return errors_; }
@@ -35,6 +37,7 @@ private:
 
     MasterClient client_;
     QTimer timer_;
+    QString snapshot_;
     ConnectionSettings settings_;
     MonitorStore store_;
     QMap<QString, QString> errors_;

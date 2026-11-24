@@ -26,6 +26,7 @@ public:
     explicit MainWindow(const ConnectionSettings &settings, const QString &summitSpeed = {},
                         QList<ReviewRun> runs = {}, QWidget *parent = nullptr);
     void configurePhysicalArchive(const QString &assets);
+    void configureManagedRuns(const QString &root, const QString &powershell);
 private:
     enum Section { Home, Online, Archive, Catalog, System, Settings };
     enum Page { HomePage, RunPage, ArchivePage, CatalogPage, SystemPage, SettingsPage };
@@ -70,10 +71,14 @@ private:
     QWidget *buildSettings();
     QWidget *buildWorkspace();
     void populateCatalog();
+    void refreshManagedRuns();
+    void launchRun(bool online);
+    void connectRun(const ReviewRun &run);
 
     QSettings preferences_;
     Poller poller_;
     QList<ReviewRun> runs_;
+    QList<ReviewRun> importedRuns_;
     ReviewRun attached_;
     ReviewRun current_;
     QMap<QString, WorkspaceContext> contexts_;
@@ -81,12 +86,17 @@ private:
     bool hasRun_ = false;
     bool restoring_ = false;
     bool following_ = false;
+    bool submitting_ = false;
+    QString assets_, managedRoot_, powershell_, catalogVersion_;
+    static constexpr int managedPort_ = 18086;
     Section section_ = Home;
     QLabel *connection_;
     QLabel *runTitle_;
     QLabel *runDescription_;
     QLabel *runFacts_;
     QLabel *runStatus_;
+    QPushButton *startOnline_;
+    QPushButton *resumeArchive_;
     QLabel *breadcrumb_;
     QLineEdit *search_;
     QComboBox *runFilter_;
@@ -107,4 +117,5 @@ private:
     HistoryBar *history_;
     SystemView *system_;
     QTimer refreshTimer_;
+    QTimer managedTimer_;
 };

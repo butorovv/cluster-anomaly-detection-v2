@@ -4,6 +4,7 @@ param(
     [Parameter(Mandatory)][ValidateSet('Init','Replay','Verify','Stop')][string]$Action,
     [Parameter(Mandatory)][string]$RunDirectory,
     [string]$AssetsRoot,
+    [guid]$ExecutionId = [guid]::Empty,
     [ValidateSet('1','5','10','0')][string]$Speed = '0',
     [ValidateRange(1,65535)][int]$MasterPort = 18080,
     [ValidateRange(1,65535)][int]$PostgresPort = 55482,
@@ -12,7 +13,8 @@ param(
     [ValidateRange(1,7200)][int]$DrainTimeoutSeconds = 900,
     [string]$WindowStart = '2022-01-18T08:00:00Z',
     [string]$WindowEnd = '2022-01-18T16:00:00Z',
-    [switch]$PrivateDataPorts
+    [switch]$PrivateDataPorts,
+    [switch]$SaveSnapshot
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -65,7 +67,7 @@ if ($Action -eq 'Init') {
     if ((Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash -ne $expected) {
         throw 'SHA256 исходного Summit Parquet не совпадает с зарегистрированным.'
     }
-    $execution = [guid]::NewGuid().ToString()
+    $execution = if ($ExecutionId -eq [guid]::Empty) { [guid]::NewGuid().ToString() } else { $ExecutionId.ToString() }
     $project = "cad-gui-$($execution.Replace('-',''))"
     $run = [ordered]@{
         project = $project; execution = $execution; speed = $Speed
@@ -174,12 +176,24 @@ if ($Action -eq 'Replay') {
 }
 
 # After drain, compare an independent full API traversal with the fixed Summit grid.
+$snapshot = Join-Path $runPath 'snapshot'
+$resultPages = 0
+$eventPages = 0
+if ($SaveSnapshot) {
+    $null = New-Item -ItemType Directory -Path $snapshot
+}
 $tick = [datetimeoffset]::Parse($run.start)
 $group = 1
 $results = 0
 $after = ''
 while ($true) {
-    $page = Invoke-RestMethod "$($run.master)/v1/results?execution_id=$($run.execution)&limit=128$after" -TimeoutSec 20
+    $uri = "$($run.master)/v1/results?execution_id=$($run.execution)&limit=128$after"
+    if ($SaveSnapshot) {
+        $response = (Invoke-WebRequest $uri -TimeoutSec 20).Content
+        $page = ConvertFrom-Json -InputObject $response
+    } else {
+        $page = Invoke-RestMethod $uri -TimeoutSec 20
+    }
     if ($page.items.Count -eq 0) { break }
     foreach ($item in $page.items) {
         if ($item.raw.group -ne ('a{0:00}' -f $group) -or [datetimeoffset]$item.raw.timestamp -ne $tick) {
@@ -188,6 +202,10 @@ while ($true) {
         $results++
         if ($group -eq 16) { $group = 1; $tick = $tick.AddSeconds(10) } else { $group++ }
     }
+    if ($SaveSnapshot) {
+        Set-Content -Value $response -LiteralPath (Join-Path $snapshot "results-$resultPages.json") -Encoding utf8NoBOM
+        $resultPages++
+    }
     $next = '&after_tick=' + [uri]::EscapeDataString(([datetimeoffset]$page.next.tick).UtcDateTime.ToString('yyyy-MM-ddTHH:mm:ssZ')) + '&after_group=' + [uri]::EscapeDataString($page.next.group_id)
     if ($next -eq $after) { throw 'Курсор результатов не продвинулся.' }
     $after = $next
@@ -195,13 +213,23 @@ while ($true) {
 $events = [Collections.Generic.HashSet[string]]::new()
 $after = ''
 while ($true) {
-    $page = Invoke-RestMethod "$($run.master)/v1/events?execution_id=$($run.execution)&limit=100&after=$after" -TimeoutSec 20
+    $uri = "$($run.master)/v1/events?execution_id=$($run.execution)&limit=100&after=$after"
+    if ($SaveSnapshot) {
+        $response = (Invoke-WebRequest $uri -TimeoutSec 20).Content
+        $page = ConvertFrom-Json -InputObject $response -NoEnumerate
+    } else {
+        $page = Invoke-RestMethod $uri -TimeoutSec 20
+    }
     if ($page.Count -eq 0) { break }
     foreach ($event in $page) {
         if ([string]::CompareOrdinal($event.id, $after) -le 0 -or !$events.Add($event.id)) {
             throw 'Некорректный порядок ID или повтор события.'
         }
         $after = $event.id
+    }
+    if ($SaveSnapshot) {
+        Set-Content -Value $response -LiteralPath (Join-Path $snapshot "events-$eventPages.json") -Encoding utf8NoBOM
+        $eventPages++
     }
 }
 $summary = Summary
@@ -215,6 +243,9 @@ $report = [ordered]@{
 }
 if (Test-Path -LiteralPath $completion) {
     $report.pipeline = Get-Content -LiteralPath $completion -Raw | ConvertFrom-Json
+}
+if ($SaveSnapshot) {
+    $report.snapshot = @{ resultPages = $resultPages; eventPages = $eventPages }
 }
 SaveJson $report 'verification.json'
 $report | ConvertTo-Json -Depth 12

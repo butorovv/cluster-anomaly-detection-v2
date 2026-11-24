@@ -27,6 +27,7 @@ qt_add_library(cluster_ui STATIC
     views/diagnostics.cpp
     views/events.cpp
     views/nodeview.cpp
+    views/launchdialog.cpp
     views/historybar.cpp
     views/system.cpp
     models/nodetable.cpp
@@ -36,6 +37,7 @@ qt_add_library(cluster_ui STATIC
     widgets/eventhistogram.cpp
 )
 target_link_libraries(cluster_ui PUBLIC cluster_client Qt6::Widgets)
+target_compile_definitions(cluster_ui PRIVATE CAD_GUI_RUNNER="${CMAKE_CURRENT_SOURCE_DIR}/managed-run.ps1")
 qt_add_executable(cluster-monitor WIN32 src/main.cpp)
 target_link_libraries(cluster-monitor PRIVATE cluster_ui)
 

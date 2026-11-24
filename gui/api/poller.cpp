@@ -1,4 +1,6 @@
 #include "poller.h"
+#include <QDir>
+#include <QFile>
 
 namespace {
 const QString summaryPath = QStringLiteral("/v1/summary");
@@ -6,6 +8,13 @@ const QString metricsPath = QStringLiteral("/metrics");
 const QString resultsPath = QStringLiteral("/v1/results");
 const QString eventsPath = QStringLiteral("/v1/events");
 constexpr int pageBudget = 48;
+
+QJsonDocument readPage(const QString &path, qint64 maximum)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly) || file.size() > maximum) return {};
+    return QJsonDocument::fromJson(file.readAll());
+}
 }
 
 Poller::Poller(QObject *parent) : QObject(parent)
@@ -15,13 +24,14 @@ Poller::Poller(QObject *parent) : QObject(parent)
 
 void Poller::configure(const ConnectionSettings &settings)
 {
-    if (generation_ > 0 && settings_.masterUrl == settings.masterUrl && settings_.execution == settings.execution) {
+    if (generation_ > 0 && snapshot_.isEmpty() && settings_.masterUrl == settings.masterUrl && settings_.execution == settings.execution) {
         settings_ = settings;
         timer_.setInterval(settings_.intervalMs);
         return;
     }
     ++generation_;
     client_.cancel();
+    snapshot_.clear();
     settings_ = settings;
     store_ = {};
     errors_.clear();
@@ -35,6 +45,75 @@ void Poller::configure(const ConnectionSettings &settings)
     emit reset();
     timer_.start(settings_.intervalMs);
     poll();
+}
+
+void Poller::openSnapshot(const ConnectionSettings &settings, const QString &directory)
+{
+    if (snapshot_ == directory && settings_.execution == settings.execution) return;
+    const auto generation = ++generation_;
+    client_.cancel();
+    timer_.stop();
+    snapshot_ = directory;
+    settings_ = settings;
+    store_ = {};
+    errors_.clear();
+    health_ = readiness_ = -1;
+    pending_.clear();
+    targetResults_ = targetEvents_ = 0;
+    emit reset();
+    const QDir run(directory);
+    const auto manifest = readPage(run.filePath("verification.json"), 1024 * 1024).object();
+    const auto summary = manifest.value("summary").toObject();
+    const auto pages = manifest.value("snapshot").toObject();
+    const int expectedResults = pages.value("resultPages").toInt(-1);
+    const int expectedEvents = pages.value("eventPages").toInt(-1);
+    if (!summary.value("complete").toBool() || summary.value("execution_id").toString() != settings.execution ||
+        expectedResults <= 0 || expectedResults > 360 || expectedEvents < 0 || expectedEvents > 461) {
+        setError(summaryPath, tr("Архив запуска отсутствует или не прошёл проверку."));
+        return;
+    }
+    targetResults_ = summary.value("group_ticks").toInteger();
+    targetEvents_ = summary.value("parent_events").toInteger();
+    store_.summary = summary;
+    const QDir data(run.filePath("snapshot"));
+    // A single page per event-loop dispatch gives paint and input events time to run.
+    auto *loader = new QTimer(this);
+    connect(loader, &QTimer::timeout, this,
+        [this, loader, generation, data, expectedResults, expectedEvents,
+         page = 0, resultAfter = ResultCursor{}, eventAfter = QString{}]() mutable {
+        if (generation != generation_) { loader->deleteLater(); return; }
+        if (page < expectedResults) {
+            const auto json = readPage(data.filePath(QString("results-%1.json").arg(page)), 24 * 1024 * 1024);
+            const auto result = ResultPage::parse(json, resultAfter);
+            if (!result || result->items.isEmpty()) {
+                loader->stop();
+                loader->deleteLater();
+                setError(resultsPath, tr("Не читается сохранённая страница результатов."));
+                return;
+            }
+            resultAfter = result->next;
+            store_.insert(result->items);
+        } else if (page < expectedResults + expectedEvents) {
+            const auto json = readPage(data.filePath(QString("events-%1.json").arg(page - expectedResults)), 24 * 1024 * 1024);
+            const auto events = AnomalyEvent::parse(json, eventAfter);
+            if (!events || events->isEmpty()) {
+                loader->stop();
+                loader->deleteLater();
+                setError(eventsPath, tr("Не читается сохранённая страница событий."));
+                return;
+            }
+            eventAfter = events->last().id;
+            store_.insert(*events);
+        } else {
+            loader->stop();
+            loader->deleteLater();
+            if (!synchronized()) setError(summaryPath, tr("Число записей не совпало с подтверждённой сводкой."));
+            emit updated();
+            return;
+        }
+        if (++page % 8 == 0) emit updated();
+    });
+    loader->start(1);
 }
 
 bool Poller::stale() const

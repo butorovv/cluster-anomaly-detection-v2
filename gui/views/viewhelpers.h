@@ -12,10 +12,11 @@ inline QLabel *sectionLabel(const QString &text)
     return label;
 }
 
-inline QLabel *plainLabel()
+inline QLabel *plainLabel(const QString &text = {})
 {
     auto *label = new QLabel;
     label->setTextFormat(Qt::PlainText);
+    label->setText(text);
     label->setWordWrap(true);
     return label;
 }

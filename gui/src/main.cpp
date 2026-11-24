@@ -21,6 +21,8 @@ int main(int argc, char *argv[])
         {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"},
         {"review-root", QStringLiteral("Метаданные сохранённых запусков для визуальной приёмки"), "path"},
         {"summit-assets", QStringLiteral("Каталог проверенного архива Summit"), "path"},
+        {"managed-root", QStringLiteral("Каталог управляемых запусков"), "path"},
+        {"demo-pwsh", QStringLiteral("Путь к установленному PowerShell 7 на ВМ"), "path"},
         {"summit-speed", QStringLiteral("Заявленный темп исторического Summit Replayer (1, 5, 10, 0=MAX)"), "speed"}
     });
     parser.process(app);
@@ -42,6 +44,7 @@ int main(int argc, char *argv[])
     }
     MainWindow window(connection, speed, readReviewRuns(parser.value("review-root"), connection.intervalMs));
     window.configurePhysicalArchive(parser.value("summit-assets"));
+    window.configureManagedRuns(parser.value("managed-root"), parser.value("demo-pwsh"));
     window.show();
     return app.exec();
 }

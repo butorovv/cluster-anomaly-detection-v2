@@ -5,6 +5,8 @@
 #include "views/dashboard.h"
 #include "views/diagnostics.h"
 #include "views/historybar.h"
+#include "widgets/utcrange.h"
+#include "widgets/eventhistogram.h"
 
 #include <QComboBox>
 #include <QLabel>
@@ -228,6 +230,29 @@ private slots:
         QCOMPARE(signal.first().at(0).toString(), QString("a01"));
         QCOMPARE(signal.first().at(1).toDateTime(), start);
         QCOMPARE(signal.first().at(2).toDateTime(), end);
+    }
+
+    void validatesUtcPeriodAndSelectsHistogramBin()
+    {
+        const auto start = QDateTime::fromString("2022-01-18T23:59:00Z", Qt::ISODate);
+        const auto end = start.addSecs(120);
+        UtcRange range("Начало", "Конец");
+        range.setBounds(start, end);
+        range.setPeriod(start, end);
+        QCOMPARE(range.from(), start);
+        QCOMPARE(range.to(), end);
+        QVERIFY(range.validate(10));
+        range.setPeriod(start.addSecs(1), end);
+        QVERIFY(!range.validate(10));
+        range.setPeriod(end, start);
+        QVERIFY(!range.validate());
+        EventHistogram histogram;
+        histogram.resize(800, 131);
+        histogram.setData({start.addSecs(1)}, start, end, {}, {});
+        QSignalSpy selection(&histogram, &EventHistogram::intervalSelected);
+        QTest::mouseClick(&histogram, Qt::LeftButton, {}, QPoint(30, 80));
+        QCOMPARE(selection.size(), 1);
+        QCOMPARE(selection.first().first().toDateTime(), start);
     }
 };
 

@@ -4,6 +4,7 @@
 #include "views/diagnostics.h"
 #include "views/events.h"
 #include "views/historybar.h"
+#include "views/launchdialog.h"
 #include "views/nodeview.h"
 #include "views/settings.h"
 #include "views/system.h"
@@ -11,16 +12,23 @@
 
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
+#include <QProcess>
 #include <QPushButton>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <QUuid>
+#include <algorithm>
 
 namespace {
 class WorkspaceStack final : public QStackedWidget {
@@ -93,7 +101,7 @@ QString runKey(const ReviewRun &run)
 
 MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitSpeed,
                        QList<ReviewRun> runs, QWidget *parent)
-    : QMainWindow(parent), runs_(std::move(runs))
+    : QMainWindow(parent), runs_(std::move(runs)), importedRuns_(runs_)
 {
     attached_.connection = initial;
     attached_.speed = summitSpeed;
@@ -202,7 +210,9 @@ QWidget *MainWindow::buildHome()
         auto *action = button(online ? tr("Перейти к мониторингу") : tr("Новый запуск"), online ? "soft" : "primary");
         action->setFixedHeight(40);
         body->addWidget(action);
-        connect(action, &QPushButton::clicked, this, [this, online] { navigate(online ? Online : Archive); });
+        connect(action, &QPushButton::clicked, this, [this, online] {
+            if (online) navigate(Online); else launchRun(false);
+        });
         tiles->addWidget(tile, 1);
     }
     layout->addLayout(tiles);
@@ -246,7 +256,7 @@ QWidget *MainWindow::buildHome()
         names->addWidget(label(run.period(), "small"));
         line->addWidget(identity, 42);
         line->addWidget(label(run.events), 18);
-        auto *status = label(run.verified ? tr("✓  Завершён") : tr("Требуется сверка"), "small");
+        auto *status = label(run.status(), "small");
         if (run.verified) status->setStyleSheet("color:#16866b");
         line->addWidget(status, 26);
         auto *slot = new QWidget;
@@ -275,17 +285,23 @@ QWidget *MainWindow::buildArchive()
     card->setMaximumWidth(750);
     auto *body = column(card, 20, 10);
     body->addWidget(sectionLabel(tr("Новый анализ Summit D2")));
-    for (const auto &run : runs_) {
-        if (!run.online()) {
-            body->addWidget(label(tr("Доступный архив · %1").arg(run.period()), "muted"));
-            break;
-        }
-    }
+    body->addWidget(label(tr("Доступный архив · 18 января 2022 · 08:00–16:00 UTC"), "muted"));
     body->addWidget(label(tr("Выберите дату, период и скорость воспроизведения."), "muted"));
     auto *start = button(tr("Новый запуск"), "primary");
-    start->setEnabled(false);
-    start->setToolTip(tr("Создание запуска подключается после визуальной приёмки"));
-    body->addWidget(start, 0, Qt::AlignLeft);
+    auto *actions = new QHBoxLayout;
+    actions->addWidget(start);
+    connect(start, &QPushButton::clicked, this, [this] { launchRun(false); });
+    resumeArchive_ = button(tr("Открыть текущий запуск"), "soft");
+    resumeArchive_->hide();
+    actions->addWidget(resumeArchive_);
+    actions->addStretch();
+    connect(resumeArchive_, &QPushButton::clicked, this, [this] {
+        for (const auto &run : runs_) if (run.active() && !run.online()) {
+            openRun(run, Archive);
+            break;
+        }
+    });
+    body->addLayout(actions);
     layout->addWidget(card);
     layout->addStretch();
     return page;
@@ -299,12 +315,15 @@ QWidget *MainWindow::buildCatalog()
     layout->addSpacing(7);
     heading(layout, tr("История запусков"), tr("Сохранённые результаты диагностики"));
     auto *filters = new QHBoxLayout;
+    auto *newRun = button(tr("+ Новый запуск"), "primary");
     search_ = new QLineEdit;
     search_->setPlaceholderText(tr("Поиск запуска"));
     runFilter_ = new QComboBox;
     runFilter_->addItems({tr("Все запуски"), tr("Анализ архива"), tr("Имитация онлайн-мониторинга")});
     filters->addWidget(search_, 1);
     filters->addWidget(runFilter_);
+    filters->addWidget(newRun);
+    connect(newRun, &QPushButton::clicked, this, [this] { launchRun(false); });
     layout->addLayout(filters);
     auto *list = new QWidget;
     catalogList_ = column(list);
@@ -329,13 +348,12 @@ void MainWindow::populateCatalog()
         auto *layout = column(card, 19, 9);
         auto *titleRow = new QHBoxLayout;
         titleRow->addWidget(sectionLabel(run.name), 1);
-        if (run.verified) {
-            auto *status = label(tr("✓  Завершён"));
-            status->setStyleSheet("color:#16866b");
-            titleRow->addWidget(status);
-        }
+        auto *status = label(run.status());
+        if (run.verified) status->setStyleSheet("color:#16866b");
+        titleRow->addWidget(status);
         layout->addLayout(titleRow);
         layout->addWidget(label(run.period(), "muted"));
+        if (run.created.isValid()) layout->addWidget(label(tr("Запуск · %1").arg(timeText(run.created)), "small"));
         layout->addWidget(label(tr("%1  ·  %2  ·  %3 событий  ·  %4 результатов%5")
             .arg(run.online() ? tr("Имитация онлайн-мониторинга") : tr("Анализ архива"), pace(run.speed),
                  run.events, run.ticks, run.duration.isEmpty() ? QString{} : "  ·  " + run.duration), "small"));
@@ -386,6 +404,9 @@ QWidget *MainWindow::buildWorkspace()
     header->addWidget(identity, 1);
     runStatus_ = label({}, "small");
     header->addWidget(runStatus_);
+    startOnline_ = button(tr("Запустить имитацию"), "primary");
+    connect(startOnline_, &QPushButton::clicked, this, [this] { launchRun(true); });
+    header->addWidget(startOnline_);
     layout->addLayout(header);
     layout->addSpacing(4);
     runFacts_ = label({}, "small");
@@ -477,7 +498,92 @@ QWidget *MainWindow::buildWorkspace()
 
 void MainWindow::configurePhysicalArchive(const QString &assets)
 {
+    assets_ = assets;
     node_->configure(assets);
+}
+
+void MainWindow::configureManagedRuns(const QString &root, const QString &powershell)
+{
+    managedRoot_ = root.isEmpty() ? QString{} : QDir(root).absolutePath();
+    powershell_ = powershell;
+    if (managedRoot_.isEmpty()) return;
+    connect(&managedTimer_, &QTimer::timeout, this, &MainWindow::refreshManagedRuns);
+    managedTimer_.start(850);
+    refreshManagedRuns();
+}
+
+void MainWindow::refreshManagedRuns()
+{
+    auto managed = readManagedRuns(managedRoot_, managedPort_, attached_.connection.intervalMs);
+    QStringList version;
+    for (const auto &run : managed) version << runKey(run) + run.phase + run.ticks;
+    const auto revision = version.join('|');
+    if (revision == catalogVersion_) return;
+    catalogVersion_ = revision;
+    runs_ = managed + importedRuns_;
+    resumeArchive_->setVisible(std::any_of(managed.cbegin(), managed.cend(), [](const ReviewRun &run) {
+        return run.active() && !run.online();
+    }));
+    populateCatalog();
+    auto *previousHome = pages_->widget(HomePage);
+    const bool atHome = pages_->currentWidget() == previousHome;
+    pages_->insertWidget(HomePage, scrollPage(buildHome()));
+    pages_->removeWidget(previousHome);
+    previousHome->deleteLater();
+    if (atHome) pages_->setCurrentIndex(HomePage);
+    if (hasRun_) for (const auto &run : managed) {
+        if (runKey(run) != runKey(current_)) continue;
+        current_ = run;
+        connectRun(current_);
+        refresh();
+        break;
+    }
+}
+
+void MainWindow::launchRun(bool online)
+{
+    if (submitting_) return;
+    const auto powershell = QFileInfo(powershell_);
+    const auto scanner = QFileInfo(QDir(assets_).filePath("data/prepared/summit-D1-pilot/D1.parquet"));
+    if (managedRoot_.isEmpty() || assets_.isEmpty() || !scanner.isReadable() ||
+        !powershell.isAbsolute() || !powershell.isExecutable() || powershell.baseName() != "pwsh") {
+        QMessageBox::information(this, tr("Новый запуск"), tr("На ВМ нужно настроить каталог запусков, архив Summit и PowerShell."));
+        return;
+    }
+    refreshManagedRuns();
+    if (std::any_of(runs_.cbegin(), runs_.cend(), [](const ReviewRun &run) { return run.active(); })) {
+        QMessageBox::information(this, tr("Новый запуск"), tr("Уже выполняется другой управляемый запуск."));
+        return;
+    }
+    submitting_ = true;
+    LaunchDialog dialog(online, this);
+    const auto accepted = dialog.exec() == QDialog::Accepted;
+    submitting_ = false;
+    if (!accepted) return;
+    const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    const QDir entry(QDir(managedRoot_).filePath(id));
+    QSaveFile request(entry.filePath("request.json"));
+    QProcess runner;
+    runner.setProgram(powershell.absoluteFilePath());
+    runner.setArguments({"-NoLogo", "-NoProfile", "-NonInteractive", "-File", QStringLiteral(CAD_GUI_RUNNER),
+                         "-Catalog", managedRoot_, "-RunId", id, "-AssetsRoot", assets_,
+                         "-MasterPort", QString::number(managedPort_)});
+    runner.setStandardOutputFile(entry.filePath("runner.log"), QIODevice::Append);
+    runner.setStandardErrorFile(entry.filePath("runner.log"), QIODevice::Append);
+    const QJsonObject payload{{"id", id}, {"name", dialog.name()}, {"speed", dialog.speed()},
+        {"kind", online ? "online" : "archive"}, {"start", dialog.from().toString(Qt::ISODate)},
+        {"end", dialog.to().toString(Qt::ISODate)}, {"created", QDateTime::currentDateTimeUtc().toString(Qt::ISODate)}};
+    const auto json = QJsonDocument(payload).toJson();
+    if (!QDir().mkpath(entry.absolutePath()) || !request.open(QIODevice::WriteOnly) ||
+        request.write(json) != json.size() || !request.commit() || !runner.startDetached()) {
+        QMessageBox::warning(this, tr("Новый запуск"), tr("Не удалось подготовить или запустить задачу."));
+        return;
+    }
+    refreshManagedRuns();
+    for (const auto &run : runs_) if (run.connection.execution == id) {
+        openRun(run, online ? Online : Archive);
+        break;
+    }
 }
 
 void MainWindow::navigate(Section section)
@@ -526,7 +632,7 @@ void MainWindow::openRun(const ReviewRun &run, Section section)
     if (different) {
         restoring_ = true;
         WorkspaceContext initial;
-        initial.following = section == Online;
+        initial.following = section == Online || run.active();
         const auto state = contexts_.value(key, initial);
         following_ = state.following;
         pendingTimeline_ = state;
@@ -540,11 +646,20 @@ void MainWindow::openRun(const ReviewRun &run, Section section)
         trail_ = state.trail;
         showTab(state.tab);
     }
-    auto settings = run.connection;
-    settings.intervalMs = attached_.connection.intervalMs;
-    poller_.configure(settings);
+    connectRun(run);
     restoring_ = false;
     refresh();
+}
+
+void MainWindow::connectRun(const ReviewRun &run)
+{
+    auto settings = run.connection;
+    settings.intervalMs = attached_.connection.intervalMs;
+    if (run.snapshot) poller_.openSnapshot(settings, run.directory);
+    else {
+        if (run.phase == "preparing") settings.execution.clear();
+        poller_.configure(settings);
+    }
 }
 
 MainWindow::WorkspaceContext MainWindow::workspaceContext() const
@@ -609,17 +724,22 @@ void MainWindow::refresh()
     updateConnection();
     if (pages_->currentIndex() == SystemPage) system_->refresh(poller_);
     if (pages_->currentIndex() != RunPage) return;
-    runTitle_->setText(section_ == Online ? tr("Онлайн-мониторинг") : tr("Результаты анализа"));
+    runTitle_->setText(section_ == Online ? tr("Онлайн-мониторинг") :
+                       section_ == Archive ? tr("Анализ архива") : tr("Результаты анализа"));
     breadcrumb_->setText(section_ == Online ? tr("Главная  ›  Мониторинг") : tr("История запусков  ›  Результаты запуска"));
     runDescription_->setText(current_.shortName.isEmpty() ? current_.name : current_.shortName + " · " + current_.period());
-    runStatus_->setText(current_.verified ? tr("✓  Завершён") : QString{});
-    runStatus_->setStyleSheet("color:#16866b");
+    runStatus_->setText(current_.verified || !current_.phase.isEmpty() ? current_.status() : QString{});
+    runStatus_->setStyleSheet(current_.phase == "error" ? "color:#c43648" : "color:#16866b");
+    startOnline_->setVisible(section_ == Online && !current_.active());
     QStringList facts;
     if (current_.online()) facts << tr("Имитация ×1 (архив Summit)");
     else if (!current_.speed.isEmpty() && current_.shortName.isEmpty()) facts << tr("Архив Summit · %1").arg(pace(current_.speed));
     if (!current_.ticks.isEmpty()) facts << tr("%1 результатов").arg(current_.ticks);
     if (!current_.events.isEmpty()) facts << tr("%1 событий").arg(current_.events);
     if (!current_.duration.isEmpty()) facts << current_.duration;
+    else if (current_.active() && current_.created.isValid())
+        facts << tr("С запуска: %1 с").arg(current_.created.secsTo(QDateTime::currentDateTimeUtc()));
+    if (!current_.phaseMessage.isEmpty()) facts << current_.phaseMessage;
     const auto &store = poller_.store();
     if (current_.verified && !poller_.synchronized() && !poller_.stale())
         facts << tr("Загрузка результатов…");
@@ -707,6 +827,12 @@ void MainWindow::applyConnection(const ConnectionSettings &settings)
 
 void MainWindow::updateConnection()
 {
+    if (poller_.offline()) {
+        connection_->setText(poller_.synchronized() ? tr("●  Сохранённые результаты")
+            : poller_.stale() ? tr("●  Ошибка чтения архива") : tr("●  Загрузка архива"));
+        connection_->setStyleSheet("color:#c5d1df");
+        return;
+    }
     const int health = poller_.health();
     const bool stale = poller_.stale();
     const auto &errors = poller_.errors();
