@@ -32,7 +32,7 @@ QDateTime summitEnd() { return summitStart().addSecs(8 * 3600); }
 bool ReviewRun::active() const
 {
     return phase == "preparing" || phase == "processing" || phase == "draining"
-        || phase == "synchronizing" || phase == "stopping";
+        || phase == "synchronizing" || phase == "archiving" || phase == "stopping";
 }
 
 QString ReviewRun::status() const
@@ -42,6 +42,7 @@ QString ReviewRun::status() const
     if (phase == "processing") return QStringLiteral("Обработка телеметрии");
     if (phase == "draining") return QStringLiteral("Финализация и доставка");
     if (phase == "synchronizing") return QStringLiteral("Сверка результатов");
+    if (phase == "archiving") return QStringLiteral("Ожидание архивирования");
     if (phase == "stopping") return QStringLiteral("Результаты сохранены · остановка окружения");
     return verified ? QStringLiteral("Завершён") : QStringLiteral("Требуется сверка");
 }
@@ -110,6 +111,7 @@ QList<ReviewRun> readManagedRuns(const QString &root, int port, int pollInterval
         const auto state = readObject(folder.filePath("state.json"));
         const QDir environment(folder.filePath("environment"));
         const auto report = readObject(environment.filePath("verification.json"));
+        const auto metadata = readObject(environment.filePath("demo.json"));
         const auto summary = report.value("summary").toObject();
         ReviewRun run;
         run.connection = {QUrl(QString("http://127.0.0.1:%1").arg(port)), entry, pollInterval};
@@ -121,6 +123,7 @@ QList<ReviewRun> readManagedRuns(const QString &root, int port, int pollInterval
         run.summitSource = true;
         run.speed = job.value("speed").toString();
         run.directory = environment.absolutePath();
+        run.archiveMode = metadata.value("archiveMode").toString();
         run.phase = state.value("phase").toString("preparing");
         run.phaseMessage = state.value("message").toString();
         run.snapshot = summary.value("complete").toBool() && summary.value("execution_id").toString() == entry

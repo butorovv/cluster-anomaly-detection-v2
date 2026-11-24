@@ -42,7 +42,7 @@ func TestTelemetryPublicationAndCoverage(t *testing.T) {
 	end := at.Add(time.Minute)
 	f := &measurementsFixture{start: at, end: at.Add(30 * time.Second)}
 	api := Handler(publicationFixture{Publication{Execution: d2ID, Source: SummitSHA, Profile: summitProfile, Start: at, End: end,
-		Ticks: []time.Time{at, at.Add(20 * time.Second), at.Add(30 * time.Second)}}}, f)
+		Ticks: []time.Time{at, at.Add(20 * time.Second), at.Add(30 * time.Second)}}}, f, nil)
 	query := url.Values{"execution_id": {d2ID}, "group_id": {"a14"}, "host_id": {"a14n04"},
 		"from": {at.Format(time.RFC3339)}, "to": {end.Format(time.RFC3339)}}
 	response := httptest.NewRecorder()

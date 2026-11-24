@@ -21,6 +21,7 @@ struct ReviewRun {
     QString phaseMessage;
     QDateTime created;
     bool snapshot = false;
+    QString archiveMode;
     bool online() const { return onlineSimulation; }
     bool active() const;
     QString status() const;

@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/app/telemetryarchive"
 	archive "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/archive/postgres"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -22,6 +25,9 @@ import (
 func run(ctx context.Context, args []string) error {
 	if len(args) > 0 && args[0] == "serve" {
 		return serve(ctx, args[1:])
+	}
+	if len(args) > 0 && (args[0] == "consume" || args[0] == "init-stream" || args[0] == "stream-progress") {
+		return streamCommand(ctx, args[0], args[1:])
 	}
 	if len(args) == 0 || args[0] != "import-summit" {
 		return fmt.Errorf("usage: telemetry-archive import-summit --input <prepared Summit Parquet>")
@@ -44,6 +50,53 @@ func run(ctx context.Context, args []string) error {
 		return fmt.Errorf("Summit import: %w", err)
 	}
 	return json.NewEncoder(os.Stdout).Encode(manifest)
+}
+
+func streamCommand(ctx context.Context, operation string, args []string) error {
+	flags := flag.NewFlagSet(operation, flag.ContinueOnError)
+	id := flags.String("execution", "", "execution UUID")
+	source := flags.String("source", telemetryarchive.SummitSHA, "source SHA256")
+	profile := flags.String("profile", "", "profile SHA256")
+	from := flags.String("from", "", "inclusive UTC start")
+	to := flags.String("to", "", "exclusive UTC end")
+	brokers := flags.String("brokers", "127.0.0.1:29186", "Kafka bootstrap servers")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || os.Getenv("ARCHIVE_DATABASE_URL") == "" {
+		return fmt.Errorf("invalid stream arguments or missing archive database configuration")
+	}
+	pool, err := pgxpool.New(ctx, os.Getenv("ARCHIVE_DATABASE_URL"))
+	if err != nil {
+		return fmt.Errorf("archive database configuration unavailable")
+	}
+	defer pool.Close()
+	if operation == "init-stream" {
+		if err := telemetryarchive.InitializeSource(ctx, pool, *source); err != nil {
+			return err
+		}
+		_, err := archive.New(ctx, pool, 18)
+		return err
+	}
+	end, err := time.Parse(time.RFC3339, *to)
+	if err != nil {
+		return err
+	}
+	if operation == "stream-progress" {
+		var partitions, ticks int64
+		if err := pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER (WHERE next_tick=$2)
+ FROM cad_archive.positions WHERE execution_id=$1::uuid`, *id, end).Scan(&partitions, &ticks); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(map[string]any{"partitions": partitions, "finished_partitions": ticks, "complete": ticks == 16})
+	}
+	start, err := time.Parse(time.RFC3339, *from)
+	if err != nil {
+		return err
+	}
+	config := telemetryarchive.StreamConfig{Binding: domain.InputBinding{ExecutionID: *id, InputSHA256: *source, ProfileSHA256: *profile},
+		Window: domain.InputWindow{Start: start, End: end}, Broker: kafkainput.Broker{Seeds: strings.Split(*brokers, ",")}}
+	return telemetryarchive.Consume(ctx, pool, config)
 }
 
 func serve(ctx context.Context, args []string) error {
@@ -73,11 +126,28 @@ func serve(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("cannot read archive inventory")
 	}
+	var stream telemetryarchive.StreamReader
+	if endpoint := os.Getenv("ARCHIVE_STREAM_READ_URL"); endpoint != "" {
+		config, err := pgxpool.ParseConfig(endpoint)
+		if err != nil {
+			return fmt.Errorf("invalid stream archive configuration")
+		}
+		config.MaxConns = 4
+		streamPool, err := pgxpool.NewWithConfig(ctx, config)
+		if err != nil {
+			return fmt.Errorf("stream archive database unavailable")
+		}
+		defer streamPool.Close()
+		stream, err = archive.NewReader(ctx, streamPool)
+		if err != nil {
+			return fmt.Errorf("cannot read stream archive inventory")
+		}
+	}
 	client := &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
 	catalog := &telemetryarchive.Catalog{RunsRoot: *runs, ReviewRoot: *review, Client: client}
-	server := &http.Server{Addr: *listen, Handler: telemetryarchive.Handler(catalog, reader),
+	server := &http.Server{Addr: *listen, Handler: telemetryarchive.Handler(catalog, reader, stream),
 		ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 8 * time.Second, MaxHeaderBytes: 8192}
 	go func() {
 		<-ctx.Done()

@@ -39,6 +39,7 @@ type demoIdentity struct {
 	End       time.Time `json:"end"`
 	Input     string    `json:"inputSha256"`
 	Profile   string    `json:"profileSha256"`
+	Mode      string    `json:"archiveMode"`
 }
 
 func readJSON(path string, limit int64, target any) error {
@@ -76,6 +77,8 @@ func (c *Catalog) Published(ctx context.Context, s Selection) (Publication, erro
 	if legacy != "" {
 		demo.Input, demo.Profile = SummitSHA, summitProfile
 	}
+	if demo.Mode == "" { demo.Mode = "reuse" }
+	if demo.Mode != "reuse" && demo.Mode != "stream" { return Publication{},fmt.Errorf("unsupported archive mode") }
 	if !demo.Start.Before(demo.End) || demo.Input == "" || demo.Profile == "" {
 		return Publication{}, fmt.Errorf("unverified run identity")
 	}
@@ -127,6 +130,7 @@ func (c *Catalog) Published(ctx context.Context, s Selection) (Publication, erro
 		!p.Start.Equal(demo.Start) || !p.End.Equal(demo.End) || len(p.Ticks) > 61 {
 		return Publication{}, fmt.Errorf("Master identity differs from catalog")
 	}
+	p.Mode = demo.Mode
 	return p, nil
 }
 
@@ -153,7 +157,7 @@ func (c *Catalog) loadSnapshot(ctx context.Context, dir string, demo demoIdentit
 		return nil, fmt.Errorf("snapshot failed manifest validation")
 	}
 	p := &savedPublication{Identity: Publication{Execution: demo.Execution, Source: demo.Input,
-		Profile: demo.Profile, Start: demo.Start, End: demo.End}, byGroup: make(map[string][]time.Time)}
+		Profile: demo.Profile, Mode: demo.Mode, Start: demo.Start, End: demo.End}, byGroup: make(map[string][]time.Time)}
 	tick := demo.Start
 	group := 1
 	var count int64

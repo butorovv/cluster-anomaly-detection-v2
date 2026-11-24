@@ -758,6 +758,8 @@ void MainWindow::refresh()
     if (!current_.ticks.isEmpty()) facts << tr("%1 результатов").arg(current_.ticks);
     if (!current_.events.isEmpty()) facts << tr("%1 событий").arg(current_.events);
     if (!current_.duration.isEmpty()) facts << current_.duration;
+    if (current_.archiveMode == "stream") facts << tr("Потоковый архив");
+    else if (current_.archiveMode == "reuse") facts << tr("Архив Summit уже загружен");
     else if (current_.active() && current_.created.isValid())
         facts << tr("С запуска: %1 с").arg(current_.created.secsTo(QDateTime::currentDateTimeUtc()));
     if (!current_.phaseMessage.isEmpty()) facts << current_.phaseMessage;

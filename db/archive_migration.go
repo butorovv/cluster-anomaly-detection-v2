@@ -4,6 +4,7 @@ import (
 	"context"
 	"embed"
 	"io/fs"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -39,8 +40,8 @@ func (archiveSeries) Open(name string) (fs.File, error) {
 	if name == "migrations/V1__core_schema.sql" {
 		return Files.Open(name)
 	}
-	if name == "migrations/V2__archive_control.sql" {
-		return archiveControl.Open("archive_migrations/V2__archive_control.sql")
+	if strings.HasPrefix(name, "migrations/") {
+		return archiveControl.Open("archive_migrations/" + strings.TrimPrefix(name, "migrations/"))
 	}
 	return nil, fs.ErrNotExist
 }

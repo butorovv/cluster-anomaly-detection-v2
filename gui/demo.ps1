@@ -15,7 +15,8 @@ param(
     [string]$WindowEnd = '2022-01-18T16:00:00Z',
     [switch]$PrivateDataPorts,
     [switch]$SaveSnapshot,
-    [switch]$ArchivePublication
+    [switch]$ArchivePublication,
+    [ValidateSet('reuse','stream')][string]$ArchiveMode = 'reuse'
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -77,6 +78,7 @@ if ($Action -eq 'Init') {
         workers = $Workers
         inputSha256 = $expected
         profileSha256 = 'a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36'
+        archiveMode = $ArchiveMode
     }
     $null = New-Item -ItemType Directory -Path $runPath
     SaveJson $run 'demo.json'
@@ -97,9 +99,10 @@ if ($Action -eq 'Init') {
 services:
   postgres:
     ports: !reset []
-  kafka:
-    ports: !reset []
 '@
+        if ($ArchiveMode -ne 'stream') {
+            $networkOverride += "`n  kafka:`n    ports: !reset []"
+        }
         if ($IsLinux) {
             $uid = & id -u
             $gid = & id -g

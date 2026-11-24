@@ -33,6 +33,7 @@ type Publication struct {
 	Start     time.Time   `json:"window_start"`
 	End       time.Time   `json:"window_end"`
 	Ticks     []time.Time `json:"ticks"`
+	Mode      string      `json:"-"`
 }
 
 func selection(r *http.Request, requireHost bool) (Selection, bool) {
@@ -130,10 +131,38 @@ type PhysicalReader interface {
 	Samples(context.Context, string, []time.Time) (map[int64]archive.Values, error)
 }
 
-func Handler(source PublicationSource, reader PhysicalReader) http.Handler {
+type StreamReader interface {
+	StreamMasks(context.Context, string, string, string, int, int, time.Time, time.Time) (map[int64]int32, error)
+	Samples(context.Context, string, []time.Time) (map[int64]archive.Values, error)
+}
+
+func Handler(source PublicationSource, reader PhysicalReader, stream StreamReader) http.Handler {
 	inflight := make(chan struct{}, 8)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /v1/telemetry/availability", func(w http.ResponseWriter, r *http.Request) {
+		from, e1 := time.Parse(time.RFC3339, r.URL.Query().Get("from"))
+		to, e2 := time.Parse(time.RFC3339, r.URL.Query().Get("to"))
+		if e1 != nil || e2 != nil || (domain.InputWindow{Start: from, End: to}).Validate() != nil {
+			http.Error(w, "invalid UTC window", 400)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		ranges, err := reader.Imported(ctx, SummitSHA, TopologySHA())
+		if err != nil {
+			http.Error(w, "archive unavailable", 503)
+			return
+		}
+		mode := "stream"
+		for _, interval := range ranges {
+			if !from.Before(interval.From) && !to.After(interval.To) {
+				mode = "reuse"
+				break
+			}
+		}
+		publishJSON(w, map[string]string{"mode": mode, "source_sha256": SummitSHA})
+	})
 	mux.HandleFunc("GET /v1/telemetry", func(w http.ResponseWriter, r *http.Request) {
 		s, ok := selection(r, true)
 		if !ok {
@@ -162,12 +191,26 @@ func Handler(source PublicationSource, reader PhysicalReader) http.Handler {
 			http.Error(w, "execution identity unavailable", 409)
 			return
 		}
-		ranges, err := reader.Imported(ctx, p.Source, TopologySHA())
+		var ranges []archive.ImportRange
+		var masks map[int64]int32
+		mode := "verified_import"
+		if p.Mode == "stream" {
+			mode = "stream_archive"
+			if stream == nil {
+				http.Error(w, "stream archive unavailable", 503)
+				return
+			}
+			part, _ := topology.PartitionForGroup(s.Group)
+			_, node, _ := topology.ParseHostname(s.Host)
+			masks, err = stream.StreamMasks(ctx, p.Execution, p.Source, p.Profile, part, node, s.From, s.To)
+		} else {
+			ranges, err = reader.Imported(ctx, p.Source, TopologySHA())
+		}
 		if err != nil {
 			http.Error(w, "archive unavailable", 503)
 			return
 		}
-		result := Response{Execution: p.Execution, Source: p.Source, Profile: p.Profile, Provenance: "verified_import",
+		result := Response{Execution: p.Execution, Source: p.Source, Profile: p.Profile, Provenance: mode,
 			Items: make([]Measurement, 0, 61)}
 		for i, name := range domain.FeatureNames {
 			unit := "W"
@@ -192,6 +235,13 @@ func Handler(source PublicationSource, reader PhysicalReader) http.Handler {
 			item := Measurement{Time: tick.UTC(), Status: "not_published"}
 			if published[tick.Unix()] {
 				item.Status = "pending_archive"
+				if mask, confirmed := masks[tick.Unix()]; confirmed {
+					item.Status = "missing_observation"
+					if mask >= 0 {
+						eligible = append(eligible, tick)
+						item.Status = "available"
+					}
+				}
 				for _, coverage := range ranges {
 					if !tick.Before(coverage.From) && tick.Before(coverage.To) {
 						eligible = append(eligible, tick)
@@ -202,14 +252,33 @@ func Handler(source PublicationSource, reader PhysicalReader) http.Handler {
 			}
 			result.Items = append(result.Items, item)
 		}
-		values, err := reader.Samples(ctx, s.Host, eligible)
+		var values map[int64]archive.Values
+		if p.Mode == "stream" {
+			values, err = stream.Samples(ctx, s.Host, eligible)
+		} else {
+			values, err = reader.Samples(ctx, s.Host, eligible)
+		}
 		if err != nil {
 			http.Error(w, "archive unavailable", 503)
 			return
 		}
 		for i := range result.Items {
 			item := &result.Items[i]
-			if value, ok := values[item.Time.Unix()]; ok && item.Status == "missing_observation" {
+			if p.Mode == "stream" && item.Status == "available" {
+				value := values[item.Time.Unix()]
+				mask := masks[item.Time.Unix()]
+				for channel := range value {
+					if mask&(1<<channel) == 0 {
+						value[channel] = nil
+						continue
+					}
+					if value[channel] == nil {
+						http.Error(w, "archive coverage differs from stored values", 503)
+						return
+					}
+				}
+				item.Values = &value
+			} else if value, ok := values[item.Time.Unix()]; ok && item.Status == "missing_observation" {
 				item.Status = "available"
 				item.Values = &value
 			}

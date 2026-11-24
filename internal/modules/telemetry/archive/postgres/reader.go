@@ -77,3 +77,24 @@ func (r *Reader) Samples(ctx context.Context, host string, ticks []time.Time) (m
 	}
 	return values, rows.Err()
 }
+
+func (r *Reader) StreamMasks(ctx context.Context, execution, source, profile string, partition, node int, from, to time.Time) (map[int64]int32, error) {
+	rows, err := r.pool.Query(ctx, `SELECT c.tick,c.masks[$5]
+ FROM cad_archive.coverage c JOIN cad_archive.stream_executions e USING(execution_id)
+ WHERE c.execution_id=$1 AND e.source_sha256=$2 AND e.profile_sha256=$3
+ AND c.partition_id=$4 AND c.tick >= $6 AND c.tick < $7`, execution, source, profile, partition, node, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[int64]int32)
+	for rows.Next() {
+		var tick time.Time
+		var mask int32
+		if err := rows.Scan(&tick, &mask); err != nil {
+			return nil, err
+		}
+		out[tick.Unix()] = mask
+	}
+	return out, rows.Err()
+}
