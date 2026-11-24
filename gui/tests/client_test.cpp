@@ -47,6 +47,8 @@ public:
 
     bool failing = false;
     bool late = false;
+    bool summaryFailing = false;
+    bool newTail = false;
 
 private:
     void send(QTcpSocket *socket, const QUrl &url)
@@ -61,7 +63,8 @@ private:
                 {"parent_events", selected == execution ? (late ? 2 : 1) : 0}});
         } else if (path == "/v1/results") {
             const auto after = query.queryItemValue("after_tick");
-            const auto times = late ? QStringList{first, middle, last} : QStringList{first, last};
+            auto times = late ? QStringList{first, middle, last} : QStringList{first, last};
+            if (newTail) times << "2022-01-18T08:00:30Z";
             QJsonArray items;
             QString next = after;
             for (const auto &time : times) {
@@ -76,14 +79,17 @@ private:
         } else if (path == "/v1/events") {
             const auto after = query.queryItemValue("after");
             QJsonArray rows;
-            for (const auto &id : late ? QStringList{"a", "z"} : QStringList{"z"})
+            auto ids = late ? QStringList{"a", "z"} : QStringList{"z"};
+            if (newTail) ids << "zz";
+            for (const auto &id : ids)
                 if (selected == execution && id > after) rows.append(eventPayload(id));
             body = QJsonDocument(rows);
         } else if (path == "/metrics") {
             body = QJsonDocument(QJsonObject{});
         }
         const auto bytes = body.isNull() ? QByteArray{} : body.toJson(QJsonDocument::Compact);
-        socket->write(QByteArray(failing ? "HTTP/1.1 503 Unavailable\r\n" : "HTTP/1.1 200 OK\r\n")
+        const bool unavailable = failing || (summaryFailing && path == "/v1/summary");
+        socket->write(QByteArray(unavailable ? "HTTP/1.1 503 Unavailable\r\n" : "HTTP/1.1 200 OK\r\n")
                       + "Content-Length: " + QByteArray::number(bytes.size()) + "\r\nConnection: close\r\n\r\n" + bytes);
         socket->disconnectFromHost();
     }
@@ -119,6 +125,21 @@ private slots:
         QVERIFY(ResultPage::parse(payload, {}));
         QVERIFY(!ResultPage::parse(payload, {first, "a01"}));
         QVERIFY(!AnomalyEvent::parse(QJsonDocument(QJsonArray{eventPayload("a"), eventPayload("a")}), {}));
+    }
+
+    void readsLiveFeedsWhileSummaryIsUnavailable()
+    {
+        MasterFixture fixture;
+        QVERIFY(fixture.listen(QHostAddress::LocalHost));
+        Poller poller;
+        poller.configure({QUrl(QString("http://127.0.0.1:%1").arg(fixture.serverPort())), execution, 50});
+        QTRY_VERIFY_WITH_TIMEOUT(poller.synchronized(), 4000);
+        fixture.summaryFailing = true;
+        fixture.newTail = true;
+        QTRY_VERIFY_WITH_TIMEOUT(poller.errors().contains("/v1/summary"), 4000);
+        QTRY_COMPARE_WITH_TIMEOUT(poller.store().resultCount(), 3, 4000);
+        QTRY_COMPARE_WITH_TIMEOUT(poller.store().events().size(), 2, 4000);
+        QCOMPARE(poller.health(), 1);
     }
 
     void recoversLatePagesAndIsolatesExecutions()

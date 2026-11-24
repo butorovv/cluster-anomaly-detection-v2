@@ -151,10 +151,17 @@ SELECT (SELECT count(*) FROM cad_v2.group_checkpoints
        + (SELECT count(*) FROM cad_v2.worker_tick_fragments WHERE execution_id='$($run.execution)'::uuid AND delivered_at IS NULL);
 "@
 $drain = [Diagnostics.Stopwatch]::StartNew()
+$summary = $null
 do {
-    $summary = Summary
     $pending = Compose @('exec','-T','postgres','psql','-U','cad_admin','-d','cad','-At','-v','ON_ERROR_STOP=1','-c',$query)
-    if ($summary.complete -and $pending -eq '16|0') { break }
+    if ($pending -eq '16|0') {
+        try {
+            $summary = Summary
+            if ($summary.complete) { break }
+        } catch {
+            Write-Warning 'Временный сбой получения сводки Master. Сверка будет повторена.'
+        }
+    }
     Start-Sleep -Seconds 1
 } while ($drain.Elapsed.TotalSeconds -lt $DrainTimeoutSeconds)
 if (!$summary.complete -or $pending -ne '16|0') { throw 'Master или Worker не завершили обработку.' }

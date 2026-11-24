@@ -207,8 +207,12 @@ void MainWindow::updateConnection()
 {
     const int health = poller_.health();
     const bool stale = poller_.stale();
+    const auto &errors = poller_.errors();
+    const bool summaryOnly = poller_.readiness() == 1 && errors.contains("/v1/summary")
+        && !errors.contains("/v1/results") && !errors.contains("/v1/events");
     connection_->setText(health < 0 ? tr("Проверка Master…")
         : health == 0 ? tr("Связь с Master потеряна")
+        : summaryOnly ? tr("Master подключён · сводка временно недоступна")
         : stale ? tr("Master доступен · данные неактуальны") : tr("Master подключён"));
     connection_->setStyleSheet(health == 1 && !stale ? "color:#157149;font-weight:bold"
                                                      : "color:#95501e;font-weight:bold");

@@ -54,8 +54,14 @@ void Poller::poll()
     probe(QStringLiteral("/healthz"), health_);
     probe(QStringLiteral("/readyz"), readiness_);
     fetchMetrics();
-    if (MasterClient::validExecution(settings_.execution))
-        fetchSummary();
+    if (!MasterClient::validExecution(settings_.execution)) return;
+    fetchSummary();
+    // Keep the live streams moving when the aggregate summary is slow or unavailable.
+    // A subsequent summary still supplies the counts used to find earlier gaps.
+    if (!store_.summary.value("complete").toBool() || errors_.contains(summaryPath)) {
+        if (!resultsBusy_) fetchResults(pageBudget);
+        if (!eventsBusy_) fetchEvents(pageBudget);
+    }
 }
 
 void Poller::setError(const QString &path, const QString &message)

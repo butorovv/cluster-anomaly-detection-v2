@@ -94,7 +94,10 @@ void Dashboard::refresh(const MonitorStore &store, const QDateTime &at)
         counts_[i + 1]->setText(groups.isEmpty() ? QStringLiteral("—") : QString::number(totals[i]));
     time_->setText(tr("Срез телеметрии  %1     ·     Фактический интервал приёма Master  %2")
                        .arg(timeText(at), receiptDuration(store.summary)));
-    setProgress(progress_, store.summary);
+    auto progress = store.summary;
+    if (store.resultCount() > progress.value("group_ticks").toInteger())
+        progress.insert("group_ticks", store.resultCount());
+    setProgress(progress_, progress);
 
     const auto latest = store.recentAnomalies(at, 8);
     QStringList desired;
