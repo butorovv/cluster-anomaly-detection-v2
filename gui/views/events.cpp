@@ -1,14 +1,17 @@
 #include "events.h"
 #include "viewhelpers.h"
+#include "widgets/eventhistogram.h"
+#include "widgets/utcrange.h"
 
 #include <QComboBox>
-#include <QDateTimeEdit>
-#include <QDialog>
-#include <QDialogButtonBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHeaderView>
+#include <QMessageBox>
 #include <QPushButton>
+#include <QSaveFile>
+#include <QScrollBar>
 #include <QSignalBlocker>
 #include <QSortFilterProxyModel>
 #include <QTableView>
@@ -33,27 +36,87 @@ Events::Events(QWidget *parent) : QWidget(parent)
     layout->setContentsMargins(0, 0, 0, 0);
     layout->setSpacing(15);
     auto *bar = new QHBoxLayout;
-    bar->addWidget(sectionLabel(tr("Завершённые события")));
+    auto *heading = new QVBoxLayout;
+    heading->setSpacing(4);
+    heading->addWidget(sectionLabel(tr("Журнал аномалий")));
+    heading->addWidget(new QLabel(tr("Завершённые события")));
+    bar->addLayout(heading);
     bar->addStretch();
     auto *exportButton = new QPushButton(tr("Экспорт CSV"));
     exportButton->setObjectName("soft");
-    exportButton->setEnabled(false);
-    exportButton->setToolTip(tr("Экспорт подключается после визуальной приёмки"));
     bar->addWidget(exportButton);
     layout->addLayout(bar);
+    auto *filterCard = new QFrame;
+    filterCard->setObjectName("panel");
+    auto *filterLayout = new QVBoxLayout(filterCard);
+    filterLayout->setContentsMargins(15, 13, 15, 13);
+    auto *filterHeading = new QHBoxLayout;
+    filterHeading->addWidget(sectionLabel(tr("Фильтры событий")));
+    filterHeading->addStretch();
+    filterHeading->addWidget(new QLabel(tr("По началу события (UTC)")));
+    filterLayout->addLayout(filterHeading);
     auto *filters = new QHBoxLayout;
     group_ = new QComboBox;
     group_->setAccessibleName(tr("Фильтр событий по группе"));
-    filters->addWidget(group_);
-    period_ = new QPushButton(tr("Интервал событий"));
-    filters->addWidget(period_);
-    periodLabel_ = plainLabel();
-    periodLabel_->setObjectName("small");
-    filters->addWidget(periodLabel_, 1);
-    layout->addLayout(filters);
+    criterion_ = new QComboBox;
+    criterion_->setAccessibleName(tr("Фильтр событий по критерию"));
+    criterion_->addItem(tr("Все критерии"), QString{});
+    for (const QString &criterion : {QStringLiteral("R"), QStringLiteral("B"), QStringLiteral("I2")})
+        criterion_->addItem(criterion, criterion);
+    for (const auto &field : {qMakePair(tr("Группа"), group_), qMakePair(tr("Критерий"), criterion_)}) {
+        auto *column = new QVBoxLayout;
+        column->setSpacing(5);
+        column->addWidget(new QLabel(field.first));
+        column->addWidget(field.second);
+        filters->addLayout(column);
+    }
+    range_ = new UtcRange(tr("Начало периода"), tr("Конец периода (не включительно)"));
+    filters->addWidget(range_, 1, Qt::AlignTop);
+    filterLayout->addLayout(filters);
+    auto *quick = new QHBoxLayout;
+    for (const auto &period : {qMakePair(tr("Весь запуск"), 0), qMakePair(tr("Последний час"), 3600),
+                                qMakePair(tr("Последние 15 мин"), 900), qMakePair(tr("Сбросить фильтры"), -1)}) {
+        auto *button = new QPushButton(period.first);
+        quick->addWidget(button);
+        connect(button, &QPushButton::clicked, this, [this, seconds = period.second] {
+            if (seconds == -1) {
+                const QSignalBlocker first(group_), second(criterion_);
+                group_->setCurrentIndex(0);
+                criterion_->setCurrentIndex(0);
+                state_.group.clear();
+                state_.criterion.clear();
+                table_->sortByColumn(1, Qt::DescendingOrder);
+            }
+            if (seconds > 0 && maximum_.isValid())
+                setPeriod(qMax(minimum_, maximum_.addSecs(-seconds)), maximum_);
+            else
+                setPeriod();
+        });
+    }
+    quick->addStretch();
+    filterLayout->addLayout(quick);
+    layout->addWidget(filterCard);
+    auto *histogramCard = new QFrame;
+    histogramCard->setObjectName("panel");
+    auto *histogramLayout = new QVBoxLayout(histogramCard);
+    histogramLayout->setContentsMargins(15, 13, 15, 5);
+    histogramLayout->addWidget(sectionLabel(tr("Распределение событий по времени")));
+    auto *histogramCaption = new QLabel(tr("По времени начала · выберите столбец для фильтрации"));
+    histogramCaption->setObjectName("small");
+    histogramLayout->addWidget(histogramCaption);
+    histogram_ = new EventHistogram;
+    histogramLayout->addWidget(histogram_);
+    layout->addWidget(histogramCard);
     count_ = plainLabel();
     count_->setObjectName("small");
-    layout->addWidget(count_);
+    auto *sortBar = new QHBoxLayout;
+    sortBar->addWidget(count_);
+    sortBar->addStretch();
+    auto *sortOrder = new QComboBox;
+    sortOrder->setAccessibleName(tr("Сортировка"));
+    sortOrder->addItems({tr("Сначала новые"), tr("Сначала старые"), tr("Сначала длительные")});
+    sortBar->addWidget(sortOrder);
+    layout->addLayout(sortBar);
 
     auto *body = new QHBoxLayout;
     body->setSpacing(15);
@@ -74,7 +137,8 @@ Events::Events(QWidget *parent) : QWidget(parent)
     table_->verticalHeader()->setDefaultSectionSize(44);
     table_->horizontalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     table_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    table_->setFixedHeight(302);
+    table_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table_->setFixedHeight(385);
     body->addWidget(table_, 7, Qt::AlignTop);
 
     auto *card = new QFrame;
@@ -112,7 +176,23 @@ Events::Events(QWidget *parent) : QWidget(parent)
         state_.event.clear();
         emit filterChanged();
     });
-    connect(period_, &QPushButton::clicked, this, &Events::editPeriod);
+    connect(criterion_, &QComboBox::currentIndexChanged, this, [this] {
+        state_.criterion = criterion_->currentData().toString();
+        emit filterChanged();
+    });
+    connect(range_, &UtcRange::edited, this, [this] {
+        if (range_->validate()) setPeriod(range_->from(), range_->to());
+    });
+    connect(histogram_, &EventHistogram::intervalSelected, this, &Events::setPeriod);
+    connect(exportButton, &QPushButton::clicked, this, [this] { exportCsv(store_); });
+    connect(sortOrder, &QComboBox::activated, this, [this](int index) {
+        table_->sortByColumn(index == 2 ? 3 : 1, index == 1 ? Qt::AscendingOrder : Qt::DescendingOrder);
+    });
+    connect(table_->horizontalHeader(), &QHeaderView::sortIndicatorChanged, this,
+            [sortOrder](int column, Qt::SortOrder order) {
+        sortOrder->setCurrentIndex(column == 3 && order == Qt::DescendingOrder ? 2
+                                   : column == 1 ? int(order == Qt::AscendingOrder) : -1);
+    });
     connect(technicalToggle_, &QPushButton::toggled, technical_, &QWidget::setVisible);
     connect(table_->selectionModel(), &QItemSelectionModel::currentChanged, this, &Events::showDetails);
     connect(open_, &QPushButton::clicked, this, [this] {
@@ -137,17 +217,24 @@ void Events::restore(const EventViewContext &state)
     state_ = state;
     previousCount_ = -1;
     const QSignalBlocker blocker(group_);
+    const QSignalBlocker criteriaBlocker(criterion_);
     const QSignalBlocker selectionBlocker(table_->selectionModel());
     group_->setCurrentIndex(qMax(0, group_->findData(state.group)));
+    criterion_->setCurrentIndex(qMax(0, criterion_->findData(state.criterion)));
     technicalToggle_->setChecked(false);
     table_->sortByColumn(state.sortColumn, state.sortOrder);
 }
 
-void Events::refresh(const MonitorStore &store, const QDateTime &start, const QDateTime &end)
+void Events::refresh(const MonitorStore &store, const QDateTime &start, const QDateTime &end, bool synchronized)
 {
+    store_ = &store;
+    synchronized_ = synchronized;
+    const bool boundsChanged = minimum_ != start || maximum_ != end;
     minimum_ = start;
     maximum_ = end;
-    period_->setEnabled(start.isValid() && end.isValid());
+    range_->setEnabled(start.isValid() && end.isValid());
+    if (boundsChanged || previousCount_ < 0) range_->setBounds(start, end);
+    range_->setPeriod(state_.from.isValid() ? state_.from : start, state_.to.isValid() ? state_.to : end, true);
     QStringList groups = store.groups();
     for (const auto &event : store.events())
         if (!groups.contains(event.group)) groups << event.group;
@@ -160,12 +247,22 @@ void Events::refresh(const MonitorStore &store, const QDateTime &start, const QD
         for (const auto &group : groups) group_->addItem(group, group);
         group_->setCurrentIndex(qMax(0, group_->findData(state_.group)));
     }
-    if (store.events().size() == previousCount_ && state_.group == previousGroup_
+    if (!boundsChanged && store.events().size() == previousCount_ && state_.group == previousGroup_
+        && state_.criterion == previousCriterion_
         && state_.from == previousFrom_ && state_.to == previousTo_) return;
     const auto selected = state_.event;
-    model_->replace(store.events(), state_.group, state_.from, state_.to);
+    const int scroll = table_->verticalScrollBar()->value();
+    {
+        const QSignalBlocker block(table_->selectionModel());
+        model_->replace(store.events(), state_.group, state_.from, state_.to, state_.criterion);
+    }
+    QList<QDateTime> starts;
+    for (const auto &event : store.events())
+        if (EventTable::matches(event, state_.group, state_.criterion)) starts << event.detected;
+    histogram_->setData(starts, minimum_, maximum_, state_.from, state_.to);
     previousCount_ = store.events().size();
     previousGroup_ = state_.group;
+    previousCriterion_ = state_.criterion;
     previousFrom_ = state_.from;
     previousTo_ = state_.to;
     const auto row = model_->rowOf(selected);
@@ -174,11 +271,9 @@ void Events::refresh(const MonitorStore &store, const QDateTime &start, const QD
     const auto index = row >= 0 ? sort_->mapFromSource(model_->index(row, 0))
                                : waiting ? QModelIndex{} : sort_->index(0, 0);
     if (index.isValid()) table_->setCurrentIndex(index);
+    table_->verticalScrollBar()->setValue(scroll);
     showDetails();
-    periodLabel_->setText(state_.from.isValid()
-        ? tr("%1 — %2").arg(timeText(state_.from), timeText(state_.to))
-        : tr("За весь запуск · отдельно от момента диагностики"));
-    count_->setText(tr("Показано %1 из %2 событий").arg(sort_->rowCount()).arg(previousCount_));
+    count_->setText(tr("Найдено событий: %1 из %2").arg(sort_->rowCount()).arg(previousCount_));
 }
 
 const AnomalyEvent *Events::selectedEvent() const
@@ -195,7 +290,7 @@ void Events::showDetails()
     detected_->setText(event ? timeText(event->detected) : QStringLiteral("—"));
     closed_->setText(event ? timeText(event->closed) : QStringLiteral("—"));
     duration_->setText(event ? tr("%1 с").arg(numberText(event->payload.value("duration_seconds"))) : QStringLiteral("—"));
-    votes_->setText(event ? event->votes() : QStringLiteral("—"));
+    votes_->setText(event ? EventTable::criteria(*event) : QStringLiteral("—"));
     if (!event) { technical_->clear(); return; }
     state_.event = event->id;
     const auto &p = event->payload;
@@ -213,44 +308,43 @@ void Events::showDetails()
     technical_->setText(lines.join('\n'));
 }
 
-void Events::editPeriod()
+void Events::setPeriod(const QDateTime &from, const QDateTime &to)
 {
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Интервал событий"));
-    auto *form = new QFormLayout(&dialog);
-    auto *first = new QDateTimeEdit;
-    auto *last = new QDateTimeEdit;
-    for (auto *edit : {first, last}) {
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
-        edit->setTimeZone(QTimeZone::utc());
-#else
-        edit->setTimeSpec(Qt::UTC);
-#endif
-        edit->setDisplayFormat("dd.MM.yyyy HH:mm:ss");
-        edit->setCalendarPopup(true);
-        edit->setDateTimeRange(minimum_, maximum_);
-    }
-    first->setDateTime(state_.from.isValid() ? state_.from : minimum_);
-    last->setDateTime(state_.to.isValid() ? state_.to : maximum_);
-    form->addRow(tr("С (UTC)"), first);
-    form->addRow(tr("По (UTC)"), last);
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    auto *reset = buttons->addButton(tr("Весь запуск"), QDialogButtonBox::ResetRole);
-    buttons->button(QDialogButtonBox::Ok)->setText(tr("Применить"));
-    buttons->button(QDialogButtonBox::Cancel)->setText(tr("Отмена"));
-    form->addRow(buttons);
-    const auto validate = [first, last, buttons] {
-        buttons->button(QDialogButtonBox::Ok)->setEnabled(first->dateTime() <= last->dateTime());
-    };
-    connect(first, &QDateTimeEdit::dateTimeChanged, &dialog, validate);
-    connect(last, &QDateTimeEdit::dateTimeChanged, &dialog, validate);
-    connect(reset, &QPushButton::clicked, &dialog, [&dialog] { dialog.done(2); });
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    const int result = dialog.exec();
-    if (result == QDialog::Rejected) return;
-    state_.from = result == 2 ? QDateTime{} : first->dateTime();
-    state_.to = result == 2 ? QDateTime{} : last->dateTime();
-    state_.event.clear();
+    state_.from = from;
+    state_.to = to;
+    range_->setPeriod(from.isValid() ? from : minimum_, to.isValid() ? to : maximum_);
     emit filterChanged();
+}
+
+void Events::exportCsv(const MonitorStore *store)
+{
+    if (!store) return;
+    QMessageBox dialog(this);
+    dialog.setWindowTitle(tr("Экспорт CSV"));
+    dialog.setText(synchronized_ ? tr("Выберите события для экспорта.")
+                                 : tr("Синхронизация не завершена. Экспортируются доступные события."));
+    auto *filtered = dialog.addButton(tr("По фильтрам (%1)").arg(sort_->rowCount()), QMessageBox::AcceptRole);
+    auto *all = dialog.addButton(tr("Все события (%1)").arg(store->events().size()), QMessageBox::AcceptRole);
+    dialog.addButton(QMessageBox::Cancel);
+    dialog.exec();
+    QList<AnomalyEvent> events;
+    if (dialog.clickedButton() == filtered) {
+        for (int row = 0; row < sort_->rowCount(); ++row)
+            events << *model_->at(sort_->mapToSource(sort_->index(row, 0)).row());
+    } else if (dialog.clickedButton() == all) {
+        events = store->events().values();
+    } else {
+        return;
+    }
+    auto path = QFileDialog::getSaveFileName(this, tr("Сохранить события"), QStringLiteral("events.csv"),
+                                              tr("Таблица CSV (*.csv)"));
+    if (path.isEmpty()) return;
+    if (!path.endsWith(".csv", Qt::CaseInsensitive)) path += ".csv";
+    QSaveFile file(path);
+    const auto data = EventTable::csv(events);
+    if (!file.open(QIODevice::WriteOnly) || file.write(data) != data.size() || !file.commit()) {
+        QMessageBox::warning(this, tr("Ошибка экспорта"), file.errorString());
+        return;
+    }
+    QMessageBox::information(this, tr("Экспорт завершён"), tr("Записано событий: %1\n%2").arg(events.size()).arg(path));
 }

@@ -203,7 +203,12 @@ private slots:
         EventTable events;
         events.replace({{event.id, event}}, "a01", start, end);
         QCOMPARE(events.rowCount(), 1);
-        QCOMPARE(events.data(events.index(0, 3), Qt::DisplayRole).toString(), QString("R+B"));
+        QCOMPARE(events.data(events.index(0, 4), Qt::DisplayRole).toString(), QStringLiteral("R · B"));
+        events.replace({{event.id, event}}, "a01", start, end, "I2");
+        QCOMPARE(events.rowCount(), 0);
+        events.replace({{event.id, event}}, {}, start.addSecs(-10), start, "R");
+        QCOMPARE(events.rowCount(), 0);
+        QVERIFY(EventTable::csv({event}).contains("\"abc\",\"a01\""));
         events.replace({{event.id, event}}, "a02", start, end);
         QCOMPARE(events.rowCount(), 0);
         events.replace({{event.id, event}}, {}, end, end.addSecs(10));

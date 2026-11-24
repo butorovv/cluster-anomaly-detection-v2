@@ -8,9 +8,12 @@ class QLabel;
 class QPushButton;
 class QSortFilterProxyModel;
 class QTableView;
+class UtcRange;
+class EventHistogram;
 
 struct EventViewContext {
     QString group;
+    QString criterion;
     QString event;
     QDateTime from;
     QDateTime to;
@@ -22,7 +25,7 @@ class Events final : public QWidget {
     Q_OBJECT
 public:
     explicit Events(QWidget *parent = nullptr);
-    void refresh(const MonitorStore &store, const QDateTime &start, const QDateTime &end);
+    void refresh(const MonitorStore &store, const QDateTime &start, const QDateTime &end, bool synchronized = false);
     EventViewContext context() const;
     void restore(const EventViewContext &state);
 
@@ -32,12 +35,15 @@ signals:
 
 private:
     void showDetails();
-    void editPeriod();
+    void setPeriod(const QDateTime &from = {}, const QDateTime &to = {});
+    void exportCsv(const MonitorStore *store);
     const AnomalyEvent *selectedEvent() const;
     QComboBox *group_;
+    QComboBox *criterion_;
+    UtcRange *range_;
+    EventHistogram *histogram_;
     QTableView *table_;
     QLabel *count_;
-    QLabel *periodLabel_;
     QLabel *title_;
     QLabel *detected_;
     QLabel *closed_;
@@ -46,14 +52,16 @@ private:
     QLabel *technical_;
     QPushButton *open_;
     QPushButton *technicalToggle_;
-    QPushButton *period_;
     EventTable *model_;
     QSortFilterProxyModel *sort_;
     EventViewContext state_;
     qsizetype previousCount_ = -1;
     QString previousGroup_;
+    QString previousCriterion_;
     QDateTime previousFrom_;
     QDateTime previousTo_;
     QDateTime minimum_;
     QDateTime maximum_;
+    const MonitorStore *store_ = nullptr;
+    bool synchronized_ = false;
 };

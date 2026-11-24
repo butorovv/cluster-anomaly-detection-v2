@@ -29,6 +29,13 @@ QString v2::style()
         }
         QPushButton:hover { background:#f5f8fd; border-color:#a9c0e7; }
         QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color:#85a7e2; }
+        QDateEdit, QTimeEdit { border:1px solid #dce3ec; border-radius:7px; background:white; padding:5px 8px; min-height:26px; font-size:13px; }
+        QDateEdit:focus, QTimeEdit:focus { border-color:#85a7e2; }
+        QLabel#validationError { color:#c43648; font-size:12px; }
+        QCalendarWidget#utcCalendar QWidget { background:white; }
+        QCalendarWidget#utcCalendar QWidget#qt_calendar_navigationbar { background:#edf3fc; }
+        QCalendarWidget#utcCalendar QToolButton { color:#295ec5; padding:5px; }
+        QCalendarWidget#utcCalendar QAbstractItemView { selection-background-color:#295ec5; selection-color:white; }
         QPushButton:disabled { color:#8291a5; }
         QPushButton#primary { background:#295ec5; color:white; border-color:#295ec5; font-weight:bold; }
         QPushButton#primary:hover { background:#214fae; }

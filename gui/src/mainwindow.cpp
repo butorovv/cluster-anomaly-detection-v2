@@ -582,8 +582,10 @@ void MainWindow::refresh()
     } else {
         const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
         const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
+        const auto processedEnd = store.latestTime().addSecs(10);
         events_->refresh(store, start.isValid() ? start : store.earliestTime(),
-                         end.isValid() ? end : store.latestTime());
+                         end.isValid() && processedEnd.isValid() ? qMin(end, processedEnd) : processedEnd,
+                         poller_.synchronized());
     }
 }
 

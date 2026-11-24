@@ -31,6 +31,8 @@ qt_add_library(cluster_ui STATIC
     models/nodetable.cpp
     models/eventtable.cpp
     widgets/scorechart.cpp
+    widgets/utcrange.cpp
+    widgets/eventhistogram.cpp
 )
 target_link_libraries(cluster_ui PUBLIC cluster_client Qt6::Widgets)
 qt_add_executable(cluster-monitor WIN32 src/main.cpp)
