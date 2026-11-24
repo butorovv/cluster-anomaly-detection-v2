@@ -9,6 +9,7 @@ class QLineEdit;
 class QStackedWidget;
 class QButtonGroup;
 class Dashboard;
+class Diagnostics;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -26,5 +27,6 @@ private:
     QStackedWidget *pages_;
     QButtonGroup *navigation_;
     Dashboard *dashboard_;
+    Diagnostics *diagnostics_;
     QTimer refreshTimer_;
 };
