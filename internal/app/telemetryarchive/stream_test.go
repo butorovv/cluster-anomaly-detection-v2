@@ -38,10 +38,14 @@ func TestStreamArchiveTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	nonce := time.Now().UnixNano()
+	// Use an isolated test coordinate so the pre-COMMIT check cannot see a
+	// physical value persisted by an earlier execution of this same test.
+	start := time.Unix(summitWindow.Start.Unix()+(nonce&((1<<30)-1))*10, 0).UTC()
 	cfg := StreamConfig{Binding: domain.InputBinding{
-		ExecutionID: fmt.Sprintf("cccccccc-aaaa-4bbb-8eee-%012x", time.Now().UnixNano()&((1<<48)-1)),
+		ExecutionID: fmt.Sprintf("cccccccc-aaaa-4bbb-8eee-%012x", nonce&((1<<48)-1)),
 		InputSHA256: SummitSHA, ProfileSHA256: summitProfile},
-		Window: domain.InputWindow{Start: summitWindow.Start, End: summitWindow.Start.Add(20 * time.Second)}}
+		Window: domain.InputWindow{Start: start, End: start.Add(20 * time.Second)}}
 	store := streamStore{pool: pool, writer: writer, config: cfg, cluster: "isolated-test-cluster", topic: "isolated-test-topic"}
 	if err := store.register(ctx); err != nil {
 		t.Fatal(err)
@@ -111,6 +115,10 @@ func TestStreamArchiveTransaction(t *testing.T) {
 	if err != nil || len(masks) != 0 {
 		t.Fatalf("rollback published coverage: %v %v", masks, err)
 	}
+	samples, err := reader.Samples(ctx, record.Hostname, []time.Time{tick.Timestamp})
+	if err != nil || len(samples) != 0 {
+		t.Fatalf("rollback preserved a physical measurement: %v %v", samples, err)
+	}
 	afterCommit := store
 	afterCommit.commit = func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.Commit(ctx); err != nil {
@@ -132,9 +140,22 @@ func TestStreamArchiveTransaction(t *testing.T) {
 	if err != nil || len(masks) != 1 || masks[tick.Timestamp.Unix()] != 1 {
 		t.Fatalf("committed coverage mismatch: %v %v", masks, err)
 	}
-	samples, err := reader.Samples(ctx, record.Hostname, []time.Time{tick.Timestamp})
+	samples, err = reader.Samples(ctx, record.Hostname, []time.Time{tick.Timestamp})
 	values := samples[tick.Timestamp.Unix()]
 	if err != nil || len(samples) != 1 || values[0] == nil || *values[0] != 0 || values[1] != nil {
 		t.Fatalf("partial record was lost or changed: %v %v", samples, err)
+	}
+	var inserted, duplicates int
+	err = pool.QueryRow(ctx, `SELECT inserted,duplicates FROM cad_archive.coverage
+WHERE execution_id=$1 AND partition_id=0 AND tick=$2`, cfg.Binding.ExecutionID, tick.Timestamp).
+		Scan(&inserted, &duplicates)
+	if err != nil || inserted != 1 || duplicates != 0 {
+		t.Fatalf("coverage counters changed after replay: inserted=%d duplicates=%d, %v", inserted, duplicates, err)
+	}
+	foreignMasks, err := reader.StreamMasks(ctx, cfg.Binding.ExecutionID, SummitSHA,
+		"0000000000000000000000000000000000000000000000000000000000000000",
+		0, 1, tick.Timestamp, cfg.Window.End)
+	if err != nil || len(foreignMasks) != 0 {
+		t.Fatalf("different profile received coverage: %v, %v", foreignMasks, err)
 	}
 }
