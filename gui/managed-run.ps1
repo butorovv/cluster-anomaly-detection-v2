@@ -41,7 +41,7 @@ try {
     }
     WriteState 'preparing'
     & $driver -Action Init -ExecutionId $id -RunDirectory $work -AssetsRoot $AssetsRoot `
-        -MasterPort $MasterPort -PrivateDataPorts -Speed $job.speed -WindowStart $from -WindowEnd $to
+        -MasterPort $MasterPort -PrivateDataPorts -ArchivePublication -Speed $job.speed -WindowStart $from -WindowEnd $to
     WriteState 'processing'
     & $driver -Action Replay -RunDirectory $work -SaveSnapshot
     WriteState 'stopping'

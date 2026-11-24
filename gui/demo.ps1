@@ -14,7 +14,8 @@ param(
     [string]$WindowStart = '2022-01-18T08:00:00Z',
     [string]$WindowEnd = '2022-01-18T16:00:00Z',
     [switch]$PrivateDataPorts,
-    [switch]$SaveSnapshot
+    [switch]$SaveSnapshot,
+    [switch]$ArchivePublication
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -74,6 +75,8 @@ if ($Action -eq 'Init') {
         master = "http://127.0.0.1:$MasterPort"
         start = $WindowStart; end = $WindowEnd; expectedTicks = [int](($end - $start).TotalSeconds / 10 * 16)
         workers = $Workers
+        inputSha256 = $expected
+        profileSha256 = 'a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36'
     }
     $null = New-Item -ItemType Directory -Path $runPath
     SaveJson $run 'demo.json'
@@ -107,6 +110,9 @@ services:
             foreach ($service in 'bootstrap','worker','replayer') {
                 $networkOverride += "`n  ${service}:`n    user: '${uid}:${gid}'"
             }
+        }
+        if ($ArchivePublication) {
+            $networkOverride += "`n  master:`n    environment:`n      ARCHIVE_PUBLICATION_ENABLED: '1'"
         }
         $networkOverride | Set-Content -LiteralPath (Join-Path $runPath 'private-data-ports.yaml') -Encoding utf8NoBOM
     }
