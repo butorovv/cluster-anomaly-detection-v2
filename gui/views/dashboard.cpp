@@ -160,11 +160,13 @@ void Dashboard::refresh(const MonitorStore &store, const QDateTime &at, bool his
     if (desired.isEmpty()) desired << (at.isValid() ? tr("В доступных данных нет аномалий для этого просмотра.")
                                                     : tr("Результаты для просмотра пока недоступны."));
     QStringList shown;
-    for (int i = 0; i < recent_->count(); ++i) shown << recent_->item(i)->text();
+    for (int i = 0; i < recent_->count(); ++i)
+        shown << recent_->item(i)->data(Qt::AccessibleTextRole).toString();
     if (shown == desired) return;
     recent_->clear();
     for (qsizetype i = 0; i < desired.size(); ++i) {
-        auto *row = new QListWidgetItem(desired[i], recent_);
+        auto *row = new QListWidgetItem(recent_);
+        row->setData(Qt::AccessibleTextRole, desired[i]);
         row->setSizeHint(QSize(0, latest.isEmpty() ? 54 : 62));
         if (i < latest.size()) {
             const auto *tick = latest[i];
@@ -193,6 +195,7 @@ void Dashboard::refresh(const MonitorStore &store, const QDateTime &at, bool his
             line->addWidget(more);
             recent_->setItemWidget(row, content);
         } else {
+            row->setText(desired[i]);
             row->setFlags(Qt::NoItemFlags);
         }
     }
