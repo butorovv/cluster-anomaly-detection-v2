@@ -34,7 +34,8 @@ int main(int argc, char *argv[])
     parser.addHelpOption();
     parser.addOptions({
         {{"m", "master"}, QStringLiteral("Адрес Master API"), "url"},
-        {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"}
+        {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"},
+        {"summit-speed", QStringLiteral("Заявленный темп исторического Summit Replayer (1, 5, 10, 0=MAX)"), "speed"}
     });
     parser.process(app);
     QSettings preferences;
@@ -44,13 +45,16 @@ int main(int argc, char *argv[])
     connection.execution = (parser.isSet("execution") ? parser.value("execution")
         : preferences.value("execution").toString()).trimmed().toLower();
     connection.intervalMs = qBound(250, preferences.value("intervalMs", 1000).toInt(), 60000);
+    const auto speed = parser.value("summit-speed");
+    const bool wrongSource = parser.isSet("summit-speed")
+        && (!parser.isSet("execution") || !QStringList{"1", "5", "10", "0"}.contains(speed));
     if (!MasterClient::validUrl(connection.masterUrl)
-        || (!connection.execution.isEmpty() && !MasterClient::validExecution(connection.execution))) {
+        || (!connection.execution.isEmpty() && !MasterClient::validExecution(connection.execution)) || wrongSource) {
         QMessageBox::critical(nullptr, QStringLiteral("Настройки подключения"),
-                              QStringLiteral("Неверный адрес Master или Execution ID."));
+                              QStringLiteral("Проверьте адрес Master, Execution ID и скорость из конфигурации демонстрации."));
         return 2;
     }
-    MainWindow window(connection);
+    MainWindow window(connection, speed);
     window.show();
     return app.exec();
 }

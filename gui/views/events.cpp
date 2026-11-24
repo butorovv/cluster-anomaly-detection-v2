@@ -63,8 +63,10 @@ Events::Events(QWidget *parent) : QWidget(parent)
     connect(group_, &QComboBox::currentIndexChanged, this, &Events::filterChanged);
     connect(table_->selectionModel(), &QItemSelectionModel::currentChanged, this, &Events::showDetails);
     connect(open_, &QPushButton::clicked, this, [this] {
-        if (const auto *event = model_->at(table_->currentIndex().row()))
-            emit eventSelected(event->group, event->detected, event->closed);
+        if (const auto *event = model_->at(table_->currentIndex().row())) {
+            const auto selected = *event;
+            emit eventSelected(selected.group, selected.detected, selected.closed);
+        }
     });
     showDetails();
 }
