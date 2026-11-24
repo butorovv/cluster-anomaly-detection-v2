@@ -52,25 +52,23 @@ private slots:
         QCoreApplication::setOrganizationName("ClusterMonitorTest");
         MainWindow window({QUrl("http://127.0.0.1:1"), execution, 1000}, "0");
         window.show();
-        auto *stack = window.findChild<QStackedWidget *>();
-        QVERIFY(stack);
-        QCOMPARE(stack->count(), 4);
-        auto *mode = window.findChild<QComboBox *>();
-        QVERIFY(mode);
-        QCOMPARE(mode->currentText(), QString("FAST REPLAY"));
-        QVERIFY(hasLabel(window, QStringLiteral("Исторической телеметрии").toLower()));
-        mode->setCurrentIndex(2);
-        QCOMPARE(mode->currentText(), QString("HISTORY"));
+        auto *stack = window.findChild<QStackedWidget *>("mainPages");
+        auto *workspace = window.findChild<QStackedWidget *>("workspaceTabs");
+        QVERIFY(stack && workspace);
+        QCOMPARE(stack->count(), 6);
+        QCOMPARE(workspace->count(), 3);
+        QCOMPARE(stack->currentIndex(), 0);
+        for (auto *button : window.findChildren<QPushButton *>("navButton"))
+            if (button->text() == QStringLiteral("Онлайн-мониторинг")) button->click();
+        QCOMPARE(stack->currentIndex(), 1);
         QVERIFY(hasLabel(window, QStringLiteral("MAX")));
-        auto *history = window.findChild<HistoryBar *>();
-        QVERIFY(history && history->isVisible());
         for (auto *button : window.findChildren<QPushButton *>()) {
             if (button->text() == QStringLiteral("Журнал аномалий")) {
                 button->click();
                 break;
             }
         }
-        QCOMPARE(stack->currentIndex(), 2);
+        QCOMPARE(workspace->currentIndex(), 2);
     }
 
     void separatesCriteriaAndNodeAbsence()

@@ -1,14 +1,16 @@
 #pragma once
 
+#include "api/poller.h"
+#include "reviewrun.h"
 #include <QMainWindow>
 #include <QSettings>
-#include "api/poller.h"
 
 class QLabel;
-class QLineEdit;
 class QStackedWidget;
 class QButtonGroup;
 class QComboBox;
+class QLineEdit;
+class QVBoxLayout;
 class Dashboard;
 class Diagnostics;
 class Events;
@@ -18,29 +20,51 @@ class SystemView;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(const ConnectionSettings &settings, const QString &summitSpeed = {}, QWidget *parent = nullptr);
+    explicit MainWindow(const ConnectionSettings &settings, const QString &summitSpeed = {},
+                        QList<ReviewRun> runs = {}, QWidget *parent = nullptr);
 private:
-    enum Mode { Live, FastReplay, History };
+    enum Section { Home, Online, Archive, Catalog, System, Settings };
+    enum Page { HomePage, RunPage, ArchivePage, CatalogPage, SystemPage, SettingsPage };
+    void navigate(Section section);
+    void openRun(const ReviewRun &run, Section section);
     void applyConnection(const ConnectionSettings &settings);
     void updateConnection();
     void refresh();
-    void showPage(int index);
+    void showTab(int index);
     void selectGroup(const QString &group);
     void openHistory(const QString &group, const QDateTime &from, const QDateTime &to, const QDateTime &at);
     void updateHistory();
+    QWidget *buildHome();
+    QWidget *buildArchive();
+    QWidget *buildCatalog();
+    QWidget *buildSettings();
+    QWidget *buildWorkspace();
+    void populateCatalog();
+
     QSettings preferences_;
     Poller poller_;
+    QList<ReviewRun> runs_;
+    ReviewRun attached_;
+    ReviewRun current_;
+    Section section_ = Home;
     QLabel *connection_;
-    QLineEdit *execution_;
+    QLabel *runTitle_;
+    QLabel *runDescription_;
+    QLabel *runFacts_;
+    QLabel *runStatus_;
+    QLabel *breadcrumb_;
     QComboBox *mode_;
-    QLabel *source_;
+    QLineEdit *search_;
+    QComboBox *runFilter_;
+    QVBoxLayout *catalogList_;
     QStackedWidget *pages_;
+    QStackedWidget *tabs_;
     QButtonGroup *navigation_;
+    QButtonGroup *tabButtons_;
     Dashboard *dashboard_;
     Diagnostics *diagnostics_;
     Events *events_;
     HistoryBar *history_;
     SystemView *system_;
     QTimer refreshTimer_;
-    QString summitSpeed_;
 };

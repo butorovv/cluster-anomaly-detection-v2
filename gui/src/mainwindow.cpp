@@ -1,118 +1,154 @@
 #include "mainwindow.h"
+#include "style.h"
 #include "views/dashboard.h"
 #include "views/diagnostics.h"
 #include "views/events.h"
 #include "views/historybar.h"
 #include "views/settings.h"
 #include "views/system.h"
+#include "views/viewhelpers.h"
 
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QScrollArea>
 #include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QVBoxLayout>
-#include <array>
 
-MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitSpeed, QWidget *parent)
-    : QMainWindow(parent), summitSpeed_(summitSpeed)
+namespace {
+QLabel *label(const QString &text, const char *role = "")
 {
-    setWindowTitle(QStringLiteral("Диагностика вычислительного кластера"));
-    resize(1180, 860);
-    auto *workspace = new QWidget;
-    workspace->setObjectName("workspace");
-    setCentralWidget(workspace);
-    auto *layout = new QVBoxLayout(workspace);
-    layout->setContentsMargins(22, 16, 22, 16);
-    layout->setSpacing(12);
-    auto *title = new QLabel(QStringLiteral("Диагностика кластера"));
-    title->setObjectName("title");
-    layout->addWidget(title);
-    auto *header = new QHBoxLayout;
-    connection_ = new QLabel;
-    execution_ = new QLineEdit;
-    execution_->setMinimumWidth(290);
-    execution_->setPlaceholderText(tr("Execution ID"));
-    execution_->setAccessibleName(tr("Execution ID"));
-    auto *apply = new QPushButton(tr("Подключить"));
-    header->addWidget(connection_);
-    header->addStretch();
-    header->addWidget(execution_);
-    header->addWidget(apply);
-    mode_ = new QComboBox;
-    mode_->setAccessibleName(tr("Режим просмотра"));
-    mode_->addItems({"LIVE", "FAST REPLAY", "HISTORY"});
-    mode_->setCurrentIndex(summitSpeed_.isEmpty() || summitSpeed_ == "1" ? Live : FastReplay);
-    mode_->setToolTip(tr("Режим просмотра. Темп Replayer задаётся при его запуске."));
-    header->addWidget(mode_);
-    layout->addLayout(header);
-    source_ = new QLabel;
-    source_->setObjectName("muted");
-    layout->addWidget(source_);
-    const auto applyExecution = [this] {
-        auto settings = poller_.settings();
-        settings.execution = execution_->text().trimmed().toLower();
-        if (MasterClient::validExecution(settings.execution) || settings.execution.isEmpty()) {
-            applyConnection(settings);
-        } else {
-            execution_->setStyleSheet("border-color:#b42838");
-            execution_->setToolTip(tr("Укажите Execution ID в формате UUID."));
-        }
-    };
-    connect(apply, &QPushButton::clicked, this, applyExecution);
-    connect(execution_, &QLineEdit::returnPressed, this, applyExecution);
-    history_ = new HistoryBar;
-    history_->hide();
-    layout->addWidget(history_);
-    auto *navigation = new QHBoxLayout;
-    layout->addLayout(navigation);
+    auto *value = new QLabel(text);
+    value->setTextFormat(Qt::PlainText);
+    value->setObjectName(QString::fromLatin1(role));
+    return value;
+}
+
+QPushButton *button(const QString &text, const char *role = "")
+{
+    auto *value = new QPushButton(text);
+    value->setObjectName(QString::fromLatin1(role));
+    return value;
+}
+
+QFrame *panel()
+{
+    auto *frame = new QFrame;
+    frame->setObjectName("panel");
+    return frame;
+}
+
+QVBoxLayout *column(QWidget *parent, int margin = 0, int spacing = 12)
+{
+    auto *layout = new QVBoxLayout(parent);
+    layout->setContentsMargins(margin, margin, margin, margin);
+    layout->setSpacing(spacing);
+    return layout;
+}
+
+void heading(QVBoxLayout *layout, const QString &title, const QString &subtitle)
+{
+    auto *header = new QWidget;
+    auto *content = column(header, 0, 6);
+    content->addWidget(label(title, "title"));
+    content->addWidget(label(subtitle, "muted"));
+    layout->addWidget(header);
+    layout->addSpacing(12);
+}
+
+QWidget *scrollPage(QWidget *content)
+{
+    auto *scroll = new QScrollArea;
+    scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setWidgetResizable(true);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    scroll->setWidget(content);
+    return scroll;
+}
+
+QString pace(const QString &speed)
+{
+    if (speed.isEmpty()) return {};
+    return speed == "0" ? QStringLiteral("MAX") : QStringLiteral("×") + speed;
+}
+}
+
+MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitSpeed,
+                       QList<ReviewRun> runs, QWidget *parent)
+    : QMainWindow(parent), runs_(std::move(runs))
+{
+    attached_.connection = initial;
+    attached_.speed = summitSpeed;
+    attached_.name = tr("Подключённый запуск");
+    current_ = attached_;
+    setWindowTitle(tr("Cluster Monitor · V2"));
+    resize(1280, 900);
+    setMinimumSize(1040, 690);
+
+    auto *root = new QWidget;
+    auto *shell = new QHBoxLayout(root);
+    shell->setContentsMargins(0, 0, 0, 0);
+    shell->setSpacing(0);
+    setCentralWidget(root);
+    auto *sidebar = new QWidget;
+    sidebar->setObjectName("sidebar");
+    sidebar->setFixedWidth(220);
+    auto *side = column(sidebar, 13, 3);
+    side->setContentsMargins(13, 25, 13, 18);
+    auto *brand = new QWidget;
+    auto *brandLayout = column(brand, 0, 4);
+    brandLayout->setContentsMargins(12, 0, 0, 23);
+    brandLayout->addWidget(label("Cluster Monitor", "brand"));
+    brandLayout->addWidget(label(tr("Диагностика кластера"), "sideCaption"));
+    side->addWidget(brand);
     navigation_ = new QButtonGroup(this);
-    pages_ = new QStackedWidget;
-    dashboard_ = new Dashboard;
-    diagnostics_ = new Diagnostics;
-    events_ = new Events;
-    system_ = new SystemView;
-    const QStringList names{QStringLiteral("Обзор кластера"), QStringLiteral("Диагностика группы"),
-                            QStringLiteral("Журнал аномалий"), QStringLiteral("Состояние системы")};
-    const std::array<QWidget *, 4> views{dashboard_, diagnostics_, events_, system_};
-    for (size_t i = 0; i < views.size(); ++i) {
-        auto *button = new QPushButton(names.at(i));
-        button->setCheckable(true);
-        navigation_->addButton(button, pages_->addWidget(views[i]));
-        navigation->addWidget(button);
-    }
-    navigation_->button(0)->setChecked(true);
-    connect(navigation_, &QButtonGroup::idClicked, this, &MainWindow::showPage);
-    connect(dashboard_, &Dashboard::groupSelected, this, &MainWindow::selectGroup);
-    connect(dashboard_, &Dashboard::historySelected, this, [this](const QString &group, const QDateTime &at) {
-        openHistory(group, at.addSecs(-600), at.addSecs(600), at);
-    });
-    connect(events_, &Events::eventSelected, this, [this](const QString &group, const QDateTime &from, const QDateTime &to) {
-        openHistory(group, from, to, from);
-    });
-    connect(diagnostics_, &Diagnostics::timeSelected, this, [this](const QDateTime &at) {
-        if (mode_->currentIndex() == History) {
-            history_->selectTime(at);
-        } else {
-            const auto latest = poller_.store().latestTime();
-            openHistory({}, latest.addSecs(-1800), latest, at);
+    const QStringList sections{tr("Главная"), tr("Онлайн-мониторинг"), tr("Анализ архива"),
+                               tr("История запусков"), tr("Состояние системы"), tr("Настройки")};
+    for (int i = 0; i < sections.size(); ++i) {
+        if (i == Online || i == System) {
+            auto *caption = label(i == Online ? tr("ДИАГНОСТИКА") : tr("СИСТЕМА"), "navHeading");
+            caption->setContentsMargins(12, 18, 0, 5);
+            side->addWidget(caption);
         }
-    });
-    connect(diagnostics_, &Diagnostics::selectionChanged, this, &MainWindow::refresh);
-    connect(events_, &Events::filterChanged, this, &MainWindow::refresh);
-    navigation->addStretch();
-    auto *settings = new QPushButton(QStringLiteral("Настройки"));
-    navigation->addWidget(settings);
-    connect(settings, &QPushButton::clicked, this, [this] {
-        SettingsDialog dialog(poller_.settings(), this);
-        if (dialog.exec() == QDialog::Accepted) applyConnection(dialog.settings());
-    });
-    layout->addWidget(pages_, 1);
-    connect(history_, &HistoryBar::changed, this, &MainWindow::refresh);
-    connect(mode_, &QComboBox::currentIndexChanged, this, &MainWindow::refresh);
+        auto *item = button(sections[i], "navButton");
+        item->setIcon(v2::icon(i, QColor("#c5d1df")));
+        item->setFixedHeight(43);
+        item->setCheckable(true);
+        navigation_->addButton(item, i);
+        side->addWidget(item);
+    }
+    side->addStretch();
+    connection_ = label({});
+    connection_->setContentsMargins(12, 0, 8, 0);
+    connection_->setWordWrap(true);
+    side->addWidget(connection_);
+    auto *rest = label(tr("REST API"), "sideCaption");
+    rest->setContentsMargins(12, 4, 8, 0);
+    side->addWidget(rest);
+    shell->addWidget(sidebar);
+
+    auto *surface = new QWidget;
+    surface->setObjectName("surface");
+    auto *main = column(surface);
+    main->setContentsMargins(34, 22, 34, 15);
+    pages_ = new QStackedWidget;
+    pages_->setObjectName("mainPages");
+    pages_->addWidget(scrollPage(buildHome()));
+    pages_->addWidget(buildWorkspace());
+    pages_->addWidget(scrollPage(buildArchive()));
+    pages_->addWidget(scrollPage(buildCatalog()));
+    system_ = new SystemView;
+    pages_->addWidget(system_);
+    pages_->addWidget(scrollPage(buildSettings()));
+    main->addWidget(pages_);
+    shell->addWidget(surface, 1);
+
+    connect(navigation_, &QButtonGroup::idClicked, this, [this](int index) { navigate(Section(index)); });
     refreshTimer_.setSingleShot(true);
     refreshTimer_.setInterval(200);
     connect(&refreshTimer_, &QTimer::timeout, this, &MainWindow::refresh);
@@ -124,53 +160,380 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
         events_->clear();
         refresh();
     });
-    applyConnection(initial);
+    navigate(Home);
+    poller_.configure(runs_.isEmpty() ? initial : runs_.first().connection);
 }
 
-void MainWindow::showPage(int index)
+QWidget *MainWindow::buildHome()
 {
-    navigation_->button(index)->setChecked(true);
-    pages_->setCurrentIndex(index);
+    auto *page = new QWidget;
+    page->setObjectName("surface");
+    auto *layout = column(page);
+    layout->addSpacing(7);
+    heading(layout, tr("Диагностика кластера"), tr("Выберите сценарий работы"));
+    auto *tiles = new QHBoxLayout;
+    tiles->setSpacing(16);
+    for (const bool online : {true, false}) {
+        auto *tile = panel();
+        tile->setMinimumHeight(222);
+        auto *body = column(tile, 20, 10);
+        auto *badge = label({});
+        badge->setPixmap(v2::icon(online ? 1 : 2, QColor(online ? "#16866b" : "#295ec5"), 23).pixmap(23));
+        badge->setAlignment(Qt::AlignCenter);
+        badge->setFixedSize(36, 36);
+        badge->setStyleSheet(online ? "background:#e4f5ed;border-radius:18px" : "background:#edf3fc;border-radius:18px");
+        body->addWidget(badge);
+        body->addWidget(label(online ? tr("Онлайн-мониторинг") : tr("Анализ архива"), "tileTitle"));
+        auto *description = label(online ? tr("Наблюдение за состоянием групп по мере поступления телеметрии.")
+                                         : tr("Обработка сохранённой телеметрии за выбранный период."), "muted");
+        description->setWordWrap(true);
+        description->setMaximumWidth(310);
+        body->addWidget(description);
+        body->addStretch();
+        auto *action = button(online ? tr("Перейти к мониторингу") : tr("Новый запуск"), online ? "soft" : "primary");
+        action->setFixedHeight(40);
+        body->addWidget(action);
+        connect(action, &QPushButton::clicked, this, [this, online] { navigate(online ? Online : Archive); });
+        tiles->addWidget(tile, 1);
+    }
+    layout->addLayout(tiles);
+    layout->addSpacing(12);
+    auto *recent = new QHBoxLayout;
+    recent->addWidget(sectionLabel(tr("Последние запуски")));
+    recent->addStretch();
+    auto *all = button(tr("Вся история ›"), "link");
+    connect(all, &QPushButton::clicked, this, [this] { navigate(Catalog); });
+    recent->addWidget(all);
+    layout->addLayout(recent);
+    auto *table = panel();
+    auto *rows = column(table, 1, 0);
+    auto *header = new QFrame;
+    header->setObjectName("tableHead");
+    auto *columns = new QHBoxLayout(header);
+    columns->setContentsMargins(15, 0, 15, 0);
+    header->setFixedHeight(42);
+    columns->addWidget(label(tr("ЗАПУСК"), "small"), 42);
+    columns->addWidget(label(tr("СОБЫТИЯ"), "small"), 18);
+    columns->addWidget(label(tr("СОСТОЯНИЕ"), "small"), 26);
+    columns->addWidget(label({}), 14);
+    rows->addWidget(header);
+    if (runs_.isEmpty()) {
+        auto *empty = label(tr("Сохранённых запусков пока нет"), "muted");
+        empty->setAlignment(Qt::AlignCenter);
+        empty->setMinimumHeight(68);
+        rows->addWidget(empty);
+    }
+    for (const auto &run : runs_.mid(0, 2)) {
+        auto *row = new QFrame;
+        auto *line = new QHBoxLayout(row);
+        line->setContentsMargins(15, 10, 15, 10);
+        row->setObjectName(run.connection.execution == runs_.mid(0, 2).last().connection.execution ? "lastRow" : "tableRow");
+        row->setMinimumHeight(67);
+        auto *identity = new QWidget;
+        auto *names = column(identity, 0, 4);
+        auto *name = label(run.shortName);
+        name->setStyleSheet("font-weight:bold");
+        names->addWidget(name);
+        names->addWidget(label(run.period(), "small"));
+        line->addWidget(identity, 42);
+        line->addWidget(label(run.events), 18);
+        auto *status = label(run.verified ? tr("✓  Завершён") : tr("Требуется сверка"), "small");
+        if (run.verified) status->setStyleSheet("color:#16866b");
+        line->addWidget(status, 26);
+        auto *slot = new QWidget;
+        auto *actions = new QHBoxLayout(slot);
+        actions->setContentsMargins(0, 0, 0, 0);
+        actions->addStretch();
+        auto *open = button(tr("Открыть ›"), "link");
+        actions->addWidget(open);
+        line->addWidget(slot, 14);
+        connect(open, &QPushButton::clicked, this, [this, run] { openRun(run, Catalog); });
+        rows->addWidget(row);
+    }
+    layout->addWidget(table);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *MainWindow::buildArchive()
+{
+    auto *page = new QWidget;
+    page->setObjectName("surface");
+    auto *layout = column(page);
+    layout->addSpacing(7);
+    heading(layout, tr("Анализ архива"), tr("Диагностика ранее накопленной телеметрии"));
+    auto *card = panel();
+    card->setMaximumWidth(750);
+    auto *body = column(card, 20, 10);
+    body->addWidget(sectionLabel(tr("Новый анализ Summit D2")));
+    for (const auto &run : runs_) {
+        if (!run.online()) {
+            body->addWidget(label(tr("Доступный архив · %1").arg(run.period()), "muted"));
+            break;
+        }
+    }
+    body->addWidget(label(tr("Выберите дату, период и скорость воспроизведения."), "muted"));
+    auto *start = button(tr("Новый запуск"), "primary");
+    start->setEnabled(false);
+    start->setToolTip(tr("Создание запуска подключается после визуальной приёмки"));
+    body->addWidget(start, 0, Qt::AlignLeft);
+    layout->addWidget(card);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *MainWindow::buildCatalog()
+{
+    auto *page = new QWidget;
+    page->setObjectName("surface");
+    auto *layout = column(page);
+    layout->addSpacing(7);
+    heading(layout, tr("История запусков"), tr("Сохранённые результаты диагностики"));
+    auto *filters = new QHBoxLayout;
+    search_ = new QLineEdit;
+    search_->setPlaceholderText(tr("Поиск запуска"));
+    runFilter_ = new QComboBox;
+    runFilter_->addItems({tr("Все запуски"), tr("Анализ архива"), tr("Имитация онлайн-мониторинга")});
+    filters->addWidget(search_, 1);
+    filters->addWidget(runFilter_);
+    layout->addLayout(filters);
+    auto *list = new QWidget;
+    catalogList_ = column(list);
+    layout->addWidget(list);
+    layout->addStretch();
+    connect(search_, &QLineEdit::textChanged, this, &MainWindow::populateCatalog);
+    connect(runFilter_, &QComboBox::currentIndexChanged, this, &MainWindow::populateCatalog);
+    populateCatalog();
+    return page;
+}
+
+void MainWindow::populateCatalog()
+{
+    while (auto *item = catalogList_->takeAt(0)) {
+        item->widget()->deleteLater();
+        delete item;
+    }
+    for (const auto &run : runs_) {
+        if (runFilter_->currentIndex() && (runFilter_->currentIndex() == 2) != run.online()) continue;
+        if (!(run.name + " " + run.period() + " " + pace(run.speed)).contains(search_->text().trimmed(), Qt::CaseInsensitive)) continue;
+        auto *card = panel();
+        auto *layout = column(card, 19, 9);
+        auto *titleRow = new QHBoxLayout;
+        titleRow->addWidget(sectionLabel(run.name), 1);
+        if (run.verified) {
+            auto *status = label(tr("✓  Завершён"));
+            status->setStyleSheet("color:#16866b");
+            titleRow->addWidget(status);
+        }
+        layout->addLayout(titleRow);
+        layout->addWidget(label(run.period(), "muted"));
+        layout->addWidget(label(tr("%1  ·  %2  ·  %3 событий  ·  %4 результатов%5")
+            .arg(run.online() ? tr("Имитация онлайн-мониторинга") : tr("Анализ архива"), pace(run.speed),
+                 run.events, run.ticks, run.duration.isEmpty() ? QString{} : "  ·  " + run.duration), "small"));
+        auto *open = button(tr("Открыть результаты ›"), "link");
+        layout->addWidget(open, 0, Qt::AlignRight);
+        connect(open, &QPushButton::clicked, this, [this, run] { openRun(run, Catalog); });
+        catalogList_->addWidget(card);
+    }
+    if (!catalogList_->count()) catalogList_->addWidget(label(tr("Запуски не найдены"), "muted"));
+}
+
+QWidget *MainWindow::buildSettings()
+{
+    auto *page = new QWidget;
+    page->setObjectName("surface");
+    auto *layout = column(page);
+    layout->addSpacing(7);
+    heading(layout, tr("Настройки"), tr("Подключение к существующему запуску и параметры интерфейса"));
+    auto *card = panel();
+    card->setMaximumWidth(720);
+    auto *form = column(card, 20);
+    form->addWidget(sectionLabel(tr("Подключение к Master")));
+    auto *setup = button(tr("Настроить подключение"), "primary");
+    form->addWidget(setup, 0, Qt::AlignLeft);
+    connect(setup, &QPushButton::clicked, this, [this] {
+        SettingsDialog dialog(attached_.connection, this);
+        if (dialog.exec() == QDialog::Accepted) applyConnection(dialog.settings());
+    });
+    layout->addWidget(card);
+    layout->addStretch();
+    return page;
+}
+
+QWidget *MainWindow::buildWorkspace()
+{
+    auto *page = new QWidget;
+    auto *layout = column(page, 0, 0);
+    breadcrumb_ = label({}, "small");
+    layout->addWidget(breadcrumb_);
+    layout->addSpacing(7);
+    auto *header = new QHBoxLayout;
+    auto *identity = new QWidget;
+    auto *identityLayout = column(identity, 0, 4);
+    runTitle_ = label({}, "workspaceTitle");
+    runDescription_ = label({}, "muted");
+    identityLayout->addWidget(runTitle_);
+    identityLayout->addWidget(runDescription_);
+    header->addWidget(identity, 1);
+    runStatus_ = label({}, "small");
+    header->addWidget(runStatus_);
+    layout->addLayout(header);
+    runFacts_ = label({}, "small");
+    runFacts_->setFixedHeight(28);
+    layout->addWidget(runFacts_);
+    layout->addSpacing(9);
+
+    auto *bar = new QFrame;
+    bar->setObjectName("tabs");
+    auto *navigation = new QHBoxLayout(bar);
+    navigation->setContentsMargins(4, 4, 4, 4);
+    navigation->setSpacing(4);
+    tabButtons_ = new QButtonGroup(this);
+    tabs_ = new QStackedWidget;
+    tabs_->setObjectName("workspaceTabs");
+    dashboard_ = new Dashboard;
+    diagnostics_ = new Diagnostics;
+    events_ = new Events;
+    const QList<QWidget *> views{dashboard_, diagnostics_, events_};
+    const QStringList names{tr("Обзор кластера"), tr("Диагностика группы"), tr("Журнал аномалий")};
+    for (int i = 0; i < views.size(); ++i) {
+        auto *item = button(names[i], "tab");
+        item->setCheckable(true);
+        item->setFixedHeight(35);
+        tabButtons_->addButton(item, i);
+        navigation->addWidget(item, 1);
+        tabs_->addWidget(views[i]);
+    }
+    tabButtons_->button(0)->setChecked(true);
+    layout->addWidget(bar);
+    layout->addSpacing(10);
+    auto *time = panel();
+    time->setFixedHeight(64);
+    auto *controls = new QHBoxLayout(time);
+    controls->setContentsMargins(12, 8, 12, 8);
+    history_ = new HistoryBar;
+    controls->addWidget(history_, 1);
+    mode_ = new QComboBox;
+    mode_->addItems({tr("Текущее время"), tr("Выбор времени")});
+    controls->addWidget(mode_);
+    layout->addWidget(time);
+    layout->addSpacing(12);
+    layout->addWidget(tabs_, 1);
+    connect(tabButtons_, &QButtonGroup::idClicked, this, &MainWindow::showTab);
+    connect(history_, &HistoryBar::changed, this, &MainWindow::refresh);
+    connect(mode_, &QComboBox::currentIndexChanged, this, &MainWindow::refresh);
+    connect(dashboard_, &Dashboard::groupSelected, this, &MainWindow::selectGroup);
+    connect(dashboard_, &Dashboard::historySelected, this, [this](const QString &group, const QDateTime &at) {
+        openHistory(group, at.addSecs(-60), at.addSecs(60), at);
+    });
+    connect(events_, &Events::eventSelected, this, [this](const QString &group, const QDateTime &from, const QDateTime &to) {
+        openHistory(group, from, to, from);
+    });
+    connect(diagnostics_, &Diagnostics::timeSelected, this, [this](const QDateTime &at) {
+        if (mode_->currentIndex() == 1) history_->selectTime(at);
+        else openHistory({}, at.addSecs(-60), at.addSecs(60), at);
+    });
+    connect(diagnostics_, &Diagnostics::selectionChanged, this, &MainWindow::refresh);
+    connect(events_, &Events::filterChanged, this, &MainWindow::refresh);
+    return page;
+}
+
+void MainWindow::navigate(Section section)
+{
+    section_ = section;
+    navigation_->button(section)->setChecked(true);
+    if (section == Online) {
+        for (const auto &run : runs_) {
+            if (run.online()) {
+                openRun(run, Online);
+                return;
+            }
+        }
+        openRun(attached_, Online);
+        return;
+    }
+    switch (section) {
+    case Home: pages_->setCurrentIndex(HomePage); break;
+    case Archive: pages_->setCurrentIndex(ArchivePage); break;
+    case Catalog: pages_->setCurrentIndex(CatalogPage); break;
+    case System: pages_->setCurrentIndex(SystemPage); break;
+    case Settings: pages_->setCurrentIndex(SettingsPage); break;
+    default: break;
+    }
+    refresh();
+}
+
+void MainWindow::openRun(const ReviewRun &run, Section section)
+{
+    const bool different = run.connection.execution != current_.connection.execution;
+    current_ = run;
+    section_ = section;
+    navigation_->button(section)->setChecked(true);
+    pages_->setCurrentIndex(RunPage);
+    if (different) {
+        const QSignalBlocker blocker(mode_);
+        mode_->setCurrentIndex(section == Catalog || run.verified ? 1 : 0);
+        showTab(0);
+    }
+    auto settings = run.connection;
+    settings.intervalMs = attached_.connection.intervalMs;
+    poller_.configure(settings);
+    refresh();
+}
+
+void MainWindow::showTab(int index)
+{
+    tabButtons_->button(index)->setChecked(true);
+    tabs_->setCurrentIndex(index);
     refresh();
 }
 
 void MainWindow::refresh()
 {
     updateConnection();
+    if (pages_->currentIndex() == SystemPage) system_->refresh(poller_);
+    if (pages_->currentIndex() != RunPage) return;
+    runTitle_->setText(section_ == Online ? tr("Онлайн-мониторинг") : tr("Результаты анализа"));
+    breadcrumb_->setText(section_ == Online ? tr("Главная  ›  Мониторинг") : tr("История запусков  ›  Результаты запуска"));
+    runDescription_->setText(current_.shortName.isEmpty() ? current_.name : current_.shortName + " · " + current_.period());
+    runStatus_->setText(current_.verified ? tr("✓  Завершён") : QString{});
+    runStatus_->setStyleSheet("color:#16866b");
+    QStringList facts;
+    if (current_.online()) facts << tr("Имитация ×1 (архив Summit)");
+    else if (!current_.speed.isEmpty() && current_.shortName.isEmpty()) facts << tr("Архив Summit · %1").arg(pace(current_.speed));
+    if (!current_.ticks.isEmpty()) facts << tr("%1 результатов").arg(current_.ticks);
+    if (!current_.events.isEmpty()) facts << tr("%1 событий").arg(current_.events);
+    if (!current_.duration.isEmpty()) facts << current_.duration;
+    runFacts_->setText(facts.join(" · "));
     updateHistory();
     const auto &store = poller_.store();
-    const bool history = mode_->currentIndex() == History;
-    const auto at = history ? history_->at() : store.latestTime();
-    if (pages_->currentWidget() == dashboard_)
-        dashboard_->refresh(store, at);
-    else if (pages_->currentWidget() == diagnostics_)
-        diagnostics_->refresh(store, at, history ? history_->from() : qMax(store.earliestTime(), at.addSecs(-1800)),
-                              history ? history_->to() : at);
-    else if (pages_->currentWidget() == events_)
-        events_->refresh(store, history ? history_->from() : QDateTime{}, history ? history_->to() : QDateTime{});
-    else if (pages_->currentWidget() == system_)
-        system_->refresh(poller_);
+    const bool historical = mode_->currentIndex() == 1;
+    const auto at = historical ? history_->at() : store.latestTime();
+    if (tabs_->currentIndex() == 0) dashboard_->refresh(store, at);
+    else if (tabs_->currentIndex() == 1)
+        diagnostics_->refresh(store, at, historical ? history_->from() : qMax(store.earliestTime(), at.addSecs(-1800)),
+                              historical ? history_->to() : at);
+    else events_->refresh(store, {}, {});
 }
 
 void MainWindow::updateHistory()
 {
-    const bool active = mode_->currentIndex() == History;
-    history_->setVisible(active);
-    if (!active) return;
+    history_->setVisible(mode_->currentIndex() == 1);
     const auto &store = poller_.store();
-    const auto start = readTime(store.summary.value("window_start"));
-    const auto end = readTime(store.summary.value("window_end")).addSecs(-10);
-    history_->setBounds(start.isValid() ? start : store.earliestTime(), end.isValid() ? end : store.latestTime());
+    const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
+    const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
+    history_->setBounds(start.isValid() ? start : store.earliestTime(), end.isValid() ? end.addSecs(-10) : store.latestTime());
     if (!history_->hasSelection() && (start.isValid() || store.earliestTime().isValid())) {
-        const auto latest = store.latestTime().isValid() ? store.latestTime() : start;
         const QSignalBlocker blocker(history_);
-        history_->setRange(start.isValid() ? start : store.earliestTime(), latest, latest);
+        const auto latest = current_.verified && end.isValid() ? end.addSecs(-10) : store.latestTime();
+        const auto first = start.isValid() ? start : store.earliestTime();
+        history_->setRange(first, end.isValid() ? end.addSecs(-10) : latest, latest.isValid() ? latest : first);
     }
 }
 
 void MainWindow::selectGroup(const QString &group)
 {
-    showPage(1);
+    showTab(1);
     diagnostics_->selectGroup(group);
     refresh();
 }
@@ -179,28 +542,21 @@ void MainWindow::openHistory(const QString &group, const QDateTime &from, const 
 {
     const QSignalBlocker blocker(mode_);
     const QSignalBlocker historyBlocker(history_);
-    mode_->setCurrentIndex(History);
+    mode_->setCurrentIndex(1);
     updateHistory();
     history_->setRange(from, to, at);
-    if (group.isEmpty()) refresh();
-    else selectGroup(group);
+    if (group.isEmpty()) refresh(); else selectGroup(group);
 }
 
 void MainWindow::applyConnection(const ConnectionSettings &settings)
 {
-    if (!poller_.settings().execution.isEmpty()
-        && (settings.execution != poller_.settings().execution || settings.masterUrl != poller_.settings().masterUrl)) {
-        summitSpeed_.clear();
-        const QSignalBlocker blocker(mode_);
-        mode_->setCurrentIndex(Live);
-    }
-    execution_->setText(settings.execution);
-    execution_->setStyleSheet({});
-    execution_->setToolTip({});
+    if (attached_.connection.execution != settings.execution || attached_.connection.masterUrl != settings.masterUrl)
+        attached_.speed.clear();
+    attached_.connection = settings;
     preferences_.setValue("masterUrl", settings.masterUrl.toString());
     preferences_.setValue("execution", settings.execution);
     preferences_.setValue("intervalMs", settings.intervalMs);
-    poller_.configure(settings);
+    openRun(attached_, Online);
 }
 
 void MainWindow::updateConnection()
@@ -210,13 +566,9 @@ void MainWindow::updateConnection()
     const auto &errors = poller_.errors();
     const bool summaryOnly = poller_.readiness() == 1 && errors.contains("/v1/summary")
         && !errors.contains("/v1/results") && !errors.contains("/v1/events");
-    connection_->setText(health < 0 ? tr("Проверка Master…")
-        : health == 0 ? tr("Связь с Master потеряна")
-        : summaryOnly ? tr("Master подключён · сводка временно недоступна")
-        : stale ? tr("Master доступен · данные неактуальны") : tr("Master подключён"));
-    connection_->setStyleSheet(health == 1 && !stale ? "color:#157149;font-weight:bold"
-                                                     : "color:#95501e;font-weight:bold");
-    const auto pace = summitSpeed_ == "0" ? QStringLiteral("MAX") : QStringLiteral("×") + summitSpeed_;
-    source_->setText(summitSpeed_.isEmpty() ? tr("Источник и темп не указаны")
-        : tr("Источник — воспроизведение исторической телеметрии Summit   ·   Темп по конфигурации %1").arg(pace));
+    connection_->setText(health < 0 ? tr("●  Проверка Master")
+        : health == 0 ? tr("●  Нет связи с Master")
+        : summaryOnly ? tr("●  Сводка недоступна")
+        : stale ? tr("●  Данные устарели") : tr("●  Master подключён"));
+    connection_->setStyleSheet(health == 1 && !stale ? "color:#72d4b5" : "color:#c5d1df");
 }

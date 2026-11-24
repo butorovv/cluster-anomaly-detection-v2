@@ -20,6 +20,8 @@ target_link_libraries(cluster_client PUBLIC Qt6::Network)
 
 qt_add_library(cluster_ui STATIC
     src/mainwindow.cpp
+    src/reviewrun.cpp
+    src/style.cpp
     views/settings.cpp
     views/dashboard.cpp
     views/diagnostics.cpp
