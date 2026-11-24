@@ -71,7 +71,10 @@ void SystemView::refresh(const Poller &poller)
                                          "Завершённых событий %3 / %4\nСверка — %5%6")
         .arg(numberText(summary.value("group_ticks"))).arg(store.resultCount()).arg(store.events().size())
         .arg(numberText(summary.value("parent_events")), sync,
-             summary.value("complete").toBool() ? QStringLiteral("   ·   Сетка обработана") : QString{}));
+             summary.value("complete").toBool() ? QStringLiteral("   ·   Сетка обработана") : QString{})
+        + QStringLiteral("\nАномальных тиков %1   ·   Неопределённых %2   ·   Положительных локальных I2 %3")
+            .arg(numberText(summary.value("positive_ticks")), numberText(summary.value("unknown_ticks")),
+                 numberText(summary.value("i2_positive_ticks"))));
     clock_->setText(QStringLiteral("Системное время %1   ·   Последняя телеметрия %2\n"
                                   "Фактический интервал приёма Master %3   ·   Первый результат %4")
         .arg(timeText(QDateTime::currentDateTimeUtc()), timeText(store.latestTime()), receiptDuration(summary),

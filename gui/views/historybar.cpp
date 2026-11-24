@@ -5,6 +5,7 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QSignalBlocker>
+#include <QTimeZone>
 
 HistoryBar::HistoryBar(QWidget *parent) : QWidget(parent)
 {
@@ -14,7 +15,11 @@ HistoryBar::HistoryBar(QWidget *parent) : QWidget(parent)
     to_ = new QDateTimeEdit;
     at_ = new QDateTimeEdit;
     for (auto *edit : {from_, to_, at_}) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
+        edit->setTimeZone(QTimeZone::utc());
+#else
         edit->setTimeSpec(Qt::UTC);
+#endif
         edit->setDisplayFormat("dd.MM.yyyy HH:mm:ss");
         edit->setCalendarPopup(true);
         edit->setKeyboardTracking(false);

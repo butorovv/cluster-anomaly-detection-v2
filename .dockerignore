@@ -1,5 +1,6 @@
 .git
 .cache
+build
 .codex
 .agents
 experiments/artifacts
@@ -9,3 +10,4 @@ results
 *.log
 .env
 .env.*
+**/compose.env

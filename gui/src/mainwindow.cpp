@@ -34,7 +34,6 @@ MainWindow::MainWindow(const ConnectionSettings &initial, const QString &summitS
     auto *header = new QHBoxLayout;
     connection_ = new QLabel;
     execution_ = new QLineEdit;
-    execution_->setMaxLength(36);
     execution_->setMinimumWidth(290);
     execution_->setPlaceholderText(tr("Execution ID"));
     execution_->setAccessibleName(tr("Execution ID"));

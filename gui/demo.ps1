@@ -19,8 +19,22 @@ $envPath = Join-Path $runPath 'compose.env'
 $composePath = Join-Path $root 'deploy/compose.yaml'
 
 function Compose([string[]]$Arguments) {
-    & docker compose --env-file $envPath --project-name $run.project -f $composePath @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "Docker Compose завершился с кодом $LASTEXITCODE" }
+    $restore = @{}
+    foreach ($line in Get-Content -LiteralPath $envPath) {
+        if ($line -match '^([A-Z_][A-Z0-9_]*)=') {
+            $name = $Matches[1]
+            $restore[$name] = [Environment]::GetEnvironmentVariable($name)
+            [Environment]::SetEnvironmentVariable($name, $null)
+        }
+    }
+    try {
+        & docker compose --env-file $envPath --project-name $run.project -f $composePath @Arguments
+        if ($LASTEXITCODE -ne 0) { throw "Docker Compose завершился с кодом $LASTEXITCODE" }
+    } finally {
+        foreach ($entry in $restore.GetEnumerator()) {
+            [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value)
+        }
+    }
 }
 function Summary {
     Invoke-RestMethod "$($run.master)/v1/summary?execution_id=$($run.execution)" -TimeoutSec 10
@@ -56,11 +70,13 @@ if ($Action -eq 'Init') {
         "MASTER_DB_PASSWORD=$([guid]::NewGuid().ToString('N'))",
         "MASTER_PORT=$MasterPort", "PG_PORT=$PostgresPort", "KAFKA_PORT=$KafkaPort",
         "RUN_START=$($run.start)", "RUN_END=$($run.end)", "REPLAY_SPEED=$Speed",
+        "INPUT_SHA256=$expected", 'PROFILE_SHA256=a39a7f63ad7cea88ac0a642ecd1a38c11ef3ea727fe97d654bb4cb7297f77a36',
         'OUTPUT_TRANSPORT=http_push', 'GROUPS_COUNT=16', 'DELTA_SECONDS=0',
         'CHECKPOINT_INTERVAL_TICKS=3', 'MEASURE=false'
     )
     Set-Content -LiteralPath $envPath -Value $lines -Encoding utf8NoBOM
-    Compose @('up','-d','--build','--wait','--scale',"worker=$Workers",'master','worker')
+    Compose @('build','bootstrap')
+    Compose @('up','-d','--no-build','--wait','--scale',"worker=$Workers",'master','worker')
     Write-Host "Master $($run.master)"
     Write-Host "Execution ID $execution"
     Write-Host "Аргументы GUI --master $($run.master) --execution $execution --summit-speed $Speed"
@@ -68,11 +84,16 @@ if ($Action -eq 'Init') {
 }
 
 $run = Get-Content -LiteralPath $metadata -Raw | ConvertFrom-Json
+$execution = [guid]::ParseExact($run.execution, 'D').ToString()
+if ($run.project -ne "cad-gui-$($execution.Replace('-',''))") {
+    throw 'Метаданные не соответствуют выделенному проекту демонстрации.'
+}
 if ($Action -eq 'Stop') {
     Compose @('stop')
     return
 }
 if ($Action -eq 'Replay') {
+    if ((Summary).group_ticks -ne 0) { throw 'Выберите новый execution_id через Init перед повторным Replay.' }
     $statusFile = Join-Path $runPath 'replay-start.json'
     $lock = [IO.File]::Open($statusFile, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write)
     $lock.Dispose()
@@ -104,6 +125,13 @@ do {
     Start-Sleep -Seconds 1
 } while ($drain.Elapsed.TotalSeconds -lt $DrainTimeoutSeconds)
 if (!$summary.complete -or $pending -ne '16|0') { throw 'Master или Worker не завершили обработку.' }
+$completion = Join-Path $runPath 'pipeline.json'
+if ($Action -eq 'Replay') {
+    SaveJson @{
+        drainedUtc = [datetimeoffset]::UtcNow
+        wallSeconds = $elapsed.Elapsed.TotalSeconds
+    } 'pipeline.json'
+}
 
 # After drain, compare an independent full API traversal with the fixed Summit grid.
 $tick = [datetimeoffset]::Parse($run.start)
@@ -127,12 +155,14 @@ while ($true) {
 $events = [Collections.Generic.HashSet[string]]::new()
 $after = ''
 while ($true) {
-    $page = @(Invoke-RestMethod "$($run.master)/v1/events?execution_id=$($run.execution)&limit=100&after=$after")
+    $page = Invoke-RestMethod "$($run.master)/v1/events?execution_id=$($run.execution)&limit=100&after=$after" -TimeoutSec 20
     if ($page.Count -eq 0) { break }
     foreach ($event in $page) {
-        if (!$event.id -or !$events.Add($event.id)) { throw 'Некорректный ID или повтор события.' }
+        if ([string]::CompareOrdinal($event.id, $after) -le 0 -or !$events.Add($event.id)) {
+            throw 'Некорректный порядок ID или повтор события.'
+        }
+        $after = $event.id
     }
-    $after = $page[-1].id
 }
 $summary = Summary
 if ($results -ne $run.expectedTicks -or $results -ne $summary.group_ticks -or $events.Count -ne $summary.parent_events) {
@@ -142,6 +172,9 @@ $report = [ordered]@{
     observedAtUtc = [datetimeoffset]::UtcNow; groupTicks = $results; terminalEvents = $events.Count
     replay = (Get-Content -LiteralPath (Join-Path $runPath 'replay.json') -Raw | ConvertFrom-Json)
     summary = $summary
+}
+if (Test-Path -LiteralPath $completion) {
+    $report.pipeline = Get-Content -LiteralPath $completion -Raw | ConvertFrom-Json
 }
 SaveJson $report 'verification.json'
 $report | ConvertTo-Json -Depth 12

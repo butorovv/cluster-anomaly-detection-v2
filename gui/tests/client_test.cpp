@@ -168,8 +168,21 @@ private slots:
         QCOMPARE(store.events().size(), store.summary.value("parent_events").toInteger());
         const auto lastTick = readTime(store.summary.value("window_end")).addSecs(-10);
         QCOMPARE(store.latestTime(), lastTick);
-        for (const auto &group : store.groups())
-            QVERIFY(store.tickAt(group, lastTick));
+        const auto firstTick = readTime(store.summary.value("window_start"));
+        qint64 positive = 0;
+        qint64 unknown = 0;
+        for (const auto &group : store.groups()) {
+            auto next = firstTick;
+            for (const auto &tick : store.timeline(group)) {
+                QCOMPARE(tick.time, next);
+                next = next.addSecs(10);
+                positive += tick.state() == GroupState::Positive;
+                unknown += tick.state() == GroupState::Unknown;
+            }
+            QCOMPARE(next.addSecs(-10), lastTick);
+        }
+        QCOMPARE(positive, store.summary.value("positive_ticks").toInteger());
+        QCOMPARE(unknown, store.summary.value("unknown_ticks").toInteger());
         QVERIFY(!store.recentAnomalies(store.latestTime(), 1).isEmpty());
         if (qEnvironmentVariableIsSet("CAD_GUI_TEST_REQUIRE_LIVE")) QVERIFY(seenAnomalyDuringRun);
         qInfo() << "Master" << store.resultCount() << "ticks" << store.events().size()

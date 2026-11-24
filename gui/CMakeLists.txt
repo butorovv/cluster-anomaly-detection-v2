@@ -18,8 +18,7 @@ qt_add_library(cluster_client STATIC
 target_include_directories(cluster_client PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(cluster_client PUBLIC Qt6::Network)
 
-qt_add_executable(cluster-monitor WIN32
-    src/main.cpp
+qt_add_library(cluster_ui STATIC
     src/mainwindow.cpp
     views/settings.cpp
     views/dashboard.cpp
@@ -31,7 +30,9 @@ qt_add_executable(cluster-monitor WIN32
     models/eventtable.cpp
     widgets/scorechart.cpp
 )
-target_link_libraries(cluster-monitor PRIVATE cluster_client Qt6::Widgets)
+target_link_libraries(cluster_ui PUBLIC cluster_client Qt6::Widgets)
+qt_add_executable(cluster-monitor WIN32 src/main.cpp)
+target_link_libraries(cluster-monitor PRIVATE cluster_ui)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -39,4 +40,8 @@ if(BUILD_TESTING)
     qt_add_executable(cluster-client-test tests/client_test.cpp)
     target_link_libraries(cluster-client-test PRIVATE cluster_client Qt6::Test)
     add_test(NAME cluster-client COMMAND cluster-client-test)
+    qt_add_executable(cluster-views-test tests/views_test.cpp)
+    target_link_libraries(cluster-views-test PRIVATE cluster_ui Qt6::Test)
+    add_test(NAME cluster-views COMMAND cluster-views-test)
+    set_tests_properties(cluster-views PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 endif()
