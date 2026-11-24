@@ -794,7 +794,7 @@ void MainWindow::refresh()
         const auto processedEnd = latestProcessed.addSecs(10);
         events_->refresh(store, start.isValid() ? start : store.earliestTime(),
                          end.isValid() && processedEnd.isValid() ? qMin(end, processedEnd) : processedEnd,
-                         poller_.synchronized());
+                         poller_.synchronized() && (!poller_.offline() || store.summary.value("complete").toBool()));
         if (!pendingExport_.isEmpty() && pendingExport_ == current_.connection.execution &&
             (poller_.synchronized() || poller_.stale())) {
             pendingExport_.clear();

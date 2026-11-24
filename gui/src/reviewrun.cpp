@@ -126,9 +126,11 @@ QList<ReviewRun> readManagedRuns(const QString &root, int port, int pollInterval
         run.archiveMode = metadata.value("archiveMode").toString();
         run.phase = state.value("phase").toString("preparing");
         run.phaseMessage = state.value("message").toString();
-        run.snapshot = summary.value("complete").toBool() && summary.value("execution_id").toString() == entry
-            && report.value("snapshot").toObject().value("resultPages").toInt() > 0;
-        run.verified = run.snapshot && run.phase == "complete";
+        const auto snapshot = report.value("snapshot").toObject();
+        const bool partial = snapshot.value("partial").toBool();
+        run.snapshot = (summary.value("complete").toBool() || partial) && summary.value("execution_id").toString() == entry
+            && snapshot.value("resultPages").toInt(-1) >= (partial ? 0 : 1);
+        run.verified = run.snapshot && !partial && run.phase == "complete";
         if (run.phase == "processing") {
             if (environment.exists("pipeline.json")) run.phase = "synchronizing";
             else if (environment.exists("replay.json")) run.phase = "draining";

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -42,6 +43,19 @@ type demoIdentity struct {
 	Mode      string    `json:"archiveMode"`
 }
 
+// Validate the large established run once at startup so the first node
+// interaction does not wait for reading hundreds of diagnostic pages.
+func (c *Catalog) Prime(ctx context.Context, logger *slog.Logger) {
+	for _, execution := range []string{d2ID, liveID} {
+		bounded, cancel := context.WithTimeout(ctx, 30*time.Second)
+		_, err := c.Published(bounded, Selection{Execution: execution, Group: "a01"})
+		cancel()
+		if err != nil {
+			logger.Warn("saved publication unavailable", "execution", execution)
+		}
+	}
+}
+
 func readJSON(path string, limit int64, target any) error {
 	f, err := os.Open(path)
 	if err != nil {
@@ -77,8 +91,12 @@ func (c *Catalog) Published(ctx context.Context, s Selection) (Publication, erro
 	if legacy != "" {
 		demo.Input, demo.Profile = SummitSHA, summitProfile
 	}
-	if demo.Mode == "" { demo.Mode = "reuse" }
-	if demo.Mode != "reuse" && demo.Mode != "stream" { return Publication{},fmt.Errorf("unsupported archive mode") }
+	if demo.Mode == "" {
+		demo.Mode = "reuse"
+	}
+	if demo.Mode != "reuse" && demo.Mode != "stream" {
+		return Publication{}, fmt.Errorf("unsupported archive mode")
+	}
 	if !demo.Start.Before(demo.End) || demo.Input == "" || demo.Profile == "" {
 		return Publication{}, fmt.Errorf("unverified run identity")
 	}
@@ -143,24 +161,36 @@ func (c *Catalog) loadSnapshot(ctx context.Context, dir string, demo demoIdentit
 	var manifest struct {
 		Summary  events.Summary `json:"summary"`
 		Snapshot struct {
-			ResultPages int `json:"resultPages"`
+			ResultPages int  `json:"resultPages"`
+			Partial     bool `json:"partial"`
 		} `json:"snapshot"`
 	}
 	if err := readJSON(filepath.Join(dir, "verification.json"), 1<<20, &manifest); err != nil {
 		return nil, err
 	}
 	s := manifest.Summary
-	if !s.Complete || s.ExecutionID != demo.Execution || !s.WindowStart.Equal(demo.Start) ||
+	partial := manifest.Snapshot.Partial
+	if (!s.Complete && !partial) || s.ExecutionID != demo.Execution || !s.WindowStart.Equal(demo.Start) ||
 		!s.WindowEnd.Equal(demo.End) || (s.GroupCount != 4 && s.GroupCount != 8 && s.GroupCount != 16) ||
 		s.ExpectedTicks != int64(s.GroupCount)*int64(s.WindowEnd.Sub(s.WindowStart)/(10*time.Second)) ||
-		s.Ticks != s.ExpectedTicks || manifest.Snapshot.ResultPages < 1 || manifest.Snapshot.ResultPages > 360 {
+		(!partial && s.Ticks != s.ExpectedTicks) || s.Ticks < 0 || s.Ticks > s.ExpectedTicks ||
+		manifest.Snapshot.ResultPages < 0 || (!partial && manifest.Snapshot.ResultPages < 1) || manifest.Snapshot.ResultPages > 360 {
 		return nil, fmt.Errorf("snapshot failed manifest validation")
 	}
 	p := &savedPublication{Identity: Publication{Execution: demo.Execution, Source: demo.Input,
 		Profile: demo.Profile, Mode: demo.Mode, Start: demo.Start, End: demo.End}, byGroup: make(map[string][]time.Time)}
+	for i := 1; i <= s.GroupCount; i++ {
+		p.byGroup[fmt.Sprintf("a%02d", i)] = nil
+	}
 	tick := demo.Start
 	group := 1
 	var count int64
+	var priorTick time.Time
+	var priorGroup string
+	pagesDir := "snapshot"
+	if partial {
+		pagesDir = "snapshot-partial"
+	}
 	for i := 0; i < manifest.Snapshot.ResultPages; i++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -173,15 +203,23 @@ func (c *Catalog) loadSnapshot(ctx context.Context, dir string, demo demoIdentit
 				} `json:"raw"`
 			} `json:"items"`
 		}
-		path := filepath.Join(dir, "snapshot", "results-"+strconv.Itoa(i)+".json")
+		path := filepath.Join(dir, pagesDir, "results-"+strconv.Itoa(i)+".json")
 		if err := readJSON(path, 24<<20, &page); err != nil {
 			return nil, err
 		}
 		for _, item := range page.Items {
-			if item.Raw.Group != fmt.Sprintf("a%02d", group) || !item.Raw.Timestamp.Equal(tick) || !tick.Before(demo.End) {
+			actual := item.Raw.Timestamp
+			_, known := p.byGroup[item.Raw.Group]
+			if !known || actual.Before(demo.Start) || !actual.Before(demo.End) ||
+				!actual.Equal(actual.Truncate(10*time.Second)) || actual.Before(priorTick) ||
+				(actual.Equal(priorTick) && item.Raw.Group <= priorGroup) {
+				return nil, fmt.Errorf("snapshot has an unordered or foreign tick")
+			}
+			if !partial && (item.Raw.Group != fmt.Sprintf("a%02d", group) || !actual.Equal(tick)) {
 				return nil, fmt.Errorf("snapshot has a missing or foreign tick")
 			}
-			p.byGroup[item.Raw.Group] = append(p.byGroup[item.Raw.Group], tick)
+			p.byGroup[item.Raw.Group] = append(p.byGroup[item.Raw.Group], actual)
+			priorTick, priorGroup = actual, item.Raw.Group
 			count++
 			group++
 			if group > s.GroupCount {

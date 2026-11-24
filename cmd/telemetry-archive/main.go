@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/delivery/kafkainput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/telemetry/domain"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -96,7 +98,28 @@ func streamCommand(ctx context.Context, operation string, args []string) error {
 	}
 	config := telemetryarchive.StreamConfig{Binding: domain.InputBinding{ExecutionID: *id, InputSHA256: *source, ProfileSHA256: *profile},
 		Window: domain.InputWindow{Start: start, End: end}, Broker: kafkainput.Broker{Seeds: strings.Split(*brokers, ",")}}
-	return telemetryarchive.Consume(ctx, pool, config)
+	for {
+		err := telemetryarchive.Consume(ctx, pool, config)
+		if !retryableArchiveError(err) || ctx.Err() != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "Temporary archive failure; restoring PostgreSQL positions.")
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func retryableArchiveError(err error) bool {
+	if errors.Is(err, archive.ErrTemporary) || errors.Is(err, context.DeadlineExceeded) ||
+		pgconn.SafeToRetry(err) || pgconn.Timeout(err) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (strings.HasPrefix(pgErr.Code, "08") || pgErr.Code == "57P01" ||
+		pgErr.Code == "40001" || pgErr.Code == "40P01")
 }
 
 func serve(ctx context.Context, args []string) error {
@@ -147,6 +170,7 @@ func serve(ctx context.Context, args []string) error {
 		return http.ErrUseLastResponse
 	}}
 	catalog := &telemetryarchive.Catalog{RunsRoot: *runs, ReviewRoot: *review, Client: client}
+	catalog.Prime(ctx, slog.Default())
 	server := &http.Server{Addr: *listen, Handler: telemetryarchive.Handler(catalog, reader, stream),
 		ReadHeaderTimeout: 2 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 8 * time.Second, MaxHeaderBytes: 8192}
 	go func() {

@@ -99,6 +99,11 @@ try {
     if ($null -ne $archiver -and !$archiver.HasExited) { $archiver.Kill(); $archiver.WaitForExit() }
     if ($null -ne $lock -and (Test-Path -LiteralPath (Join-Path $work 'demo.json'))) {
         try {
+            & $driver -Action CapturePartial -RunDirectory $work -SaveSnapshot
+        } catch {
+            Write-Warning 'Чтение неполного диагностического снимка недоступно.'
+        }
+        try {
             & $driver -Action Stop -RunDirectory $work
         } catch {
             Write-Warning 'Не удалось остановить принадлежащее запуску окружение.'

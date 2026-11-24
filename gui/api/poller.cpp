@@ -67,15 +67,17 @@ void Poller::openSnapshot(const ConnectionSettings &settings, const QString &dir
     const auto pages = manifest.value("snapshot").toObject();
     const int expectedResults = pages.value("resultPages").toInt(-1);
     const int expectedEvents = pages.value("eventPages").toInt(-1);
-    if (!summary.value("complete").toBool() || summary.value("execution_id").toString() != settings.execution ||
-        expectedResults <= 0 || expectedResults > 360 || expectedEvents < 0 || expectedEvents > 461) {
+    const bool partial = pages.value("partial").toBool();
+    if ((!summary.value("complete").toBool() && !partial) ||
+        summary.value("execution_id").toString() != settings.execution ||
+        expectedResults < (partial ? 0 : 1) || expectedResults > 360 || expectedEvents < 0 || expectedEvents > 461) {
         setError(summaryPath, tr("Архив запуска отсутствует или не прошёл проверку."));
         return;
     }
     targetResults_ = summary.value("group_ticks").toInteger();
     targetEvents_ = summary.value("parent_events").toInteger();
     store_.summary = summary;
-    const QDir data(run.filePath("snapshot"));
+    const QDir data(run.filePath(partial ? "snapshot-partial" : "snapshot"));
     // A single page per event-loop dispatch gives paint and input events time to run.
     auto *loader = new QTimer(this);
     connect(loader, &QTimer::timeout, this,

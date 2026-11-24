@@ -1,7 +1,7 @@
 # Requires PowerShell 7 and Docker Compose.
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)][ValidateSet('Init','Replay','Verify','Stop')][string]$Action,
+    [Parameter(Mandatory)][ValidateSet('Init','Replay','Verify','CapturePartial','Stop')][string]$Action,
     [Parameter(Mandatory)][string]$RunDirectory,
     [string]$AssetsRoot,
     [guid]$ExecutionId = [guid]::Empty,
@@ -150,10 +150,16 @@ if ($Action -eq 'Replay') {
         replaySeconds = $elapsed.Elapsed.TotalSeconds
     } 'replay.json'
 }
-if (!(Test-Path -LiteralPath (Join-Path $runPath 'replay.json'))) {
+$partial = $Action -eq 'CapturePartial'
+if ($partial -and (Test-Path -LiteralPath (Join-Path $runPath 'verification.json'))) {
+    return
+}
+if (!$partial -and !(Test-Path -LiteralPath (Join-Path $runPath 'replay.json'))) {
     throw 'Завершение Replayer не зафиксировано в этом каталоге.'
 }
 
+$completion = Join-Path $runPath 'pipeline.json'
+if (!$partial) {
 # Read-only drain check for the dedicated demo DB. The application uses HTTP exclusively.
 $query = @"
 SELECT (SELECT count(*) FROM cad_v2.group_checkpoints
@@ -176,16 +182,18 @@ do {
     Start-Sleep -Seconds 1
 } while ($drain.Elapsed.TotalSeconds -lt $DrainTimeoutSeconds)
 if (!$summary.complete -or $pending -ne '16|0') { throw 'Master или Worker не завершили обработку.' }
-$completion = Join-Path $runPath 'pipeline.json'
 if ($Action -eq 'Replay') {
     SaveJson @{
         drainedUtc = [datetimeoffset]::UtcNow
         wallSeconds = $elapsed.Elapsed.TotalSeconds
     } 'pipeline.json'
 }
+}
 
 # After drain, compare an independent full API traversal with the fixed Summit grid.
-$snapshot = Join-Path $runPath 'snapshot'
+$snapshotName = if ($partial) { 'snapshot-partial' } else { 'snapshot' }
+$snapshot = Join-Path $runPath $snapshotName
+if ($partial) { $SaveSnapshot = $true }
 $resultPages = 0
 $eventPages = 0
 if ($SaveSnapshot) {
@@ -194,6 +202,10 @@ if ($SaveSnapshot) {
 $tick = [datetimeoffset]::Parse($run.start)
 $group = 1
 $results = 0
+$priorTime = [datetimeoffset]::MinValue
+$priorGroup = ''
+$endTime = [datetimeoffset]::Parse($run.end)
+$startTime = [datetimeoffset]::Parse($run.start)
 $after = ''
 while ($true) {
     $uri = "$($run.master)/v1/results?execution_id=$($run.execution)&limit=128$after"
@@ -205,7 +217,17 @@ while ($true) {
     }
     if ($page.items.Count -eq 0) { break }
     foreach ($item in $page.items) {
-        if ($item.raw.group -ne ('a{0:00}' -f $group) -or [datetimeoffset]$item.raw.timestamp -ne $tick) {
+        if ($partial) {
+            $time = [datetimeoffset]$item.raw.timestamp
+            $code = [string]$item.raw.group
+            if ($code -cnotmatch '^a(0[1-9]|1[0-6])$' -or $time -lt $startTime -or $time -ge $endTime -or
+                $time.ToUnixTimeSeconds() % 10 -ne 0 -or $time -lt $priorTime -or
+                ($time -eq $priorTime -and [string]::CompareOrdinal($code,$priorGroup) -le 0)) {
+                throw 'Некорректный или повторный тик неполной диагностической выборки.'
+            }
+            $priorTime = $time
+            $priorGroup = $code
+        } elseif ($item.raw.group -ne ('a{0:00}' -f $group) -or [datetimeoffset]$item.raw.timestamp -ne $tick) {
             throw 'Нарушена непрерывность сетки выбранного окна Summit D2.'
         }
         $results++
@@ -242,19 +264,28 @@ while ($true) {
     }
 }
 $summary = Summary
-if ($results -ne $run.expectedTicks -or $results -ne $summary.group_ticks -or $events.Count -ne $summary.parent_events) {
+if ($summary.execution_id -ne $run.execution) { throw 'Сводка принадлежит другому запуску.' }
+if (!$partial -and ($results -ne $run.expectedTicks -or $results -ne $summary.group_ticks -or $events.Count -ne $summary.parent_events)) {
     throw 'Содержимое REST-страниц расходится со сводкой.'
 }
 $report = [ordered]@{
     observedAtUtc = [datetimeoffset]::UtcNow; groupTicks = $results; terminalEvents = $events.Count
-    replay = (Get-Content -LiteralPath (Join-Path $runPath 'replay.json') -Raw | ConvertFrom-Json)
     summary = $summary
+}
+if (Test-Path -LiteralPath (Join-Path $runPath 'replay.json')) {
+    $report.replay = Get-Content -LiteralPath (Join-Path $runPath 'replay.json') -Raw | ConvertFrom-Json
+}
+if ($partial) {
+    $summary.complete = $false
+    $summary.group_ticks = $results
+    $summary.parent_events = $events.Count
 }
 if (Test-Path -LiteralPath $completion) {
     $report.pipeline = Get-Content -LiteralPath $completion -Raw | ConvertFrom-Json
 }
 if ($SaveSnapshot) {
-    $report.snapshot = @{ resultPages = $resultPages; eventPages = $eventPages }
+    $report.snapshot = @{ resultPages = $resultPages; eventPages = $eventPages; partial = $partial }
 }
-SaveJson $report 'verification.json'
+SaveJson $report 'verification.json.tmp'
+[IO.File]::Move((Join-Path $runPath 'verification.json.tmp'), (Join-Path $runPath 'verification.json'), $true)
 $report | ConvertTo-Json -Depth 12
