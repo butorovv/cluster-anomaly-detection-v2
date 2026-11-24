@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -114,7 +115,12 @@ func streamCommand(ctx context.Context, operation string, args []string) error {
 
 func retryableArchiveError(err error) bool {
 	if errors.Is(err, archive.ErrTemporary) || errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) ||
 		pgconn.SafeToRetry(err) || pgconn.Timeout(err) {
+		return true
+	}
+	var networkErr *net.OpError
+	if errors.As(err, &networkErr) {
 		return true
 	}
 	var pgErr *pgconn.PgError
