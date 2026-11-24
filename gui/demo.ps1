@@ -43,7 +43,7 @@ function Compose([string[]]$Arguments) {
     }
 }
 function Summary {
-    Invoke-RestMethod "$($run.master)/v1/summary?execution_id=$($run.execution)" -TimeoutSec 10
+    Invoke-RestMethod "$($run.master)/v1/summary?execution_id=$($run.execution)" -TimeoutSec 16
 }
 function SaveJson($Value, [string]$Name) {
     $Value | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $runPath $Name) -Encoding utf8NoBOM

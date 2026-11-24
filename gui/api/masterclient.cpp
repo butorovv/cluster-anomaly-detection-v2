@@ -33,7 +33,7 @@ void MasterClient::get(const QUrl &base, const QString &path, const QUrlQuery &q
     url.setPath(prefix + path);
     url.setQuery(query);
     QNetworkRequest request(url);
-    request.setTransferTimeout(5000);
+    request.setTransferTimeout(path == "/v1/summary" ? 15000 : 5000);
     request.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::ManualRedirectPolicy);
     request.setRawHeader("Accept", expectsJson ? "application/json" : "*/*");
     auto *reply = manager_.get(request);
