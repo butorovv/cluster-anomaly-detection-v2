@@ -88,13 +88,25 @@ if ($Action -eq 'Init') {
     )
     Set-Content -LiteralPath $envPath -Value $lines -Encoding utf8NoBOM
     if ($PrivateDataPorts) {
-        @'
+        $networkOverride = @'
 services:
   postgres:
     ports: !reset []
   kafka:
     ports: !reset []
-'@ | Set-Content -LiteralPath (Join-Path $runPath 'private-data-ports.yaml') -Encoding utf8NoBOM
+'@
+        if ($IsLinux) {
+            $uid = & id -u
+            $gid = & id -g
+            if ($uid -notmatch '^[1-9][0-9]*$' -or $gid -notmatch '^[1-9][0-9]*$') {
+                throw 'Запускайте закрытую Linux-демонстрацию под обычным владельцем входных файлов.'
+            }
+            # Match the owner of private bind-mounted assets without changing their permissions.
+            foreach ($service in 'bootstrap','worker','replayer') {
+                $networkOverride += "`n  ${service}:`n    user: '${uid}:${gid}'"
+            }
+        }
+        $networkOverride | Set-Content -LiteralPath (Join-Path $runPath 'private-data-ports.yaml') -Encoding utf8NoBOM
     }
     Compose @('build','bootstrap')
     Compose @('up','-d','--no-build','--wait','--scale',"worker=$Workers",'master','worker')
