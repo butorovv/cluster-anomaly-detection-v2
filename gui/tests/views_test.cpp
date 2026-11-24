@@ -5,6 +5,7 @@
 #include "views/dashboard.h"
 #include "views/diagnostics.h"
 #include "views/historybar.h"
+#include "views/nodeview.h"
 #include "widgets/utcrange.h"
 #include "widgets/eventhistogram.h"
 
@@ -15,7 +16,10 @@
 #include <QStackedWidget>
 #include <QStyleFactory>
 #include <QTableView>
+#include <QTcpServer>
+#include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QUrlQuery>
 #include <QtTest>
 
 namespace {
@@ -159,6 +163,58 @@ private slots:
         QCOMPARE(diagnostics->interval(), 2);
     }
 
+    void physicalCacheIsolatedAcrossNodesAndExecutions()
+    {
+        const QString secondExecution = "22222222-2222-4222-8222-222222222222";
+        QTcpServer server;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        QList<QString> requests;
+        connect(&server, &QTcpServer::newConnection, this, [&] {
+            auto *socket = server.nextPendingConnection();
+            connect(socket, &QTcpSocket::readyRead, socket, [&, socket] {
+                if (socket->property("answered").toBool() || !socket->canReadLine()) return;
+                socket->setProperty("answered", true);
+                const auto path = QUrl::fromEncoded(socket->readLine().split(' ').value(1));
+                const QUrlQuery query(path);
+                const auto owner = query.queryItemValue("execution_id");
+                const auto host = query.queryItemValue("host_id");
+                requests << path.path() + '|' + owner + '|' + host;
+                const double power = owner == secondExecution ? 345.6 : host.endsWith("02") ? 234.5 : 123.4;
+                QJsonArray values;
+                for (int i = 0; i < 18; ++i) values.append(i == 2 ? QJsonValue(power) : QJsonValue());
+                const auto body = QJsonDocument(QJsonObject{
+                    {"execution_id", owner}, {"source_sha256", owner},
+                    {"profile_sha256", "test-profile"}, {"provenance", "stream_archive"},
+                    {"items", QJsonArray{QJsonObject{{"time", first}, {"status", "available"}, {"values", values}}}}
+                }).toJson(QJsonDocument::Compact);
+                socket->write("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: "
+                              + QByteArray::number(body.size()) + "\r\n\r\n" + body);
+                socket->disconnectFromHost();
+            });
+        });
+
+        NodeView node;
+        node.configure(QUrl(QString("http://127.0.0.1:%1").arg(server.serverPort())));
+        node.show();
+        const auto moment = readTime(first);
+        const QStringList hosts{"a01n01", "a01n02"};
+        node.selectNode(hosts.first());
+        node.refresh(hosts, moment, moment, execution);
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("123.4 Вт")));
+        node.selectNode(hosts.last());
+        node.refresh(hosts, moment, moment, execution);
+        QVERIFY(!hasLabel(node, QStringLiteral("123.4 Вт")));
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("234.5 Вт")));
+        node.refresh(hosts, moment, moment, secondExecution);
+        QVERIFY(!hasLabel(node, QStringLiteral("234.5 Вт")));
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("345.6 Вт")));
+        QCOMPARE(requests, (QList<QString>{
+            "/v1/telemetry|" + execution + "|a01n01",
+            "/v1/telemetry|" + execution + "|a01n02",
+            "/v1/telemetry|" + secondExecution + "|a01n02"
+        }));
+    }
+
     void separatesCriteriaAndNodeAbsence()
     {
         MonitorStore store;
@@ -183,6 +239,11 @@ private slots:
         diagnostics.show();
         auto *table = diagnostics.findChild<QTableView *>("ifTable");
         QVERIFY(table && !table->isVisible());
+        diagnostics.setOptions(1, 1);
+        diagnostics.refresh(store, at, at, readTime(last));
+        QVERIFY(!table->isVisible());
+        QVERIFY(hasLabel(diagnostics, QStringLiteral("критерий B оценивает группу целиком")));
+        QVERIFY(hasLabel(diagnostics, QStringLiteral("Динамика критерия B")));
         diagnostics.setOptions(2, 1);
         diagnostics.refresh(store, at, at, readTime(last));
         QVERIFY(table->isVisible());

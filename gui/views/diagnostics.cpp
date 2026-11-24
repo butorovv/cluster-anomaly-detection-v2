@@ -303,7 +303,7 @@ void Diagnostics::showTopology(const GroupTick *tick, const GroupTick *inventory
         arrangeNodes();
     }
     topologyCaption_->setText(hosts_.isEmpty() ? tr("Состав группы пока недоступен")
-        : criterion_ == 1 ? tr("%1 узлов · локализация критерия B недоступна").arg(hosts_.size())
+        : criterion_ == 1 ? tr("%1 узлов · критерий B оценивает группу целиком").arg(hosts_.size())
         : tr("%1 узлов · %2").arg(hosts_.size()).arg(criterion_ == 2 ? tr("IF · локальное свидетельство")
                                                                     : tr("R · определяющая пара и свидетели")));
     for (int i = 0; i < nodeButtons_.size(); ++i) {
