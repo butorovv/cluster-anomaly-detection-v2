@@ -177,7 +177,8 @@ private slots:
         bool seenAnomalyDuringRun = false;
         connect(&poller, &Poller::updated, this, [&] {
             const auto &store = poller.store();
-            if (!store.summary.value("complete").toBool()
+            const auto complete = store.summary.value("complete");
+            if (complete.isBool() && !complete.toBool()
                 && !store.recentAnomalies(store.latestTime(), 1).isEmpty())
                 seenAnomalyDuringRun = true;
         });
