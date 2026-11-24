@@ -73,10 +73,20 @@ QList<ReviewRun> readReviewRuns(const QString &root, int pollInterval)
         run.shortName = run.online() ? QStringLiteral("Summit · LIVE тест") : QStringLiteral("Summit D2 · MAX");
         run.start = readTime(data.value("start"));
         run.end = readTime(data.value("end"));
+        run.created = readTime(readObject(dir.filePath("replay-start.json")).value("startedUtc"));
         run.events = formattedCount(report.value("terminalEvents"));
         run.ticks = formattedCount(report.value("groupTicks"));
         run.verified = report.value("summary").toObject().value("complete").toBool()
             && report.value("summary").toObject().value("execution_id").toString() == run.connection.execution;
+        const QDir saved(QDir(root).filePath("v32-review-snapshots/" + name));
+        const auto snapshotReport = readObject(saved.filePath("verification.json"));
+        if (run.verified && snapshotReport.value("summary").toObject().value("execution_id").toString()
+            == run.connection.execution && snapshotReport.value("groupTicks") == report.value("groupTicks")
+            && snapshotReport.value("terminalEvents") == report.value("terminalEvents")
+            && snapshotReport.value("snapshot").toObject().value("resultPages").toInt() > 0) {
+            run.snapshot = true;
+            run.directory = saved.absolutePath();
+        }
         auto seconds = readObject(dir.filePath("durable-timing.json")).value("secondsFromReplayStartToFinalAck");
         if (!seconds.isDouble()) seconds = report.value("pipeline").toObject().value("wallSeconds");
         if (seconds.isDouble()) {

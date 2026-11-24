@@ -184,7 +184,7 @@ Events::Events(QWidget *parent) : QWidget(parent)
         if (range_->validate()) setPeriod(range_->from(), range_->to());
     });
     connect(histogram_, &EventHistogram::intervalSelected, this, &Events::setPeriod);
-    connect(exportButton, &QPushButton::clicked, this, [this] { exportCsv(store_); });
+    connect(exportButton, &QPushButton::clicked, this, &Events::exportEvents);
     connect(sortOrder, &QComboBox::activated, this, [this](int index) {
         table_->sortByColumn(index == 2 ? 3 : 1, index == 1 ? Qt::AscendingOrder : Qt::DescendingOrder);
     });
@@ -315,6 +315,8 @@ void Events::setPeriod(const QDateTime &from, const QDateTime &to)
     range_->setPeriod(from.isValid() ? from : minimum_, to.isValid() ? to : maximum_);
     emit filterChanged();
 }
+
+void Events::exportEvents() { exportCsv(store_); }
 
 void Events::exportCsv(const MonitorStore *store)
 {

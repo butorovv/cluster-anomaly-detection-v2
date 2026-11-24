@@ -1,4 +1,5 @@
 #include "utcrange.h"
+#include "src/style.h"
 
 #include <QApplication>
 #include <QCalendarWidget>
@@ -9,6 +10,8 @@
 #include <QLocale>
 #include <QTimeEdit>
 #include <QTimeZone>
+#include <QToolButton>
+#include <QTextCharFormat>
 #include <QVBoxLayout>
 
 UtcRange::UtcRange(const QString &startLabel, const QString &endLabel, QWidget *parent) : QWidget(parent)
@@ -33,6 +36,15 @@ UtcRange::UtcRange(const QString &startLabel, const QString &endLabel, QWidget *
         calendar->setLocale(QLocale(QLocale::Russian, QLocale::Russia));
         calendar->setFirstDayOfWeek(Qt::Monday);
         calendar->setVerticalHeaderFormat(QCalendarWidget::NoVerticalHeader);
+        calendar->setMinimumSize(251, 236);
+        QTextCharFormat weekends;
+        weekends.setForeground(QColor("#697b91"));
+        calendar->setWeekdayTextFormat(Qt::Saturday, weekends);
+        calendar->setWeekdayTextFormat(Qt::Sunday, weekends);
+        if (auto *previous = calendar->findChild<QToolButton *>("qt_calendar_prevmonth"))
+            previous->setIcon(v2::icon(6, QColor("#697b91"), 15));
+        if (auto *next = calendar->findChild<QToolButton *>("qt_calendar_nextmonth"))
+            next->setIcon(v2::icon(7, QColor("#697b91"), 15));
         time = new QTimeEdit;
         time->setAccessibleName(label + tr(" · время UTC"));
         time->setDisplayFormat("HH:mm:ss");
@@ -81,9 +93,10 @@ void UtcRange::setBounds(const QDateTime &minimum, const QDateTime &maximum)
     minimum_ = minimum;
     maximum_ = maximum;
     if (minimum_.isValid() && maximum_.isValid()) {
-        const QSignalBlocker first(startDate_->calendarWidget()), last(endDate_->calendarWidget());
-        startDate_->calendarWidget()->setDateRange(minimum_.date(), maximum_.date());
-        endDate_->calendarWidget()->setDateRange(minimum_.date(), maximum_.date());
+        const QSignalBlocker first(startDate_), last(endDate_);
+        for (auto *date : {startDate_, endDate_})
+            if (date->minimumDate() != minimum_.date() || date->maximumDate() != maximum_.date())
+                date->setDateRange(minimum_.date(), maximum_.date());
     }
 }
 

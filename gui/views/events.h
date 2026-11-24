@@ -28,6 +28,7 @@ public:
     void refresh(const MonitorStore &store, const QDateTime &start, const QDateTime &end, bool synchronized = false);
     EventViewContext context() const;
     void restore(const EventViewContext &state);
+    void exportEvents();
 
 signals:
     void filterChanged();

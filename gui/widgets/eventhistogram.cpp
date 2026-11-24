@@ -71,7 +71,7 @@ void EventHistogram::paintEvent(QPaintEvent *)
         const bool active = from_.isValid() && from_ < hi && to_ > lo;
         const int size = qMax(2, qRound(84.0 * counts_[i] / maximum));
         const qreal x = inset + i * step;
-        p.setPen(hasFocus() && cursor_ == i ? QColor("#192b40") : Qt::NoPen);
+        p.setPen(hasFocus() && cursor_ == i ? QPen(QColor("#192b40")) : QPen(Qt::NoPen));
         p.setBrush(QColor(active ? "#295ec5" : from_.isValid() ? "#c4d5ef" : "#8daee1"));
         const qreal gap = qMin(14.0, step * .18);
         p.drawRoundedRect(QRectF(x + gap, baseline - size, step - 2 * gap, size), 4, 4);

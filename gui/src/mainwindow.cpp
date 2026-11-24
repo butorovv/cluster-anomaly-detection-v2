@@ -357,8 +357,19 @@ void MainWindow::populateCatalog()
         layout->addWidget(label(tr("%1  ·  %2  ·  %3 событий  ·  %4 результатов%5")
             .arg(run.online() ? tr("Имитация онлайн-мониторинга") : tr("Анализ архива"), pace(run.speed),
                  run.events, run.ticks, run.duration.isEmpty() ? QString{} : "  ·  " + run.duration), "small"));
+        auto *actions = new QHBoxLayout;
+        auto *exportAction = button(tr("Экспорт"), "link");
         auto *open = button(tr("Открыть результаты ›"), "link");
-        layout->addWidget(open, 0, Qt::AlignRight);
+        actions->addWidget(exportAction);
+        actions->addStretch();
+        actions->addWidget(open);
+        layout->addLayout(actions);
+        connect(exportAction, &QPushButton::clicked, this, [this, run] {
+            openRun(run, Catalog);
+            showJournal();
+            pendingExport_ = run.connection.execution;
+            refresh();
+        });
         connect(open, &QPushButton::clicked, this, [this, run] { openRun(run, Catalog); });
         catalogList_->addWidget(card);
     }
@@ -376,12 +387,9 @@ QWidget *MainWindow::buildSettings()
     card->setMaximumWidth(720);
     auto *form = column(card, 20);
     form->addWidget(sectionLabel(tr("Подключение к Master")));
-    auto *setup = button(tr("Настроить подключение"), "primary");
-    form->addWidget(setup, 0, Qt::AlignLeft);
-    connect(setup, &QPushButton::clicked, this, [this] {
-        SettingsDialog dialog(attached_.connection, this);
-        if (dialog.exec() == QDialog::Accepted) applyConnection(dialog.settings());
-    });
+    auto *setup = new SettingsForm(attached_.connection);
+    form->addWidget(setup);
+    connect(setup, &SettingsForm::submitted, this, &MainWindow::applyConnection);
     layout->addWidget(card);
     layout->addStretch();
     return page;
@@ -426,8 +434,10 @@ QWidget *MainWindow::buildWorkspace()
     back_->setToolTip(tr("Назад"));
     navigation->addWidget(back_);
     clusterCrumb_ = button(tr("Обзор кластера"), "routeLink");
+    clusterCrumb_->setMinimumWidth(142);
     navigation->addWidget(clusterCrumb_);
     groupCrumb_ = button({}, "routeLink");
+    groupCrumb_->setMinimumWidth(107);
     navigation->addWidget(groupCrumb_);
     leafCrumb_ = label({}, "routeLeaf");
     navigation->addWidget(leafCrumb_);
@@ -556,8 +566,15 @@ void MainWindow::launchRun(bool online)
         return;
     }
     submitting_ = true;
+    QWidget shade(centralWidget());
+    shade.setObjectName("modalShade");
+    shade.setAttribute(Qt::WA_StyledBackground);
+    shade.setGeometry(centralWidget()->rect());
+    shade.show();
+    shade.raise();
     LaunchDialog dialog(online, this);
     const auto accepted = dialog.exec() == QDialog::Accepted;
+    shade.hide();
     submitting_ = false;
     if (!accepted) return;
     const auto id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -588,6 +605,7 @@ void MainWindow::launchRun(bool online)
 
 void MainWindow::navigate(Section section)
 {
+    pendingExport_.clear();
     section_ = section;
     navigation_->button(section)->setChecked(true);
     if (section == Online) {
@@ -613,6 +631,7 @@ void MainWindow::navigate(Section section)
 
 void MainWindow::openRun(const ReviewRun &run, Section section)
 {
+    pendingExport_.clear();
     const auto key = runKey(run);
     const bool different = !hasRun_ || key != runKey(current_);
     if (different && hasRun_) {
@@ -765,10 +784,17 @@ void MainWindow::refresh()
     } else {
         const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
         const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
-        const auto processedEnd = store.latestTime().addSecs(10);
+        auto latestProcessed = store.latestTime();
+        for (const auto &event : store.events()) latestProcessed = qMax(latestProcessed, event.detected);
+        const auto processedEnd = latestProcessed.addSecs(10);
         events_->refresh(store, start.isValid() ? start : store.earliestTime(),
                          end.isValid() && processedEnd.isValid() ? qMin(end, processedEnd) : processedEnd,
                          poller_.synchronized());
+        if (!pendingExport_.isEmpty() && pendingExport_ == current_.connection.execution &&
+            (poller_.synchronized() || poller_.stale())) {
+            pendingExport_.clear();
+            QTimer::singleShot(0, events_, &Events::exportEvents);
+        }
     }
     updateRoute();
 }
@@ -814,7 +840,7 @@ void MainWindow::openHistory(const QString &group, const QDateTime &from, const 
     if (group.isEmpty()) refresh(); else selectGroup(group);
 }
 
-void MainWindow::applyConnection(const ConnectionSettings &settings)
+void MainWindow::applyConnection(const ConnectionSettings &settings, bool attach)
 {
     if (attached_.connection.execution != settings.execution || attached_.connection.masterUrl != settings.masterUrl)
         attached_.speed.clear();
@@ -822,7 +848,8 @@ void MainWindow::applyConnection(const ConnectionSettings &settings)
     preferences_.setValue("masterUrl", settings.masterUrl.toString());
     preferences_.setValue("execution", settings.execution);
     preferences_.setValue("intervalMs", settings.intervalMs);
-    openRun(attached_, Online);
+    if (attach) openRun(attached_, Online);
+    else if (hasRun_) connectRun(current_);
 }
 
 void MainWindow::updateConnection()

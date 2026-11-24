@@ -58,7 +58,8 @@ void SystemView::refresh(const Poller &poller)
     const auto &summary = store.summary;
     const auto &metrics = store.metrics;
     const auto &errors = poller.errors();
-    health_->setText(QStringLiteral("Master %1     ·     Готовность %2     ·     Адрес %3")
+    health_->setText(poller.offline() ? QStringLiteral("Источник · проверенный архив результатов REST")
+        : QStringLiteral("Master %1     ·     Готовность %2     ·     Адрес %3")
         .arg(probeText(poller.health()), poller.readiness() < 0 ? QStringLiteral("проверка…")
                                    : poller.readiness() == 1 ? QStringLiteral("готов") : QStringLiteral("не готов"),
              poller.settings().masterUrl.toDisplayString()));

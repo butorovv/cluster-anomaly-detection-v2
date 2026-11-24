@@ -52,7 +52,7 @@ private:
     };
     void navigate(Section section);
     void openRun(const ReviewRun &run, Section section);
-    void applyConnection(const ConnectionSettings &settings);
+    void applyConnection(const ConnectionSettings &settings, bool attach);
     void updateConnection();
     void refresh();
     void showTab(int index);
@@ -88,6 +88,7 @@ private:
     bool following_ = false;
     bool submitting_ = false;
     QString assets_, managedRoot_, powershell_, catalogVersion_;
+    QString pendingExport_;
     static constexpr int managedPort_ = 18086;
     Section section_ = Home;
     QLabel *connection_;

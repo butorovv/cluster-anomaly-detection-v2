@@ -21,7 +21,6 @@ QString v2::style()
         QLabel#small { color:#697b91; font-size:12px; }
         QLabel#kpi { font-size:29px; font-weight:bold; }
         QFrame#panel, QFrame#workspaceTime, QTableView, QListWidget { background:white; border:1px solid #dce3ec; border-radius:10px; }
-        QFrame#tabs { background:#e7ecf3; border-radius:8px; }
         QFrame#tableHead { background:#f7f9fc; border-bottom:1px solid #dce3ec; }
         QFrame#tableRow { border-bottom:1px solid #dce3ec; }
         QPushButton, QComboBox, QLineEdit, QDateTimeEdit, QSpinBox {
@@ -31,6 +30,11 @@ QString v2::style()
         QPushButton:focus, QComboBox:focus, QLineEdit:focus { border-color:#85a7e2; }
         QDateEdit, QTimeEdit { border:1px solid #dce3ec; border-radius:7px; background:white; padding:5px 8px; min-height:26px; font-size:13px; }
         QDateEdit:focus, QTimeEdit:focus { border-color:#85a7e2; }
+        QComboBox::drop-down, QDateEdit::drop-down { subcontrol-origin:padding; subcontrol-position:top right; border:0; width:22px; }
+        QTimeEdit::up-button, QTimeEdit::down-button { subcontrol-origin:padding; border:0; width:18px; }
+        QTimeEdit::up-button { subcontrol-position:top right; }
+        QTimeEdit::down-button { subcontrol-position:bottom right; }
+        QComboBox QAbstractItemView { border:1px solid #dce3ec; background:white; selection-background-color:#edf3fc; selection-color:#192b40; }
         QLabel#validationError { color:#c43648; font-size:12px; }
         QCalendarWidget#utcCalendar QWidget { background:white; }
         QCalendarWidget#utcCalendar QWidget#qt_calendar_navigationbar { background:#edf3fc; }
@@ -41,8 +45,12 @@ QString v2::style()
         QPushButton#primary:hover { background:#214fae; }
         QPushButton#primary:disabled { background:#5479c3; border-color:#5479c3; }
         QPushButton#soft { background:#edf3fc; color:#295ec5; border-color:#edf3fc; font-weight:bold; }
-        QPushButton#speedChoice { text-align:left; color:#192b40; }
-        QPushButton#speedChoice:checked { background:#edf3fc; border-color:#85a7e2; color:#295ec5; }
+        QRadioButton#speedChoice { color:#192b40; background:white; border:1px solid #dce3ec; border-radius:7px; padding:3px 10px; spacing:8px; }
+        QRadioButton#speedChoice:checked { background:#edf3fc; border-color:#85a7e2; color:#295ec5; }
+        QRadioButton#speedChoice:focus { border-color:#85a7e2; }
+        QWidget#modalShade { background-color:rgba(24,38,58,100); }
+        QDialog#launchDialog { background:white; border:1px solid #dce3ec; }
+        QPushButton#modalClose { min-width:30px; padding:0; font-size:19px; }
         QLabel#runNotice { background:#edf3fc; color:#405c7d; border-radius:7px; padding:9px 11px; }
         QPushButton#link { color:#295ec5; background:transparent; border:1px solid transparent; padding:0 2px; }
         QPushButton#link:focus { border-color:#85a7e2; }
@@ -50,9 +58,6 @@ QString v2::style()
         QPushButton#navButton:hover { color:white; background:#253a51; }
         QPushButton#navButton:checked { color:white; background:#304b68; }
         QPushButton#navButton:focus { border-color:#8eb3f6; }
-        QPushButton#tab { color:#596d86; background:transparent; border-color:transparent; min-height:33px; max-height:33px; padding:0 8px; font-size:13px; font-weight:bold; }
-        QPushButton#tab:checked { color:#295ec5; background:white; }
-        QPushButton#tab:focus { border-color:#85a7e2; }
         QPushButton#criterion { text-align:left; font-weight:bold; min-height:74px; max-height:74px; padding:0; }
         QPushButton#criterion:checked { background:#edf3fc; border-color:#85a7e2; }
         QPushButton#groupButton { padding:0; }
@@ -60,7 +65,7 @@ QString v2::style()
         QPushButton#nodeTile { font-size:12px; font-weight:bold; padding:3px 7px; }
         QPushButton#nodeTile[witness="true"] { color:#c43648; background:#fff0f1; border-color:#efc4ca; }
         QPushButton#routeBack { min-width:35px; max-width:35px; padding:0; font-size:18px; color:#295ec5; }
-        QPushButton#routeLink { color:#295ec5; background:transparent; border-color:transparent; padding:0 3px; }
+        QPushButton#routeLink { color:#295ec5; background:transparent; border-color:transparent; padding:0 3px; text-align:left; }
         QPushButton#routeLink:disabled, QLabel#routeLeaf { color:#192b40; font-weight:bold; }
         QPushButton#routeLink:focus { border-color:#85a7e2; }
         QPushButton#disclosure { text-align:left; font-weight:bold; background:transparent; border-color:transparent; padding:4px 0; }
@@ -113,6 +118,12 @@ QIcon v2::icon(int index, const QColor &color, int size)
             p.drawRoundedRect(QRectF(3,y,18,8), 2, 2);
             p.drawPoint(7,y+4); p.drawLine(12,y+4,17,y+4);
         }
+        break;
+    case 6:
+        p.drawPolyline(QPolygonF(QList<QPointF>{{15,5},{8,12},{15,19}}));
+        break;
+    case 7:
+        p.drawPolyline(QPolygonF(QList<QPointF>{{9,5},{16,12},{9,19}}));
         break;
     default:
         p.drawEllipse(QRectF(5,5,14,14));

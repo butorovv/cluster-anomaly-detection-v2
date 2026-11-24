@@ -1,17 +1,20 @@
 #pragma once
 
 #include "api/masterclient.h"
-#include <QDialog>
+#include <QWidget>
 
 class QLabel;
 class QLineEdit;
 class QSpinBox;
 class QPushButton;
 
-class SettingsDialog final : public QDialog {
+class SettingsForm final : public QWidget {
+    Q_OBJECT
 public:
-    explicit SettingsDialog(const ConnectionSettings &settings, QWidget *parent);
+    explicit SettingsForm(const ConnectionSettings &settings, QWidget *parent = nullptr);
     ConnectionSettings settings() const;
+signals:
+    void submitted(const ConnectionSettings &connection, bool attach);
 
 private:
     bool validate();

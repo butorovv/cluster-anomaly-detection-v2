@@ -1,7 +1,6 @@
 #include "settings.h"
 
-#include <QDialogButtonBox>
-#include <QFormLayout>
+#include <QHBoxLayout>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
@@ -9,42 +8,53 @@
 #include <QSpinBox>
 #include <QVBoxLayout>
 
-SettingsDialog::SettingsDialog(const ConnectionSettings &settings, QWidget *parent) : QDialog(parent)
+SettingsForm::SettingsForm(const ConnectionSettings &initial, QWidget *parent) : QWidget(parent)
 {
-    setWindowTitle(tr("Настройки подключения"));
-    resize(540, 230);
     auto *layout = new QVBoxLayout(this);
-    auto *form = new QFormLayout;
-    url_ = new QLineEdit(settings.masterUrl.toString());
-    execution_ = new QLineEdit(settings.execution);
+    layout->setContentsMargins(0, 0, 0, 0);
+    url_ = new QLineEdit(initial.masterUrl.toString());
+    execution_ = new QLineEdit(initial.execution);
     interval_ = new QSpinBox;
     interval_->setRange(250, 60000);
     interval_->setSingleStep(250);
     interval_->setSuffix(tr(" мс"));
-    interval_->setValue(settings.intervalMs);
-    form->addRow(tr("Адрес Master API"), url_);
-    form->addRow(tr("Execution ID"), execution_);
-    form->addRow(tr("Интервал обновления"), interval_);
-    layout->addLayout(form);
+    interval_->setValue(initial.intervalMs);
+    for (const auto &field : {qMakePair(tr("Адрес REST API"), static_cast<QWidget *>(url_)),
+                             qMakePair(tr("Execution ID"), static_cast<QWidget *>(execution_)),
+                             qMakePair(tr("Интервал обновления"), static_cast<QWidget *>(interval_))}) {
+        auto *caption = new QLabel(field.first);
+        caption->setBuddy(field.second);
+        layout->addWidget(caption);
+        layout->addWidget(field.second);
+        layout->addSpacing(7);
+    }
     status_ = new QLabel;
     status_->setWordWrap(true);
     layout->addWidget(status_);
-    auto *buttons = new QDialogButtonBox;
-    auto *save = buttons->addButton(tr("Сохранить"), QDialogButtonBox::AcceptRole);
-    buttons->addButton(tr("Отмена"), QDialogButtonBox::RejectRole);
-    check_ = buttons->addButton(tr("Проверить подключение"), QDialogButtonBox::ActionRole);
-    layout->addWidget(buttons);
-    connect(save, &QPushButton::clicked, this, [this] { if (validate()) accept(); });
-    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    connect(check_, &QPushButton::clicked, this, &SettingsDialog::check);
+    auto *buttons = new QHBoxLayout;
+    auto *attach = new QPushButton(tr("Подключиться"));
+    attach->setObjectName("primary");
+    auto *save = new QPushButton(tr("Сохранить настройки"));
+    save->setObjectName("soft");
+    check_ = new QPushButton(tr("Проверить подключение"));
+    for (auto *action : {attach, save, check_}) buttons->addWidget(action);
+    buttons->addStretch();
+    layout->addLayout(buttons);
+    connect(attach, &QPushButton::clicked, this, [this] { if (validate()) emit submitted(settings(), true); });
+    connect(save, &QPushButton::clicked, this, [this] {
+        if (!validate()) return;
+        emit submitted(settings(), false);
+        status_->setText(tr("Настройки сохранены."));
+    });
+    connect(check_, &QPushButton::clicked, this, &SettingsForm::check);
 }
 
-ConnectionSettings SettingsDialog::settings() const
+ConnectionSettings SettingsForm::settings() const
 {
     return {QUrl(url_->text().trimmed()), execution_->text().trimmed().toLower(), interval_->value()};
 }
 
-bool SettingsDialog::validate()
+bool SettingsForm::validate()
 {
     const auto values = settings();
     if (!MasterClient::validUrl(values.masterUrl)) {
@@ -58,7 +68,7 @@ bool SettingsDialog::validate()
     return true;
 }
 
-void SettingsDialog::check()
+void SettingsForm::check()
 {
     if (!validate()) return;
     const auto values = settings();
@@ -88,7 +98,7 @@ void SettingsDialog::check()
     });
 }
 
-void SettingsDialog::finishCheck(const QString &message)
+void SettingsForm::finishCheck(const QString &message)
 {
     check_->setEnabled(true);
     url_->setEnabled(true);

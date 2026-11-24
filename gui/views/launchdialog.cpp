@@ -5,8 +5,10 @@
 
 #include <QButtonGroup>
 #include <QComboBox>
+#include <QGridLayout>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QRadioButton>
 #include <QVBoxLayout>
 
 LaunchDialog::LaunchDialog(bool online, QWidget *parent)
@@ -14,11 +16,21 @@ LaunchDialog::LaunchDialog(bool online, QWidget *parent)
 {
     const auto heading = online ? tr("Имитация онлайн-мониторинга") : tr("Новый запуск анализа");
     setWindowTitle(heading);
-    setMinimumWidth(620);
+    setObjectName("launchDialog");
+    setWindowFlag(Qt::FramelessWindowHint);
+    setMinimumWidth(580);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(23, 20, 23, 21);
     layout->setSpacing(10);
-    layout->addWidget(sectionLabel(heading));
+    auto *title = new QHBoxLayout;
+    title->addWidget(sectionLabel(heading), 1);
+    auto *close = new QPushButton(QStringLiteral("×"));
+    close->setObjectName("modalClose");
+    close->setAccessibleName(tr("Закрыть"));
+    close->setAutoDefault(false);
+    title->addWidget(close);
+    layout->addLayout(title);
+    connect(close, &QPushButton::clicked, this, &QDialog::reject);
     auto *caption = plainLabel(online ? tr("Подача архивной телеметрии в темпе ×1.")
                 : tr("Выберите период телеметрии и скорость воспроизведения."));
     caption->setObjectName("muted");
@@ -47,6 +59,8 @@ LaunchDialog::LaunchDialog(bool online, QWidget *parent)
     auto *whole = new QPushButton(tr("Весь архив"));
     auto *shortWindow = new QPushButton(tr("Короткий пример"));
     shortWindow->setObjectName("soft");
+    whole->setAutoDefault(false);
+    shortWindow->setAutoDefault(false);
     quick->addWidget(whole);
     quick->addWidget(shortWindow);
     quick->addStretch();
@@ -60,20 +74,20 @@ LaunchDialog::LaunchDialog(bool online, QWidget *parent)
         notice->setObjectName("runNotice");
         layout->addWidget(notice);
     } else {
-        auto *row = new QHBoxLayout;
+        auto *choicesGrid = new QGridLayout;
         const QStringList captions{tr("MAX\nБез задержек"), tr("×10\nШаг 1 секунда"),
                                    tr("×5\nШаг 2 секунды"), tr("×1\nШаг 10 секунд")};
         const QList<int> choices{0, 10, 5, 1};
         for (int i = 0; i < choices.size(); ++i) {
-            auto *choice = new QPushButton(captions[i]);
+            auto *choice = new QRadioButton(captions[i]);
             choice->setObjectName("speedChoice");
             choice->setCheckable(true);
-            choice->setMinimumHeight(52);
+            choice->setMinimumHeight(54);
             speeds_->addButton(choice, choices[i]);
-            row->addWidget(choice, 1);
+            choicesGrid->addWidget(choice, i / 2, i % 2);
         }
         speeds_->button(0)->setChecked(true);
-        layout->addLayout(row);
+        layout->addLayout(choicesGrid);
     }
     auto *notice = plainLabel(tr("Запуск создаёт изолированное окружение. Проверенные результаты сохраняются в истории."));
     notice->setObjectName("runNotice");
