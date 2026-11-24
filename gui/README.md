@@ -4,7 +4,7 @@
 
 ## Сборка
 
-Нужны CMake 3.21+, компилятор C++20 и Qt 6.5+ с Widgets, Network и Test. Qt Test нужен только при включённом BUILD_TESTING. Библиотека и компилятор должны быть из совместимых комплектов. Пример для Qt 6.11.0 и MinGW на Windows, из корня репозитория.
+Нужны CMake 3.21+, компилятор C++20 и Qt 6.4+ с Widgets, Network и Test. Qt Test нужен только при включённом BUILD_TESTING. Библиотека и компилятор должны быть из совместимых комплектов. Пример для Qt 6.11.0 и MinGW на Windows, из корня репозитория.
 
 ```powershell
 $env:Path = 'C:\Qt\6.11.0\mingw_64\bin;C:\Qt\Tools\mingw1310_64\bin;C:\Qt\Tools\Ninja;C:\Qt\Tools\CMake_64\bin;' + $env:Path
@@ -17,6 +17,22 @@ ctest --test-dir build/qt-gui --output-on-failure
 В Linux укажите каталог установленного комплекта Qt в CMAKE_PREFIX_PATH. Имя файла запуска — `build/qt-gui/cluster-monitor`. Go Backend по-прежнему собирается отдельно командой `go build ./cmd/...`.
 
 В окне настроек укажите адрес Master API, Execution ID и интервал опроса. По умолчанию опрос выполняется каждые 1000 мс. Адрес и UUID можно передать как `--master URL --execution UUID`. UUID меняется и в верхней панели. При потере связи клиент сохраняет данные текущего запуска, помечает их как неактуальные и продолжает попытки подключения.
+
+## Доступ к GUI на Linux с Windows
+
+Приложение, XFCE и TigerVNC запускаются на ВМ под обычным пользователем. VNC слушает loopback ВМ, а Windows открывает loopback-туннель по существующему SSH-подключению. Для просмотра подходит [TigerVNC Viewer для Windows x64](https://sourceforge.net/projects/tigervnc/files/stable/1.16.2/vncviewer64-1.16.2.exe/download).
+
+```powershell
+pwsh -File gui/connect-vnc.ps1 -SshTarget 'ubuntu@VM' -IdentityFile $key -Viewer $viewer -SetVncPassword
+```
+
+Флаг `-SetVncPassword` запускает интерактивное задание пароля в SSH. Для повторного входа опустите флаг. При ручном подключении оставьте туннель открытым и введите `127.0.0.1::15911` в TigerVNC Viewer.
+
+```powershell
+ssh -N -T -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -i $key -L 127.0.0.1:15911:127.0.0.1:5911 ubuntu@VM
+```
+
+Закрытие Viewer завершает только локальный туннель. Повторный запуск подключения открывает ту же удалённую сессию.
 
 ## Режимы просмотра
 

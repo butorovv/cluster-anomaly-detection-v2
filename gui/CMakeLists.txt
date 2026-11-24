@@ -9,7 +9,7 @@ if(MSVC)
     add_compile_options(/utf-8)
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network)
 qt_add_library(cluster_client STATIC
     api/masterclient.cpp
     api/poller.cpp

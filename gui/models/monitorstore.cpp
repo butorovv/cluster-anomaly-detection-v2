@@ -154,12 +154,12 @@ QStringList MonitorStore::groups() const
 
 QDateTime MonitorStore::latestTime() const
 {
-    return slices_.isEmpty() ? QDateTime{} : QDateTime::fromMSecsSinceEpoch(slices_.lastKey(), QTimeZone::utc());
+    return slices_.isEmpty() ? QDateTime{} : QDateTime::fromMSecsSinceEpoch(slices_.lastKey(), QTimeZone(0));
 }
 
 QDateTime MonitorStore::earliestTime() const
 {
-    return slices_.isEmpty() ? QDateTime{} : QDateTime::fromMSecsSinceEpoch(slices_.firstKey(), QTimeZone::utc());
+    return slices_.isEmpty() ? QDateTime{} : QDateTime::fromMSecsSinceEpoch(slices_.firstKey(), QTimeZone(0));
 }
 
 const GroupTick *MonitorStore::tickAt(const QString &group, const QDateTime &time) const
@@ -184,7 +184,7 @@ QList<const GroupTick *> MonitorStore::recentAnomalies(const QDateTime &until, i
     auto it = anomalies_.upperBound(until.toMSecsSinceEpoch());
     while (it != anomalies_.cbegin() && result.size() < limit) {
         --it;
-        result << tickAt(it.value(), QDateTime::fromMSecsSinceEpoch(it.key(), QTimeZone::utc()));
+        result << tickAt(it.value(), QDateTime::fromMSecsSinceEpoch(it.key(), QTimeZone(0)));
     }
     return result;
 }

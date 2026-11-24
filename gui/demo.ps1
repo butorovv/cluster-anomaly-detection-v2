@@ -9,7 +9,10 @@ param(
     [ValidateRange(1,65535)][int]$PostgresPort = 55482,
     [ValidateRange(1,65535)][int]$KafkaPort = 29182,
     [ValidateRange(1,16)][int]$Workers = 4,
-    [ValidateRange(1,7200)][int]$DrainTimeoutSeconds = 900
+    [ValidateRange(1,7200)][int]$DrainTimeoutSeconds = 900,
+    [string]$WindowStart = '2022-01-18T08:00:00Z',
+    [string]$WindowEnd = '2022-01-18T16:00:00Z',
+    [switch]$PrivateDataPorts
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
@@ -19,6 +22,9 @@ $envPath = Join-Path $runPath 'compose.env'
 $composePath = Join-Path $root 'deploy/compose.yaml'
 
 function Compose([string[]]$Arguments) {
+    $files = @('-f', $composePath)
+    $override = Join-Path $runPath 'private-data-ports.yaml'
+    if (Test-Path -LiteralPath $override) { $files += @('-f', $override) }
     $restore = @{}
     foreach ($line in Get-Content -LiteralPath $envPath) {
         if ($line -match '^([A-Z_][A-Z0-9_]*)=') {
@@ -28,7 +34,7 @@ function Compose([string[]]$Arguments) {
         }
     }
     try {
-        & docker compose --env-file $envPath --project-name $run.project -f $composePath @Arguments
+        & docker compose --env-file $envPath --project-name $run.project @files @Arguments
         if ($LASTEXITCODE -ne 0) { throw "Docker Compose завершился с кодом $LASTEXITCODE" }
     } finally {
         foreach ($entry in $restore.GetEnumerator()) {
@@ -46,6 +52,12 @@ function SaveJson($Value, [string]$Name) {
 if ($Action -eq 'Init') {
     if (Test-Path -LiteralPath $runPath) { throw 'Укажите новый каталог демонстрации.' }
     if (!$AssetsRoot) { throw 'Укажите -AssetsRoot с исходным набором Summit.' }
+    $start = [datetimeoffset]::ParseExact($WindowStart, "yyyy-MM-dd'T'HH:mm:ss'Z'", [cultureinfo]::InvariantCulture, 'AssumeUniversal')
+    $end = [datetimeoffset]::ParseExact($WindowEnd, "yyyy-MM-dd'T'HH:mm:ss'Z'", [cultureinfo]::InvariantCulture, 'AssumeUniversal')
+    if ($start -lt [datetimeoffset]'2022-01-18T08:00:00Z' -or $end -gt [datetimeoffset]'2022-01-18T16:00:00Z' -or
+        $start -ge $end -or $start.Second % 10 -ne 0 -or $end.Second % 10 -ne 0) {
+        throw 'Выберите непустое окно на 10-секундной сетке Summit D2.'
+    }
     $assets = (Resolve-Path -LiteralPath $AssetsRoot).Path.Replace('\','/')
     if ($assets -match "['\r\n]") { throw 'Путь к assets содержит неподдерживаемый символ.' }
     $file = Join-Path $assets 'data/prepared/summit-D1-pilot/D1.parquet'
@@ -58,7 +70,7 @@ if ($Action -eq 'Init') {
     $run = [ordered]@{
         project = $project; execution = $execution; speed = $Speed
         master = "http://127.0.0.1:$MasterPort"
-        start = '2022-01-18T08:00:00Z'; end = '2022-01-18T16:00:00Z'; expectedTicks = 46080
+        start = $WindowStart; end = $WindowEnd; expectedTicks = [int](($end - $start).TotalSeconds / 10 * 16)
         workers = $Workers
     }
     $null = New-Item -ItemType Directory -Path $runPath
@@ -75,6 +87,15 @@ if ($Action -eq 'Init') {
         'CHECKPOINT_INTERVAL_TICKS=3', 'MEASURE=false'
     )
     Set-Content -LiteralPath $envPath -Value $lines -Encoding utf8NoBOM
+    if ($PrivateDataPorts) {
+        @'
+services:
+  postgres:
+    ports: !reset []
+  kafka:
+    ports: !reset []
+'@ | Set-Content -LiteralPath (Join-Path $runPath 'private-data-ports.yaml') -Encoding utf8NoBOM
+    }
     Compose @('build','bootstrap')
     Compose @('up','-d','--no-build','--wait','--scale',"worker=$Workers",'master','worker')
     Write-Host "Master $($run.master)"
@@ -143,7 +164,7 @@ while ($true) {
     if ($page.items.Count -eq 0) { break }
     foreach ($item in $page.items) {
         if ($item.raw.group -ne ('a{0:00}' -f $group) -or [datetimeoffset]$item.raw.timestamp -ne $tick) {
-            throw 'Нарушена непрерывность сетки D2.'
+            throw 'Нарушена непрерывность сетки выбранного окна Summit D2.'
         }
         $results++
         if ($group -eq 16) { $group = 1; $tick = $tick.AddSeconds(10) } else { $group++ }

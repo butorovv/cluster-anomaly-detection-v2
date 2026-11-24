@@ -66,7 +66,7 @@ void ScoreChart::paintEvent(QPaintEvent *)
         painter.drawText(QRectF(4, level - 10, 65, 20), Qt::AlignRight | Qt::AlignVCenter,
                          QString::number(yMin + (yMax - yMin) * i / 4, 'g', 5));
         const double column = plot.left() + i * plot.width() / 4;
-        const auto time = QDateTime::fromMSecsSinceEpoch(start + span * i / 4, QTimeZone::utc());
+        const auto time = QDateTime::fromMSecsSinceEpoch(start + span * i / 4, QTimeZone(0));
         painter.drawText(QRectF(column - 45, plot.bottom() + 5, 90, 20), Qt::AlignCenter, time.toString("HH:mm:ss"));
     }
     painter.drawText(QRectF(0, height() - 18, width() - 9, 16), Qt::AlignRight, QStringLiteral("UTC"));
