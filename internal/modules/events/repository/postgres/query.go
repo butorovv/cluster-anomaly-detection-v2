@@ -49,11 +49,17 @@ func (s MasterStore) Summary(ctx context.Context, execution string) (domain.Summ
 		return report, err
 	}
 	report.RunID, report.ConfigID = id.RunID, id.ConfigID
+	report.GroupCount = id.Groups
+	report.WindowStart, report.WindowEnd = id.Window.Start.UTC(), id.Window.End.UTC()
 	report.ExpectedTicks = int64(id.Window.End.Sub(id.Window.Start)/(10*time.Second)) * int64(id.Groups)
 	// Aggregate already accepted immutable payloads; no voting/Temporal inference.
-	err = s.DB.QueryRow(ctx, `SELECT t.n,t.positive,t.unknown,t.i2,e.n,e.new_events,e.rb,e.rb_parents FROM
+	err = s.DB.QueryRow(ctx, `SELECT t.n,t.positive,t.unknown,t.i2,e.n,e.new_events,e.rb,e.rb_parents,m.first_at,m.last_at FROM
  (SELECT count(*) n,count(*) FILTER(WHERE payload#>>'{temporal,vote}'='positive') positive,count(*) FILTER(WHERE payload#>>'{temporal,vote}'='unknown') unknown,count(*) FILTER(WHERE payload#>>'{temporal,local_i2,state}'='positive') i2 FROM cad_v2.master_results WHERE execution_id=$1::uuid) t
- CROSS JOIN (SELECT count(*) n,count(*) FILTER(WHERE (payload->>'new_disjoint_from_rb')::boolean) new_events,coalesce(sum(jsonb_array_length(payload->'rb_subspans')),0) rb,count(*) FILTER(WHERE NOT (payload->>'new_disjoint_from_rb')::boolean) rb_parents FROM cad_v2.master_events WHERE execution_id=$1::uuid AND terminal) e`, execution).Scan(&report.Ticks, &report.PositiveTicks, &report.UnknownTicks, &report.I2PositiveTicks, &report.Events, &report.NewEvents, &report.RBSubspans, &report.RBSupportedParents)
+ CROSS JOIN (SELECT count(*) n,count(*) FILTER(WHERE (payload->>'new_disjoint_from_rb')::boolean) new_events,coalesce(sum(jsonb_array_length(payload->'rb_subspans')),0) rb,count(*) FILTER(WHERE NOT (payload->>'new_disjoint_from_rb')::boolean) rb_parents FROM cad_v2.master_events WHERE execution_id=$1::uuid AND terminal) e
+ CROSS JOIN (SELECT min(received_at) first_at,max(received_at) last_at FROM cad_v2.master_inbox WHERE execution_id=$1::uuid AND kind='group_result') m`, execution).Scan(
+		&report.Ticks, &report.PositiveTicks, &report.UnknownTicks, &report.I2PositiveTicks,
+		&report.Events, &report.NewEvents, &report.RBSubspans, &report.RBSupportedParents,
+		&report.FirstResultAt, &report.LastResultAt)
 	report.Complete = report.Ticks == report.ExpectedTicks
 	return report, err
 }
