@@ -1,6 +1,8 @@
 #include "mainwindow.h"
 
 #include <QApplication>
+#include <QCommandLineParser>
+#include <QMessageBox>
 #include <QStyleFactory>
 
 int main(int argc, char *argv[])
@@ -27,7 +29,28 @@ int main(int argc, char *argv[])
         QProgressBar { border:0; border-radius:5px; background:#e1e8f3; min-height:10px; text-align:center; }
         QProgressBar::chunk { background:#2b66ad; border-radius:5px; }
     )"));
-    MainWindow window;
+    QCommandLineParser parser;
+    parser.setApplicationDescription(QStringLiteral("Рабочее место оператора диагностики"));
+    parser.addHelpOption();
+    parser.addOptions({
+        {{"m", "master"}, QStringLiteral("Адрес Master API"), "url"},
+        {{"e", "execution"}, QStringLiteral("UUID запуска"), "uuid"}
+    });
+    parser.process(app);
+    QSettings preferences;
+    ConnectionSettings connection;
+    connection.masterUrl = QUrl(parser.isSet("master") ? parser.value("master")
+        : preferences.value("masterUrl", connection.masterUrl.toString()).toString());
+    connection.execution = (parser.isSet("execution") ? parser.value("execution")
+        : preferences.value("execution").toString()).trimmed().toLower();
+    connection.intervalMs = qBound(250, preferences.value("intervalMs", 1000).toInt(), 60000);
+    if (!MasterClient::validUrl(connection.masterUrl)
+        || (!connection.execution.isEmpty() && !MasterClient::validExecution(connection.execution))) {
+        QMessageBox::critical(nullptr, QStringLiteral("Настройки подключения"),
+                              QStringLiteral("Неверный адрес Master или Execution ID."));
+        return 2;
+    }
+    MainWindow window(connection);
     window.show();
     return app.exec();
 }

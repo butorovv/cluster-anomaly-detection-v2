@@ -10,11 +10,25 @@ if(MSVC)
 endif()
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
+qt_add_library(cluster_client STATIC
+    api/masterclient.cpp
+    api/poller.cpp
+    models/monitorstore.cpp
+)
+target_include_directories(cluster_client PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(cluster_client PUBLIC Qt6::Network)
 
 qt_add_executable(cluster-monitor WIN32
     src/main.cpp
     src/mainwindow.cpp
-    api/masterclient.cpp
+    views/settings.cpp
 )
-target_include_directories(cluster-monitor PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(cluster-monitor PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(cluster-monitor PRIVATE cluster_client Qt6::Widgets)
+
+include(CTest)
+if(BUILD_TESTING)
+    find_package(Qt6 REQUIRED COMPONENTS Test)
+    qt_add_executable(cluster-client-test tests/client_test.cpp)
+    target_link_libraries(cluster-client-test PRIVATE cluster_client Qt6::Test)
+    add_test(NAME cluster-client COMMAND cluster-client-test)
+endif()
