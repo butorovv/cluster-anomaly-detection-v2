@@ -7,6 +7,8 @@
 class QLabel;
 class QLineEdit;
 class QStackedWidget;
+class QButtonGroup;
+class Dashboard;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -15,9 +17,14 @@ public:
 private:
     void applyConnection(const ConnectionSettings &settings);
     void updateConnection();
+    void refresh();
+    void showPage(int index);
     QSettings preferences_;
     Poller poller_;
     QLabel *connection_;
     QLineEdit *execution_;
     QStackedWidget *pages_;
+    QButtonGroup *navigation_;
+    Dashboard *dashboard_;
+    QTimer refreshTimer_;
 };

@@ -1,4 +1,5 @@
 #include "mainwindow.h"
+#include "views/dashboard.h"
 #include "views/settings.h"
 
 #include <QButtonGroup>
@@ -49,22 +50,27 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
     connect(execution_, &QLineEdit::returnPressed, this, applyExecution);
     auto *navigation = new QHBoxLayout;
     layout->addLayout(navigation);
-    auto *buttons = new QButtonGroup(this);
+    navigation_ = new QButtonGroup(this);
     pages_ = new QStackedWidget;
+    dashboard_ = new Dashboard;
     const QStringList names{QStringLiteral("Обзор кластера"), QStringLiteral("Диагностика группы"),
                             QStringLiteral("Журнал аномалий"), QStringLiteral("Состояние системы")};
     for (const auto &name : names) {
         auto *button = new QPushButton(name);
         button->setCheckable(true);
-        auto *page = new QWidget;
-        auto *pageLayout = new QVBoxLayout(page);
-        pageLayout->addWidget(new QLabel(name));
-        pageLayout->addStretch();
-        buttons->addButton(button, pages_->addWidget(page));
+        QWidget *page = dashboard_;
+        if (pages_->count() > 0) {
+            page = new QWidget;
+            auto *pageLayout = new QVBoxLayout(page);
+            pageLayout->addWidget(new QLabel(name));
+            pageLayout->addStretch();
+        }
+        navigation_->addButton(button, pages_->addWidget(page));
         navigation->addWidget(button);
     }
-    buttons->button(0)->setChecked(true);
-    connect(buttons, &QButtonGroup::idClicked, pages_, &QStackedWidget::setCurrentIndex);
+    navigation_->button(0)->setChecked(true);
+    connect(navigation_, &QButtonGroup::idClicked, this, &MainWindow::showPage);
+    connect(dashboard_, &Dashboard::groupSelected, this, [this] { showPage(1); });
     navigation->addStretch();
     auto *settings = new QPushButton(QStringLiteral("Настройки"));
     navigation->addWidget(settings);
@@ -73,9 +79,28 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
         if (dialog.exec() == QDialog::Accepted) applyConnection(dialog.settings());
     });
     layout->addWidget(pages_, 1);
-    connect(&poller_, &Poller::updated, this, &MainWindow::updateConnection);
-    connect(&poller_, &Poller::reset, this, &MainWindow::updateConnection);
+    refreshTimer_.setSingleShot(true);
+    refreshTimer_.setInterval(200);
+    connect(&refreshTimer_, &QTimer::timeout, this, &MainWindow::refresh);
+    connect(&poller_, &Poller::updated, this, [this] {
+        if (!refreshTimer_.isActive()) refreshTimer_.start();
+    });
+    connect(&poller_, &Poller::reset, this, &MainWindow::refresh);
     applyConnection(initial);
+}
+
+void MainWindow::showPage(int index)
+{
+    navigation_->button(index)->setChecked(true);
+    pages_->setCurrentIndex(index);
+    refresh();
+}
+
+void MainWindow::refresh()
+{
+    updateConnection();
+    if (pages_->currentWidget() == dashboard_)
+        dashboard_->refresh(poller_.store(), poller_.store().latestTime());
 }
 
 void MainWindow::applyConnection(const ConnectionSettings &settings)

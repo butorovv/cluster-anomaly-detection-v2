@@ -145,6 +145,36 @@ private slots:
         QCOMPARE(poller.store().resultCount(), 0);
         QCOMPARE(poller.store().events().size(), 0);
     }
+
+    void realMaster()
+    {
+        const auto endpoint = qEnvironmentVariable("CAD_GUI_TEST_MASTER");
+        const auto id = qEnvironmentVariable("CAD_GUI_TEST_EXECUTION");
+        if (endpoint.isEmpty() || id.isEmpty())
+            QSKIP("Set CAD_GUI_TEST_MASTER and CAD_GUI_TEST_EXECUTION for the opt-in REST integration check.");
+        Poller poller;
+        bool seenAnomalyDuringRun = false;
+        connect(&poller, &Poller::updated, this, [&] {
+            const auto &store = poller.store();
+            if (!store.summary.value("complete").toBool()
+                && !store.recentAnomalies(store.latestTime(), 1).isEmpty())
+                seenAnomalyDuringRun = true;
+        });
+        poller.configure({QUrl(endpoint), id, 1000});
+        QTRY_COMPARE_WITH_TIMEOUT(poller.readiness(), 1, 15000);
+        QTRY_VERIFY_WITH_TIMEOUT(poller.store().summary.value("complete").toBool() && poller.synchronized(), 900000);
+        const auto &store = poller.store();
+        QCOMPARE(store.resultCount(), store.summary.value("expected_ticks").toInteger());
+        QCOMPARE(store.events().size(), store.summary.value("parent_events").toInteger());
+        const auto lastTick = readTime(store.summary.value("window_end")).addSecs(-10);
+        QCOMPARE(store.latestTime(), lastTick);
+        for (const auto &group : store.groups())
+            QVERIFY(store.tickAt(group, lastTick));
+        QVERIFY(!store.recentAnomalies(store.latestTime(), 1).isEmpty());
+        if (qEnvironmentVariableIsSet("CAD_GUI_TEST_REQUIRE_LIVE")) QVERIFY(seenAnomalyDuringRun);
+        qInfo() << "Master" << store.resultCount() << "ticks" << store.events().size()
+                << "events; anomaly before completion:" << seenAnomalyDuringRun;
+    }
 };
 
 QTEST_GUILESS_MAIN(ClientTest)

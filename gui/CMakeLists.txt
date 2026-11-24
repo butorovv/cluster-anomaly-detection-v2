@@ -22,6 +22,7 @@ qt_add_executable(cluster-monitor WIN32
     src/main.cpp
     src/mainwindow.cpp
     views/settings.cpp
+    views/dashboard.cpp
 )
 target_link_libraries(cluster-monitor PRIVATE cluster_client Qt6::Widgets)
 
