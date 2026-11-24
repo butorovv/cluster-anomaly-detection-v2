@@ -24,7 +24,9 @@ qt_add_executable(cluster-monitor WIN32
     views/settings.cpp
     views/dashboard.cpp
     views/diagnostics.cpp
+    views/events.cpp
     models/nodetable.cpp
+    models/eventtable.cpp
     widgets/scorechart.cpp
 )
 target_link_libraries(cluster-monitor PRIVATE cluster_client Qt6::Widgets)

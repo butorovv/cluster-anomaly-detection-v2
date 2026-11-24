@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "views/dashboard.h"
 #include "views/diagnostics.h"
+#include "views/events.h"
 #include "views/settings.h"
 
 #include <QButtonGroup>
@@ -55,6 +56,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
     pages_ = new QStackedWidget;
     dashboard_ = new Dashboard;
     diagnostics_ = new Diagnostics;
+    events_ = new Events;
     const QStringList names{QStringLiteral("Обзор кластера"), QStringLiteral("Диагностика группы"),
                             QStringLiteral("Журнал аномалий"), QStringLiteral("Состояние системы")};
     for (const auto &name : names) {
@@ -62,7 +64,8 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
         button->setCheckable(true);
         QWidget *page = dashboard_;
         if (pages_->count() == 1) page = diagnostics_;
-        if (pages_->count() > 1) {
+        if (pages_->count() == 2) page = events_;
+        if (pages_->count() == 3) {
             page = new QWidget;
             auto *pageLayout = new QVBoxLayout(page);
             pageLayout->addWidget(new QLabel(name));
@@ -79,6 +82,7 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
         refresh();
     });
     connect(diagnostics_, &Diagnostics::selectionChanged, this, &MainWindow::refresh);
+    connect(events_, &Events::filterChanged, this, &MainWindow::refresh);
     navigation->addStretch();
     auto *settings = new QPushButton(QStringLiteral("Настройки"));
     navigation->addWidget(settings);
@@ -93,7 +97,10 @@ MainWindow::MainWindow(const ConnectionSettings &initial, QWidget *parent) : QMa
     connect(&poller_, &Poller::updated, this, [this] {
         if (!refreshTimer_.isActive()) refreshTimer_.start();
     });
-    connect(&poller_, &Poller::reset, this, &MainWindow::refresh);
+    connect(&poller_, &Poller::reset, this, [this] {
+        events_->clear();
+        refresh();
+    });
     applyConnection(initial);
 }
 
@@ -113,6 +120,8 @@ void MainWindow::refresh()
         dashboard_->refresh(store, at);
     else if (pages_->currentWidget() == diagnostics_)
         diagnostics_->refresh(store, at, qMax(store.earliestTime(), at.addSecs(-30 * 60)), at);
+    else if (pages_->currentWidget() == events_)
+        events_->refresh(store, {}, {});
 }
 
 void MainWindow::applyConnection(const ConnectionSettings &settings)

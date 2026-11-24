@@ -10,6 +10,7 @@ class QStackedWidget;
 class QButtonGroup;
 class Dashboard;
 class Diagnostics;
+class Events;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -28,5 +29,6 @@ private:
     QButtonGroup *navigation_;
     Dashboard *dashboard_;
     Diagnostics *diagnostics_;
+    Events *events_;
     QTimer refreshTimer_;
 };
