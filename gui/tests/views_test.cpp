@@ -140,8 +140,10 @@ private slots:
         QVERIFY(findButton(window, QStringLiteral("Выбрать время"), "soft")->isVisible());
         findButton(window, QStringLiteral("Выбрать время"), "soft")->click();
         QVERIFY(findButton(window, QStringLiteral("К текущему"), "soft")->isVisible());
+        diagnostics->setOptions(2, 0);
         findButton(window, QStringLiteral("К текущему"), "soft")->click();
         QVERIFY(findButton(window, QStringLiteral("Выбрать время"), "soft")->isVisible());
+        QCOMPARE(diagnostics->interval(), 1);
         findButton(window, QStringLiteral("Главная"), "navButton")->click();
         open->click();
         QCOMPARE(timeline->at(), readTime(last));

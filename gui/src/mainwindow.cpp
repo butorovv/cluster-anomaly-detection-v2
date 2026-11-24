@@ -439,6 +439,8 @@ QWidget *MainWindow::buildWorkspace()
     connect(history_, &HistoryBar::changed, this, &MainWindow::refresh);
     connect(history_, &HistoryBar::followRequested, this, [this](bool following) {
         following_ = following;
+        if (following_ && diagnostics_->interval() == 0)
+            diagnostics_->setOptions(diagnostics_->criterion(), 1);
         if (!following_ && poller_.store().latestTime().isValid()) history_->selectTime(poller_.store().latestTime());
         refresh();
     });
