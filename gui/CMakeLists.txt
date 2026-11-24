@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
 if(MSVC)
     add_compile_options(/utf-8)
 endif()
@@ -35,6 +36,7 @@ qt_add_library(cluster_ui STATIC
     widgets/scorechart.cpp
     widgets/utcrange.cpp
     widgets/eventhistogram.cpp
+    widgets/v32controls.qrc
 )
 target_link_libraries(cluster_ui PUBLIC cluster_client Qt6::Widgets)
 target_compile_definitions(cluster_ui PRIVATE CAD_GUI_RUNNER="${CMAKE_CURRENT_SOURCE_DIR}/managed-run.ps1")

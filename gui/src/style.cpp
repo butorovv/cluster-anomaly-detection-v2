@@ -2,9 +2,17 @@
 
 #include <QPainter>
 #include <QPainterPath>
+#include <QResource>
+
+static void initializeControls()
+{
+    Q_INIT_RESOURCE(v32controls);
+}
 
 QString v2::style()
 {
+    static const auto resources = [] { initializeControls(); return true; }();
+    Q_UNUSED(resources);
     return QStringLiteral(R"(
         QWidget { color:#192b40; font-size:14px; }
         QMainWindow, QWidget#surface, QWidget#workspaceViewport, QStackedWidget#workspaceTabs, QScrollArea { background:#f3f5f9; }
@@ -31,9 +39,14 @@ QString v2::style()
         QDateEdit, QTimeEdit { border:1px solid #dce3ec; border-radius:7px; background:white; padding:5px 8px; min-height:26px; font-size:13px; }
         QDateEdit:focus, QTimeEdit:focus { border-color:#85a7e2; }
         QComboBox::drop-down, QDateEdit::drop-down { subcontrol-origin:padding; subcontrol-position:top right; border:0; width:22px; }
+        QComboBox, QDateEdit { padding-right:24px; }
+        QComboBox::down-arrow { image:url(:/v32-controls/chevron.xpm); width:10px; height:7px; }
+        QDateEdit::down-arrow { image:url(:/v32-controls/calendar.xpm); width:14px; height:14px; }
         QTimeEdit::up-button, QTimeEdit::down-button { subcontrol-origin:padding; border:0; width:18px; }
         QTimeEdit::up-button { subcontrol-position:top right; }
         QTimeEdit::down-button { subcontrol-position:bottom right; }
+        QTimeEdit::up-arrow { image:url(:/v32-controls/up.xpm); width:8px; height:5px; }
+        QTimeEdit::down-arrow { image:url(:/v32-controls/down.xpm); width:8px; height:5px; }
         QComboBox QAbstractItemView { border:1px solid #dce3ec; background:white; selection-background-color:#edf3fc; selection-color:#192b40; }
         QLabel#validationError { color:#c43648; font-size:12px; }
         QCalendarWidget#utcCalendar QWidget { background:white; }
