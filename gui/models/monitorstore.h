@@ -63,7 +63,7 @@ public:
     QList<const GroupTick *> recentAnomalies(const QDateTime &until, int limit) const;
     qint64 resultCount() const { return resultCount_; }
     const QMap<QString, AnomalyEvent> &events() const { return events_; }
-    ResultCursor confirmedCursor();
+    ResultCursor confirmedCursor() const;
     QJsonObject summary;
     QJsonObject metrics;
 
@@ -73,5 +73,5 @@ private:
     QMap<QString, AnomalyEvent> events_;
     QMultiMap<qint64, QString> anomalies_;
     qint64 resultCount_ = 0;
-    QDateTime confirmed_;
+    mutable QDateTime confirmed_;
 };

@@ -480,7 +480,8 @@ QWidget *MainWindow::buildWorkspace()
         following_ = following;
         if (following_ && diagnostics_->interval() == 0)
             diagnostics_->setOptions(diagnostics_->criterion(), 1);
-        if (!following_ && poller_.store().latestTime().isValid()) history_->selectTime(poller_.store().latestTime());
+        const auto available = readTime(poller_.store().confirmedCursor().tick);
+        if (!following_ && available.isValid()) history_->selectTime(available);
         refresh();
     });
     connect(dashboard_, &Dashboard::groupSelected, this, &MainWindow::selectGroup);
@@ -509,8 +510,9 @@ QWidget *MainWindow::buildWorkspace()
 void MainWindow::configurePhysicalArchive(const QString &assets)
 {
     assets_ = assets;
-    node_->configure(assets);
 }
+
+void MainWindow::configureArchiveApi(const QUrl &url) { node_->configure(url); }
 
 void MainWindow::configureManagedRuns(const QString &root, const QString &powershell)
 {
@@ -756,6 +758,8 @@ void MainWindow::refresh()
     if (!current_.ticks.isEmpty()) facts << tr("%1 результатов").arg(current_.ticks);
     if (!current_.events.isEmpty()) facts << tr("%1 событий").arg(current_.events);
     if (!current_.duration.isEmpty()) facts << current_.duration;
+    if (current_.archiveMode == "stream") facts << tr("Потоковый архив");
+    else if (current_.archiveMode == "reuse") facts << tr("Архив Summit уже загружен");
     else if (current_.active() && current_.created.isValid())
         facts << tr("С запуска: %1 с").arg(current_.created.secsTo(QDateTime::currentDateTimeUtc()));
     if (!current_.phaseMessage.isEmpty()) facts << current_.phaseMessage;
@@ -769,7 +773,8 @@ void MainWindow::refresh()
     }
     runFacts_->setText(facts.join(" · "));
     updateHistory();
-    const auto at = following_ ? store.latestTime() : history_->at();
+    const auto available = readTime(store.confirmedCursor().tick);
+    const auto at = following_ ? available : history_->at();
     if (tabs_->currentIndex() == Overview) dashboard_->refresh(store, at);
     else if (tabs_->currentIndex() == Group || tabs_->currentIndex() == Node) {
         const int interval = diagnostics_->interval();
@@ -777,10 +782,10 @@ void MainWindow::refresh()
         const bool eventWindow = interval == 0 && history_->from().isValid() && history_->to().isValid();
         const auto from = eventWindow ? history_->from() : qMax(store.earliestTime(), at.addSecs(-seconds));
         const auto to = eventWindow ? history_->to()
-            : following_ ? at : qMin(store.latestTime(), at.addSecs(seconds));
+            : following_ ? at : qMin(available, at.addSecs(seconds));
         diagnostics_->refresh(store, at, from, to, current_.connection.execution);
         if (tabs_->currentIndex() == Node)
-            node_->refresh(diagnostics_->hosts(), current_.start, at, current_.summitSource);
+            node_->refresh(diagnostics_->hosts(), current_.start, at, current_.connection.execution);
     } else {
         const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
         const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
@@ -789,7 +794,7 @@ void MainWindow::refresh()
         const auto processedEnd = latestProcessed.addSecs(10);
         events_->refresh(store, start.isValid() ? start : store.earliestTime(),
                          end.isValid() && processedEnd.isValid() ? qMin(end, processedEnd) : processedEnd,
-                         poller_.synchronized());
+                         poller_.synchronized() && (!poller_.offline() || store.summary.value("complete").toBool()));
         if (!pendingExport_.isEmpty() && pendingExport_ == current_.connection.execution &&
             (poller_.synchronized() || poller_.stale())) {
             pendingExport_.clear();
@@ -803,20 +808,21 @@ void MainWindow::updateHistory()
 {
     const auto &store = poller_.store();
     const auto start = current_.start.isValid() ? current_.start : readTime(store.summary.value("window_start"));
-    const auto end = current_.end.isValid() ? current_.end : readTime(store.summary.value("window_end"));
-    history_->setBounds(start.isValid() ? start : store.earliestTime(), end.isValid() ? end.addSecs(-10) : store.latestTime());
+    const auto available = readTime(store.confirmedCursor().tick);
+    history_->setBounds(start.isValid() ? start : store.earliestTime(), available);
     restoreTimeline();
-    if (!history_->hasSelection() && (current_.verified || store.latestTime().isValid())) {
+    if (!history_->hasSelection() && available.isValid()) {
         const QSignalBlocker blocker(history_);
-        const auto latest = current_.verified && end.isValid() ? end.addSecs(-10) : store.latestTime();
-        history_->setRange({}, {}, latest);
+        history_->setRange({}, {}, available);
     }
-    history_->setPresentation(!following_, section_ == Online || !current_.verified, store.latestTime());
+    history_->setPresentation(!following_, section_ == Online || !current_.verified, available);
 }
 
 void MainWindow::restoreTimeline()
 {
     if (!pendingTimeline_.at.isValid()) return;
+    const auto available = readTime(poller_.store().confirmedCursor().tick);
+    if (!available.isValid() || pendingTimeline_.at > available) return;
     const QSignalBlocker blocker(history_);
     history_->setRange(pendingTimeline_.from, pendingTimeline_.to, pendingTimeline_.at);
     history_->selectTime(pendingTimeline_.at);
@@ -833,6 +839,8 @@ void MainWindow::selectGroup(const QString &group)
 
 void MainWindow::openHistory(const QString &group, const QDateTime &from, const QDateTime &to, const QDateTime &at)
 {
+    const auto available = readTime(poller_.store().confirmedCursor().tick);
+    if (!available.isValid() || !at.isValid() || at > available) return;
     const QSignalBlocker historyBlocker(history_);
     following_ = false;
     updateHistory();

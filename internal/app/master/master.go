@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/butorovv/cluster-anomaly-detection-v2/internal/app/telemetryarchive"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/httpinput"
 	"github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/delivery/resulttransport"
 	repo "github.com/butorovv/cluster-anomaly-detection-v2/internal/modules/events/repository/postgres"
@@ -133,7 +134,15 @@ func RunCLI(ctx context.Context, args []string, stderr io.Writer) error {
 		}()
 	}
 	baseHandler := metrics.Handler(httpinput.Handler(service, log))
+	var publication http.Handler
+	if os.Getenv("ARCHIVE_PUBLICATION_ENABLED") == "1" {
+		publication = telemetryarchive.PublicationHandler(pool)
+	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+		if publication != nil && q.URL.Path == "/v1/telemetry/publication" {
+			publication.ServeHTTP(w, q)
+			return
+		}
 		if q.Method == "GET" && q.URL.Path == "/readyz" {
 			bounded, cancel := context.WithTimeout(q.Context(), 500*time.Millisecond)
 			defer cancel()

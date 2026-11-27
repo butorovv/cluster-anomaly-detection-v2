@@ -26,6 +26,7 @@ public:
     explicit MainWindow(const ConnectionSettings &settings, const QString &summitSpeed = {},
                         QList<ReviewRun> runs = {}, QWidget *parent = nullptr);
     void configurePhysicalArchive(const QString &assets);
+    void configureArchiveApi(const QUrl &url);
     void configureManagedRuns(const QString &root, const QString &powershell);
 private:
     enum Section { Home, Online, Archive, Catalog, System, Settings };
