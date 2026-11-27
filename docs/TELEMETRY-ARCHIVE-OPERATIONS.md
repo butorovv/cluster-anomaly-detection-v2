@@ -128,6 +128,43 @@ ARCHIVE_INTEGRATION_TEST_URL="$(cat "$storage/test-owner.dsn")" \
 туда DSN хранилища старых экспериментов. Полный интеграционный результат,
 ограничения и парный замер описаны в [матрице приёмки](TELEMETRY-ARCHIVE-ACCEPTANCE.md).
 
+### Воспроизводимые проверки
+
+Сценарии лежат в [scripts/acceptance](../scripts/acceptance). Запускать их
+нужно в изолированной среде испытаний под обычным пользователем. Требуются
+Bash, Docker Compose, PowerShell 7, jq и Python 3. Результаты записываются
+в новый каталог вне Git. Сценарии сохраняют диагностические снимки и тома.
+
+Для VNC-пробы нужен действующий X11-сеанс и локальный REST архива, который
+читает указанный каталог управляемых запусков. Соберите пробу из того же
+Qt-дерева, что GUI. Если PowerShell отсутствует в PATH, укажите абсолютный
+путь через `CAD_ACCEPTANCE_PWSH`.
+
+```bash
+cmake --build build/qt --target cluster-archive-vnc-probe
+CAD_ACCEPTANCE_OUTPUT="$scratch/timeline" \
+CAD_ACCEPTANCE_CATALOG="$runs" \
+CAD_ACCEPTANCE_ASSETS="$assets" \
+CAD_ACCEPTANCE_VNC_PROBE="$PWD/build/qt/cluster-archive-vnc-probe" \
+  bash scripts/acceptance/vnc-timeline.sh
+```
+
+Для трёх пар MAX используйте отдельный PostgreSQL испытаний и приватный
+файл DSN владельца с правом создавать БД. Сценарий создаёт уникальные
+пустые БД в каждой паре. Для просмотра имеющихся артефактов используйте
+агрегатор отдельно. Имена диска и архивного контейнера передаются явно.
+
+```bash
+CAD_ACCEPTANCE_OUTPUT="$scratch/paired" \
+CAD_ACCEPTANCE_ASSETS="$assets" \
+CAD_ACCEPTANCE_ARCHIVE_BINARY="$PWD/build/archive/telemetry-archive" \
+CAD_ACCEPTANCE_ARCHIVE_DSN_FILE="$test_dsn_file" \
+CAD_ACCEPTANCE_POSTGRES_CONTAINER="$test_pg_container" \
+CAD_ACCEPTANCE_DISK="$block_device" \
+  bash scripts/acceptance/paired-archive.sh
+python3 scripts/acceptance/paired-archive-summary.py "$scratch/paired" "$block_device" "$test_pg_container"
+```
+
 ## Контракт REST
 
 `GET /v1/telemetry?execution_id=…&group_id=a14&host_id=a14n04&from=2022-01-18T15:52:20Z&to=2022-01-18T15:57:30Z`
