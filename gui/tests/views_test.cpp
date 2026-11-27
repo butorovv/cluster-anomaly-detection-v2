@@ -200,14 +200,14 @@ private slots:
         const QStringList hosts{"a01n01", "a01n02"};
         node.selectNode(hosts.first());
         node.refresh(hosts, moment, moment, execution);
-        QTRY_VERIFY(hasLabel(node, QStringLiteral("123.4 Вт")));
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("123.4\u00a0Вт")));
         node.selectNode(hosts.last());
         node.refresh(hosts, moment, moment, execution);
-        QVERIFY(!hasLabel(node, QStringLiteral("123.4 Вт")));
-        QTRY_VERIFY(hasLabel(node, QStringLiteral("234.5 Вт")));
+        QVERIFY(!hasLabel(node, QStringLiteral("123.4\u00a0Вт")));
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("234.5\u00a0Вт")));
         node.refresh(hosts, moment, moment, secondExecution);
-        QVERIFY(!hasLabel(node, QStringLiteral("234.5 Вт")));
-        QTRY_VERIFY(hasLabel(node, QStringLiteral("345.6 Вт")));
+        QVERIFY(!hasLabel(node, QStringLiteral("234.5\u00a0Вт")));
+        QTRY_VERIFY(hasLabel(node, QStringLiteral("345.6\u00a0Вт")));
         QCOMPARE(requests, (QList<QString>{
             "/v1/telemetry|" + execution + "|a01n01",
             "/v1/telemetry|" + execution + "|a01n02",

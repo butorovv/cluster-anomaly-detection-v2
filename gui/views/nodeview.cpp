@@ -36,7 +36,7 @@ QFrame *panel()
 
 QString quantity(double value, bool temperature)
 {
-    return std::isfinite(value) ? QString::number(value, 'f', 1) + (temperature ? QStringLiteral(" °C") : QStringLiteral(" Вт"))
+    return std::isfinite(value) ? QString::number(value, 'f', 1) + (temperature ? QStringLiteral("\u00a0°C") : QStringLiteral("\u00a0Вт"))
                                 : QStringLiteral("Нет данных");
 }
 }
@@ -167,6 +167,7 @@ NodeView::NodeView(QWidget *parent) : QWidget(parent), delay_(new QTimer(this))
         items->addWidget(groupName);
         auto *cards = new QGridLayout;
         cards->setSpacing(7);
+        for (int i = 0; i < count[group]; ++i) cards->setColumnStretch(i, 1);
         items->addLayout(cards);
 
         auto *container = panel();
