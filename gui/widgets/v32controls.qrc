@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/v32-controls">
+        <file alias="calendar.xpm">icons/calendar.xpm</file>
+        <file alias="chevron.xpm">icons/chevron.xpm</file>
+        <file alias="up.xpm">icons/up.xpm</file>
+        <file alias="down.xpm">icons/down.xpm</file>
+    </qresource>
+</RCC>

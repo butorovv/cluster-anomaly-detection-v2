@@ -91,10 +91,13 @@ func TestReplayFullGridRejectsWindow(t *testing.T) {
 
 func TestFullD2EmptyGridAndPacing(t *testing.T) {
 	start := time.Date(2022, 1, 18, 8, 0, 0, 0, time.UTC)
-	for _, speed := range []float64{0, 2} {
+	for _, tc := range []struct {
+		speed float64
+		wait  time.Duration
+	}{{0, 0}, {1, 10 * time.Second}, {5, 2 * time.Second}, {10, time.Second}} {
 		sink := &gridSink{}
 		clock := &gridClock{now: start}
-		stats, err := ReplayFullGrid(context.Background(), &gridReader{}, sink, sink, clock, speed, start, start.Add(8*time.Hour))
+		stats, err := ReplayFullGrid(context.Background(), &gridReader{}, sink, sink, clock, tc.speed, start, start.Add(8*time.Hour))
 		if err != nil || stats.Completions != 46080 || stats.Timestamps != 2880 || stats.Rows != 0 {
 			t.Fatal(stats, err)
 		}
@@ -103,11 +106,11 @@ func TestFullD2EmptyGridAndPacing(t *testing.T) {
 				t.Fatal(i, m)
 			}
 		}
-		if speed == 0 && len(clock.sleeps) != 0 || speed > 0 && len(clock.sleeps) != 2879 {
+		if tc.speed == 0 && len(clock.sleeps) != 0 || tc.speed > 0 && len(clock.sleeps) != 2879 {
 			t.Fatal("pacing repeated for each group", len(clock.sleeps))
 		}
 		for _, d := range clock.sleeps {
-			if d != 5*time.Second {
+			if d != tc.wait {
 				t.Fatal(d)
 			}
 		}

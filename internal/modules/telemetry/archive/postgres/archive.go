@@ -112,6 +112,19 @@ func decimal(v float64) string {
 // V1 timestamps have microsecond precision: finer timestamps are rejected rather
 // than silently truncated. All finite values round-trip without extra rounding.
 func (w *Writer) WriteBatch(ctx context.Context, records []domain.TelemetryRecord) (Result, error) {
+	return w.writeBatch(ctx, records, nil)
+}
+
+// WriteBatchInTx leaves commit and rollback to the caller. Use it when
+// measurements and the archive's offset/coverage must commit together.
+func (w *Writer) WriteBatchInTx(ctx context.Context, records []domain.TelemetryRecord, tx pgx.Tx) (Result, error) {
+	if tx == nil {
+		return Result{}, fmt.Errorf("archive transaction is required")
+	}
+	return w.writeBatch(ctx, records, tx)
+}
+
+func (w *Writer) writeBatch(ctx context.Context, records []domain.TelemetryRecord, tx pgx.Tx) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
@@ -161,11 +174,15 @@ func (w *Writer) WriteBatch(ctx context.Context, records []domain.TelemetryRecor
 		}
 		return rows[i].ts.Before(rows[j].ts)
 	})
-	tx, err := w.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return Result{}, classify(err)
+	ownTransaction := tx == nil
+	if ownTransaction {
+		var err error
+		tx, err = w.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+		if err != nil {
+			return Result{}, classify(err)
+		}
+		defer rollback(tx)
 	}
-	defer rollback(tx)
 	for start := 0; start < len(rows); start += statementRows {
 		end := min(start+statementRows, len(rows))
 		ids := make([]int32, end-start)
@@ -195,8 +212,10 @@ func (w *Writer) WriteBatch(ctx context.Context, records []domain.TelemetryRecor
 			return Result{}, fmt.Errorf("%w: batch measurements differ from stored numeric values", ErrConflict)
 		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return Result{}, classify(err)
+	if ownTransaction {
+		if err := tx.Commit(ctx); err != nil {
+			return Result{}, classify(err)
+		}
 	}
 	result.Duplicates = result.Measurements - result.Inserted
 	return result, nil

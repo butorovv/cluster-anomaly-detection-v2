@@ -422,15 +422,19 @@ markers. Оба пути хранят лишь текущие ticks и 16 hash s
 assembled ticks. Это отдельная проверка от P03 mathematical golden acceptance,
 команды которой приведены выше; synthetic не заменяет original D2.
 
-### PostgreSQL Archive Writer и граница будущего Kafka ingestion
+### Архивный контур PostgreSQL и Kafka
 
 Дополнительный контракт КР: доступные F18 измерения из Kafka долговременно
 сохраняются в **существующей** `project.telemetry`; автоматического удаления нет.
 P04-DB реализует самостоятельный `internal/modules/telemetry/archive/postgres`:
 Summit bootstrap, F18 mapping и Archive Writer. Его можно вызывать напрямую для
-prepared D2 без Kafka и пересчёта математики. Production Kafka→SQL consumer и
-атомарное сохранение его progress ещё отсутствуют. Новых архивных таблиц или V6
-нет; V1–V5 остаются неизменными.
+prepared D2 без Kafka и пересчёта математики. Опциональный `telemetry-archive`
+использует тот же Writer и подтверждает измерения, покрытие и позицию Kafka
+одной транзакцией в выделенном архиве. Отдельные архивные миграции добавляют
+учёт источника, импорта и позиций. Диагностические V1–V5 сохранены.
+В исходной конфигурации нагрузочных испытаний архиватор выключен.
+[Запуск и REST-контракт](docs/TELEMETRY-ARCHIVE-OPERATIONS.md).
+[Результаты приёмки](docs/TELEMETRY-ARCHIVE-ACCEPTANCE.md).
 
 `project` хранит topology/metric sources/значения; `cad_v2` — executions,
 ownership/checkpoints/outbox/results. Перед ingestion должны быть заполнены
